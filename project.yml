@@ -1,0 +1,169 @@
+name: Foodle
+options:
+  bundleIdPrefix: com.foodle
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "16.0"
+  groupSortPosition: top
+  generateEmptyDirectories: true
+  minimumXcodeGenVersion: "2.38"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    ENABLE_HARDENED_RUNTIME: true
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_STRICT_CONCURRENCY: complete
+
+configs:
+  Debug: debug
+  Release: release
+
+targets:
+  Foodle:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/App
+    dependencies:
+      - target: SharedDomain
+      - target: FoodleNetworking
+      - target: FoodlePersistence
+      - target: FoodleSyncEngine
+      - target: FoodleFileProvider
+        embed: true
+        codeSign: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.foodle.app
+        INFOPLIST_FILE: Resources/Info/App-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/Foodle.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        COMBINE_HIDPI_IMAGES: true
+        LD_RUNPATH_SEARCH_PATHS:
+          - "@executable_path/../Frameworks"
+
+  SharedDomain:
+    type: framework
+    platform: macOS
+    sources:
+      - path: Sources/SharedDomain
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.foodle.shared-domain
+        INFOPLIST_FILE: Resources/Info/Framework-Info.plist
+
+  FoodleNetworking:
+    type: framework
+    platform: macOS
+    sources:
+      - path: Sources/Networking
+    dependencies:
+      - target: SharedDomain
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.foodle.networking
+        INFOPLIST_FILE: Resources/Info/Framework-Info.plist
+
+  FoodlePersistence:
+    type: framework
+    platform: macOS
+    sources:
+      - path: Sources/Persistence
+    dependencies:
+      - target: SharedDomain
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.foodle.persistence
+        INFOPLIST_FILE: Resources/Info/Framework-Info.plist
+
+  FoodleSyncEngine:
+    type: framework
+    platform: macOS
+    sources:
+      - path: Sources/SyncEngine
+    dependencies:
+      - target: SharedDomain
+      - target: FoodleNetworking
+      - target: FoodlePersistence
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.foodle.sync-engine
+        INFOPLIST_FILE: Resources/Info/Framework-Info.plist
+
+  FoodleFileProvider:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: Sources/FileProviderExtension
+    dependencies:
+      - target: SharedDomain
+      - target: FoodleNetworking
+      - target: FoodlePersistence
+      - target: FoodleSyncEngine
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.foodle.app.file-provider
+        INFOPLIST_FILE: Resources/Info/FileProvider-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/FileProvider.entitlements
+        LD_RUNPATH_SEARCH_PATHS:
+          - "@executable_path/../Frameworks"
+          - "@executable_path/../../../../Frameworks"
+    info:
+      path: Resources/Info/FileProvider-Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.fileprovider-nonui
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).FileProviderExtension"
+          NSExtensionFileProviderDocumentGroup: "group.com.foodle.app"
+          NSExtensionFileProviderSupportsEnumeration: true
+
+  SharedDomainTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/SharedDomainTests
+    dependencies:
+      - target: SharedDomain
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.foodle.shared-domain-tests
+
+  NetworkingTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/NetworkingTests
+    dependencies:
+      - target: FoodleNetworking
+      - target: SharedDomain
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.foodle.networking-tests
+
+  PersistenceTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/PersistenceTests
+    dependencies:
+      - target: FoodlePersistence
+      - target: SharedDomain
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.foodle.persistence-tests
+
+  SyncEngineTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/SyncEngineTests
+    dependencies:
+      - target: FoodleSyncEngine
+      - target: SharedDomain
+      - target: FoodleNetworking
+      - target: FoodlePersistence
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.foodle.sync-engine-tests
