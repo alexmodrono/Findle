@@ -1,0 +1,29 @@
+[
+  {
+    "error": false,
+    "data": {
+      "wwwroot": "https://moodle.example.edu",
+      "sitename": "Example University Moodle",
+      "guestlogin": 0,
+      "rememberusername": 2,
+      "authloginviaemail": 0,
+      "registerauth": "",
+      "forgottenpasswordurl": "",
+      "authinstructions": "",
+      "authnoneenabled": 0,
+      "enablewebservices": 1,
+      "enablemobilewebservice": 1,
+      "maintenanceenabled": 0,
+      "maintenancemessage": "",
+      "typeoflogin": 1,
+      "launchurl": "",
+      "mobilecssurl": "",
+      "toolmobileconfigs": [],
+      "identityproviders": [],
+      "release": "4.3.2 (Build: 20240101)",
+      "version": "2023112300",
+      "supportname": "IT Support",
+      "supportemail": "support@example.edu"
+    }
+  }
+]

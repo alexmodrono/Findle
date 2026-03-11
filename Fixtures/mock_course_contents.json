@@ -1,0 +1,175 @@
+[
+  {
+    "id": 1001,
+    "name": "General",
+    "summary": "<p>Welcome to the course.</p>",
+    "section": 0,
+    "visible": 1,
+    "modules": [
+      {
+        "id": 2001,
+        "name": "Course Syllabus",
+        "modname": "resource",
+        "modicon": "https://moodle.example.edu/theme/image.php/boost/core/1/f/pdf-256",
+        "visible": 1,
+        "contents": [
+          {
+            "type": "file",
+            "filename": "CS101_Syllabus_Fall2024.pdf",
+            "filepath": "/",
+            "filesize": 245760,
+            "fileurl": "https://moodle.example.edu/webservice/pluginfile.php/12345/mod_resource/content/1/CS101_Syllabus_Fall2024.pdf",
+            "timecreated": 1693526400,
+            "timemodified": 1693526400,
+            "mimetype": "application/pdf",
+            "author": "Prof. Smith",
+            "sortorder": 0
+          }
+        ]
+      },
+      {
+        "id": 2002,
+        "name": "Course Website",
+        "modname": "url",
+        "modicon": "https://moodle.example.edu/theme/image.php/boost/url/1/icon",
+        "visible": 1,
+        "contents": [
+          {
+            "type": "url",
+            "filename": "Course Website",
+            "filepath": "/",
+            "filesize": 0,
+            "fileurl": "https://cs101.example.edu",
+            "timecreated": 1693526400,
+            "timemodified": 1693526400,
+            "mimetype": null,
+            "author": null,
+            "sortorder": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": 1002,
+    "name": "Week 1: Introduction",
+    "summary": "<p>Getting started with computer science fundamentals.</p>",
+    "section": 1,
+    "visible": 1,
+    "modules": [
+      {
+        "id": 2003,
+        "name": "Lecture 1 Slides",
+        "modname": "resource",
+        "modicon": "https://moodle.example.edu/theme/image.php/boost/core/1/f/powerpoint-256",
+        "visible": 1,
+        "contents": [
+          {
+            "type": "file",
+            "filename": "Lecture01_Introduction.pptx",
+            "filepath": "/",
+            "filesize": 1048576,
+            "fileurl": "https://moodle.example.edu/webservice/pluginfile.php/12346/mod_resource/content/1/Lecture01_Introduction.pptx",
+            "timecreated": 1694131200,
+            "timemodified": 1694131200,
+            "mimetype": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "author": "Prof. Smith",
+            "sortorder": 0
+          }
+        ]
+      },
+      {
+        "id": 2004,
+        "name": "Reading Materials",
+        "modname": "folder",
+        "modicon": "https://moodle.example.edu/theme/image.php/boost/folder/1/icon",
+        "visible": 1,
+        "contents": [
+          {
+            "type": "file",
+            "filename": "Chapter1_Overview.pdf",
+            "filepath": "/",
+            "filesize": 512000,
+            "fileurl": "https://moodle.example.edu/webservice/pluginfile.php/12347/mod_folder/content/0/Chapter1_Overview.pdf",
+            "timecreated": 1694131200,
+            "timemodified": 1694131200,
+            "mimetype": "application/pdf",
+            "author": null,
+            "sortorder": 0
+          },
+          {
+            "type": "file",
+            "filename": "Supplementary_Notes.docx",
+            "filepath": "/",
+            "filesize": 98304,
+            "fileurl": "https://moodle.example.edu/webservice/pluginfile.php/12347/mod_folder/content/0/Supplementary_Notes.docx",
+            "timecreated": 1694131200,
+            "timemodified": 1694217600,
+            "mimetype": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "author": null,
+            "sortorder": 1
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": 1003,
+    "name": "Week 2: Data Types and Variables",
+    "summary": "<p>Understanding primitive data types, variables, and memory.</p>",
+    "section": 2,
+    "visible": 1,
+    "modules": [
+      {
+        "id": 2005,
+        "name": "Lecture 2 Slides",
+        "modname": "resource",
+        "modicon": "https://moodle.example.edu/theme/image.php/boost/core/1/f/powerpoint-256",
+        "visible": 1,
+        "contents": [
+          {
+            "type": "file",
+            "filename": "Lecture02_DataTypes.pptx",
+            "filepath": "/",
+            "filesize": 921600,
+            "fileurl": "https://moodle.example.edu/webservice/pluginfile.php/12348/mod_resource/content/1/Lecture02_DataTypes.pptx",
+            "timecreated": 1694736000,
+            "timemodified": 1694736000,
+            "mimetype": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "author": "Prof. Smith",
+            "sortorder": 0
+          }
+        ]
+      },
+      {
+        "id": 2006,
+        "name": "Practice Exercises",
+        "modname": "resource",
+        "modicon": "https://moodle.example.edu/theme/image.php/boost/core/1/f/document-256",
+        "visible": 1,
+        "contents": [
+          {
+            "type": "file",
+            "filename": "Week2_Exercises.pdf",
+            "filepath": "/",
+            "filesize": 184320,
+            "fileurl": "https://moodle.example.edu/webservice/pluginfile.php/12349/mod_resource/content/1/Week2_Exercises.pdf",
+            "timecreated": 1694736000,
+            "timemodified": 1694822400,
+            "mimetype": "application/pdf",
+            "author": "Prof. Smith",
+            "sortorder": 0
+          }
+        ]
+      },
+      {
+        "id": 2007,
+        "name": "Introduction to Python",
+        "modname": "page",
+        "modicon": "https://moodle.example.edu/theme/image.php/boost/page/1/icon",
+        "visible": 1,
+        "contents": []
+      }
+    ]
+  }
+]

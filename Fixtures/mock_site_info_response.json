@@ -1,0 +1,25 @@
+{
+  "sitename": "Example University Moodle",
+  "username": "jdoe",
+  "firstname": "Jane",
+  "lastname": "Doe",
+  "fullname": "Jane Doe",
+  "lang": "en",
+  "userid": 42,
+  "siteurl": "https://moodle.example.edu",
+  "userpictureurl": "https://moodle.example.edu/pluginfile.php/42/user/icon/f1",
+  "functions": [
+    {"name": "core_webservice_get_site_info", "version": ""},
+    {"name": "core_enrol_get_users_courses", "version": ""},
+    {"name": "core_course_get_contents", "version": ""}
+  ],
+  "downloadfiles": 1,
+  "uploadfiles": 1,
+  "release": "4.3.2 (Build: 20240101)",
+  "version": "2023112300",
+  "mobilecssurl": "",
+  "advancedfeatures": [],
+  "usercanmanageownfiles": true,
+  "userquota": 0,
+  "usermaxuploadfilesize": -1
+}
