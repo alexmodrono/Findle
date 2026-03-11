@@ -23,7 +23,7 @@ final class AppState: ObservableObject {
     private var syncEngine: SyncEngine?
     private var currentToken: AuthToken?
     private var currentSite: MoodleSite?
-    private let logger = Logger(subsystem: "com.foodle.app", category: "AppState")
+    private let logger = Logger(subsystem: "es.amodrono.foodle", category: "AppState")
 
     enum AppScreen {
         case onboarding
@@ -116,7 +116,7 @@ final class AppState: ObservableObject {
     // MARK: - File Provider Domain
 
     private func setupFileProviderDomain(site: MoodleSite) async throws {
-        let domainID = NSFileProviderDomainIdentifier("com.foodle.domain.\(site.id)")
+        let domainID = NSFileProviderDomainIdentifier("es.amodrono.foodle.domain.\(site.id)")
         let domain = NSFileProviderDomain(identifier: domainID, displayName: site.displayName)
 
         do {
@@ -183,7 +183,7 @@ final class AppState: ObservableObject {
 
     private func signalFileProviderChanges() {
         guard let site = currentSite else { return }
-        let domainID = NSFileProviderDomainIdentifier("com.foodle.domain.\(site.id)")
+        let domainID = NSFileProviderDomainIdentifier("es.amodrono.foodle.domain.\(site.id)")
         let domain = NSFileProviderDomain(identifier: domainID, displayName: site.displayName)
 
         NSFileProviderManager(for: domain)?.signalEnumerator(for: .rootContainer) { error in
@@ -200,7 +200,7 @@ final class AppState: ObservableObject {
 
         // Remove File Provider domain
         if let site = currentSite {
-            let domainID = NSFileProviderDomainIdentifier("com.foodle.domain.\(site.id)")
+            let domainID = NSFileProviderDomainIdentifier("es.amodrono.foodle.domain.\(site.id)")
             let domain = NSFileProviderDomain(identifier: domainID, displayName: site.displayName)
             try? await NSFileProviderManager.remove(domain)
         }
@@ -230,7 +230,7 @@ final class AppState: ObservableObject {
 
     func resetProvider() async {
         if let site = currentSite {
-            let domainID = NSFileProviderDomainIdentifier("com.foodle.domain.\(site.id)")
+            let domainID = NSFileProviderDomainIdentifier("es.amodrono.foodle.domain.\(site.id)")
             let domain = NSFileProviderDomain(identifier: domainID, displayName: site.displayName)
             try? await NSFileProviderManager.remove(domain)
             try? await setupFileProviderDomain(site: site)

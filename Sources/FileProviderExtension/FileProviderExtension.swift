@@ -8,7 +8,7 @@ import OSLog
 /// Uses the replicated extension model for modern macOS cloud-file behavior.
 final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     private let domain: NSFileProviderDomain
-    private let logger = Logger(subsystem: "com.foodle.file-provider", category: "Extension")
+    private let logger = Logger(subsystem: "es.amodrono.foodle.file-provider", category: "Extension")
     private var database: Database?
 
     required init(domain: NSFileProviderDomain) {

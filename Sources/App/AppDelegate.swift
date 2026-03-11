@@ -3,7 +3,7 @@ import FileProvider
 import OSLog
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let logger = Logger(subsystem: "com.foodle.app", category: "AppDelegate")
+    private let logger = Logger(subsystem: "es.amodrono.foodle", category: "AppDelegate")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         logger.info("Foodle launched")

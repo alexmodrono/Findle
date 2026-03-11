@@ -5,7 +5,7 @@ import OSLog
 /// Native Moodle web services client implementing the LMSProvider protocol.
 public final class MoodleClient: LMSProvider, @unchecked Sendable {
     private let session: URLSession
-    private let logger = Logger(subsystem: "com.foodle.networking", category: "MoodleClient")
+    private let logger = Logger(subsystem: "es.amodrono.foodle.networking", category: "MoodleClient")
     private let decoder: JSONDecoder
 
     public init(session: URLSession = .shared) {

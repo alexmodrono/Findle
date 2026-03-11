@@ -6,8 +6,8 @@ import OSLog
 public final class KeychainManager: Sendable {
     public static let shared = KeychainManager()
 
-    private let logger = Logger(subsystem: "com.foodle.networking", category: "Keychain")
-    private let service = "com.foodle.app"
+    private let logger = Logger(subsystem: "es.amodrono.foodle.networking", category: "Keychain")
+    private let service = "es.amodrono.foodle"
 
     private init() {}
 

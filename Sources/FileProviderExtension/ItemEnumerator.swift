@@ -7,7 +7,7 @@ import OSLog
 final class ItemEnumerator: NSObject, NSFileProviderEnumerator {
     private let containerIdentifier: NSFileProviderItemIdentifier
     private let database: Database
-    private let logger = Logger(subsystem: "com.foodle.file-provider", category: "Enumerator")
+    private let logger = Logger(subsystem: "es.amodrono.foodle.file-provider", category: "Enumerator")
 
     init(containerIdentifier: NSFileProviderItemIdentifier, database: Database) {
         self.containerIdentifier = containerIdentifier
@@ -59,7 +59,7 @@ final class ItemEnumerator: NSObject, NSFileProviderEnumerator {
 /// Enumerates the working set (recently accessed / important items).
 final class WorkingSetEnumerator: NSObject, NSFileProviderEnumerator {
     private let database: Database
-    private let logger = Logger(subsystem: "com.foodle.file-provider", category: "WorkingSet")
+    private let logger = Logger(subsystem: "es.amodrono.foodle.file-provider", category: "WorkingSet")
 
     init(database: Database) {
         self.database = database

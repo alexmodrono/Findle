@@ -1,6 +1,6 @@
 name: Foodle
 options:
-  bundleIdPrefix: com.foodle
+  bundleIdPrefix: es.amodrono.foodle
   deploymentTarget:
     macOS: "14.0"
   xcodeVersion: "16.0"
@@ -36,7 +36,7 @@ targets:
         codeSign: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.foodle.app
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle
         INFOPLIST_FILE: Resources/Info/App-Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/Foodle.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -51,7 +51,7 @@ targets:
       - path: Sources/SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.foodle.shared-domain
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.shared-domain
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
 
   FoodleNetworking:
@@ -63,7 +63,7 @@ targets:
       - target: SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.foodle.networking
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.networking
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
 
   FoodlePersistence:
@@ -75,7 +75,7 @@ targets:
       - target: SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.foodle.persistence
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.persistence
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
 
   FoodleSyncEngine:
@@ -89,7 +89,7 @@ targets:
       - target: FoodlePersistence
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.foodle.sync-engine
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.sync-engine
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
 
   FoodleFileProvider:
@@ -104,7 +104,7 @@ targets:
       - target: FoodleSyncEngine
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.foodle.app.file-provider
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.file-provider
         INFOPLIST_FILE: Resources/Info/FileProvider-Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/FileProvider.entitlements
         LD_RUNPATH_SEARCH_PATHS:
@@ -116,7 +116,7 @@ targets:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.fileprovider-nonui
           NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).FileProviderExtension"
-          NSExtensionFileProviderDocumentGroup: "group.com.foodle.app"
+          NSExtensionFileProviderDocumentGroup: "group.es.amodrono.foodle"
           NSExtensionFileProviderSupportsEnumeration: true
 
   SharedDomainTests:
@@ -128,7 +128,7 @@ targets:
       - target: SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.foodle.shared-domain-tests
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.shared-domain-tests
 
   NetworkingTests:
     type: bundle.unit-test
@@ -140,7 +140,7 @@ targets:
       - target: SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.foodle.networking-tests
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.networking-tests
 
   PersistenceTests:
     type: bundle.unit-test
@@ -152,7 +152,7 @@ targets:
       - target: SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.foodle.persistence-tests
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.persistence-tests
 
   SyncEngineTests:
     type: bundle.unit-test
@@ -166,4 +166,4 @@ targets:
       - target: FoodlePersistence
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.foodle.sync-engine-tests
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.sync-engine-tests

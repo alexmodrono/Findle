@@ -8,7 +8,7 @@ import FoodlePersistence
 public actor SyncEngine {
     private let provider: LMSProvider
     private let database: Database
-    private let logger = Logger(subsystem: "com.foodle.sync", category: "SyncEngine")
+    private let logger = Logger(subsystem: "es.amodrono.foodle.sync", category: "SyncEngine")
 
     private var activeTasks: [Int: Task<Void, Error>] = [:]
     private var syncProgress: [Int: SyncProgress] = [:]
