@@ -1,0 +1,52 @@
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+Package.resolved
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# IDE
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Build artifacts
+*.app
+*.dSYM
+*.ipa
+*.framework
+*.dylib
+
+# Archive
+*.xcarchive
+
+# Secrets / local config
+*.env
+.env.*
+Secrets/
