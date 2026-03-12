@@ -20,6 +20,27 @@ configs:
   Debug: debug
   Release: release
 
+schemes:
+  Foodle:
+    build:
+      targets:
+        Foodle: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - SharedDomainTests
+        - NetworkingTests
+        - PersistenceTests
+        - SyncEngineTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
+
 targets:
   Foodle:
     type: application
