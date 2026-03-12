@@ -26,5 +26,18 @@
     <string>NSApplication</string>
     <key>LSUIElement</key>
     <false/>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>es.amodrono.foodle.sso-callback</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>foodle</string>
+            </array>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+        </dict>
+    </array>
 </dict>
 </plist>

@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import AuthenticationServices
 import SharedDomain
 import FoodleNetworking
 import FoodlePersistence
@@ -81,11 +82,26 @@ final class AppState: ObservableObject {
         return site
     }
 
+    /// Sign in with username/password (for sites that support direct login).
     func signIn(site: MoodleSite, username: String, password: String) async throws {
         let token = try await moodleClient.authenticate(site: site, username: username, password: password)
+        try await completeSignIn(site: site, token: token)
+    }
+
+    /// Sign in via SSO using ASWebAuthenticationSession.
+    func signInWithSSO(
+        site: MoodleSite,
+        presentationContext: ASWebAuthenticationPresentationContextProviding
+    ) async throws {
+        let webAuth = WebAuthSession()
+        let result = try await webAuth.authenticate(site: site, presentationContext: presentationContext)
+        try await completeSignIn(site: site, token: result.token)
+    }
+
+    /// Shared post-authentication setup: fetch user info, persist, configure File Provider.
+    private func completeSignIn(site: MoodleSite, token: AuthToken) async throws {
         let user = try await moodleClient.fetchUserInfo(site: site, token: token)
 
-        // Save to database
         guard let db = database else { throw FoodleError.databaseError(detail: "Database not available") }
         try db.saveSite(site)
 
@@ -96,19 +112,14 @@ final class AppState: ObservableObject {
         )
         try db.saveAccount(account)
 
-        // Store token in Keychain
         try KeychainManager.shared.storeToken(token.token, forAccount: account.id)
-
-        // Set up File Provider domain
         try await setupFileProviderDomain(site: site)
 
-        // Update state
         currentSite = site
         currentToken = token
         accounts = [account]
         currentScreen = .courses
 
-        // Initialize sync engine and load courses
         syncEngine = SyncEngine(provider: moodleClient, database: db)
         await loadCourses()
     }

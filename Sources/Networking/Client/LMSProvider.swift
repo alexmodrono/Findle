@@ -7,8 +7,12 @@ public protocol LMSProvider: Sendable {
     /// Validate that the server at the given URL is a compatible LMS instance.
     func validateSite(url: URL) async throws -> MoodleSite
 
-    /// Authenticate with the server and return a token.
+    /// Authenticate with username/password and return a token.
     func authenticate(site: MoodleSite, username: String, password: String) async throws -> AuthToken
+
+    /// Parse a token from an SSO callback URL.
+    /// The callback URL is in the form: `foodle://token={base64(passport:::token:::privatetoken)}`
+    func parseTokenFromSSOCallback(callbackURL: URL, expectedPassport: String) throws -> AuthToken
 
     /// Fetch info about the authenticated user.
     func fetchUserInfo(site: MoodleSite, token: AuthToken) async throws -> MoodleUser

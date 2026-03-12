@@ -1,4 +1,5 @@
 import SwiftUI
+import AuthenticationServices
 import SharedDomain
 
 struct OnboardingView: View {
@@ -16,6 +17,7 @@ struct OnboardingView: View {
         case welcome
         case serverURL
         case credentials
+        case sso
         case connecting
         case complete
     }
@@ -51,6 +53,8 @@ struct OnboardingView: View {
                     serverURLStep
                 case .credentials:
                     credentialsStep
+                case .sso:
+                    ssoStep
                 case .connecting:
                     connectingStep
                 case .complete:
@@ -60,7 +64,7 @@ struct OnboardingView: View {
             .padding(32)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 520, height: 480)
+        .frame(width: 520, height: 520)
     }
 
     // MARK: - Steps
@@ -70,7 +74,7 @@ struct OnboardingView: View {
             VStack(alignment: .leading, spacing: 12) {
                 featureRow(icon: "folder.fill.badge.gearshape", title: "Finder Integration", description: "Course files appear directly in Finder, just like iCloud or Dropbox.")
                 featureRow(icon: "arrow.down.circle.fill", title: "On-Demand Downloads", description: "Files download only when you open them, saving disk space.")
-                featureRow(icon: "lock.fill", title: "Secure Connection", description: "Your credentials are stored securely in the macOS Keychain.")
+                featureRow(icon: "lock.fill", title: "Secure Connection", description: "Supports SSO (Microsoft, Google, etc.) and stores tokens securely in the macOS Keychain.")
             }
 
             Spacer()
@@ -98,6 +102,11 @@ struct OnboardingView: View {
                 .frame(maxWidth: 380)
                 .onSubmit { Task { await validateServer() } }
 
+            if isLoading {
+                ProgressView()
+                    .controlSize(.small)
+            }
+
             if let error = errorMessage {
                 Text(error)
                     .font(.caption)
@@ -124,20 +133,7 @@ struct OnboardingView: View {
 
     private var credentialsStep: some View {
         VStack(spacing: 20) {
-            if let site = validatedSite {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                    Text(site.displayName)
-                        .font(.headline)
-                }
-
-                if let version = site.capabilities.moodleRelease {
-                    Text("Moodle \(version)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            siteHeader
 
             VStack(spacing: 12) {
                 TextField("Username", text: $username)
@@ -147,7 +143,7 @@ struct OnboardingView: View {
                 SecureField("Password", text: $password)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 320)
-                    .onSubmit { Task { await signIn() } }
+                    .onSubmit { Task { await signInWithPassword() } }
             }
 
             if let error = errorMessage {
@@ -167,10 +163,88 @@ struct OnboardingView: View {
                 Spacer()
 
                 Button("Sign In") {
-                    Task { await signIn() }
+                    Task { await signInWithPassword() }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(username.isEmpty || password.isEmpty || isLoading)
+            }
+        }
+    }
+
+    private var ssoStep: some View {
+        VStack(spacing: 20) {
+            siteHeader
+
+            VStack(spacing: 12) {
+                Image(systemName: "globe")
+                    .font(.system(size: 32))
+                    .foregroundStyle(.secondary)
+
+                Text("This site uses single sign-on")
+                    .font(.headline)
+
+                Text("You'll be redirected to your institution's login page to authenticate with your existing account.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 360)
+
+                // Show identity provider names if available
+                if let site = validatedSite, !site.capabilities.identityProviders.isEmpty {
+                    HStack(spacing: 8) {
+                        ForEach(site.capabilities.identityProviders.prefix(3), id: \.name) { provider in
+                            Text(provider.name)
+                                .font(.caption)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.quaternary)
+                                .clipShape(Capsule())
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+            }
+
+            if let error = errorMessage {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            Spacer()
+
+            HStack {
+                Button("Back") {
+                    errorMessage = nil
+                    withAnimation { step = .serverURL }
+                }
+
+                Spacer()
+
+                Button("Sign In with SSO") {
+                    Task { await signInWithSSO() }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isLoading)
+            }
+        }
+    }
+
+    private var siteHeader: some View {
+        VStack(spacing: 4) {
+            if let site = validatedSite {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    Text(site.displayName)
+                        .font(.headline)
+                }
+
+                if let version = site.capabilities.moodleRelease {
+                    Text("Moodle \(version)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -240,8 +314,14 @@ struct OnboardingView: View {
         errorMessage = nil
 
         do {
-            validatedSite = try await appState.validateSite(urlString: serverURL)
-            withAnimation { step = .credentials }
+            let site = try await appState.validateSite(urlString: serverURL)
+            validatedSite = site
+
+            if site.capabilities.requiresSSO {
+                withAnimation { step = .sso }
+            } else {
+                withAnimation { step = .credentials }
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -249,7 +329,7 @@ struct OnboardingView: View {
         isLoading = false
     }
 
-    private func signIn() async {
+    private func signInWithPassword() async {
         guard let site = validatedSite else { return }
 
         isLoading = true
@@ -265,5 +345,49 @@ struct OnboardingView: View {
         }
 
         isLoading = false
+    }
+
+    private func signInWithSSO() async {
+        guard let site = validatedSite else { return }
+
+        isLoading = true
+        errorMessage = nil
+
+        do {
+            // Use the key window as the presentation anchor for ASWebAuthenticationSession
+            guard let window = NSApplication.shared.keyWindow else {
+                throw FoodleError.internalError(detail: "No window available for authentication.")
+            }
+            let context = WindowPresentationContext(window: window)
+
+            withAnimation { step = .connecting }
+            try await appState.signInWithSSO(site: site, presentationContext: context)
+            withAnimation { step = .complete }
+        } catch is CancellationError {
+            withAnimation { step = .sso }
+        } catch let error as FoodleError where error.isCancelled {
+            // User cancelled - go back to SSO step without showing an error
+            withAnimation { step = .sso }
+        } catch {
+            errorMessage = error.localizedDescription
+            withAnimation { step = .sso }
+        }
+
+        isLoading = false
+    }
+}
+
+// MARK: - ASWebAuthenticationSession Presentation Context
+
+/// Provides the window anchor for ASWebAuthenticationSession.
+final class WindowPresentationContext: NSObject, ASWebAuthenticationPresentationContextProviding {
+    private let window: NSWindow
+
+    init(window: NSWindow) {
+        self.window = window
+    }
+
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        window
     }
 }

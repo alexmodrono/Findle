@@ -97,4 +97,9 @@ public enum FoodleError: Error, Sendable, LocalizedError {
             return false
         }
     }
+
+    public var isCancelled: Bool {
+        if case .cancelled = self { return true }
+        return false
+    }
 }

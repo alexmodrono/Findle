@@ -85,6 +85,90 @@ final class MoodleClientTests: XCTestCase {
         XCTAssertEqual(courses[0].shortname, "CS101")
     }
 
+    // MARK: - SSO Token Parsing
+
+    func testSSOTokenParsing() throws {
+        let client = MoodleClient()
+        let passport = "abc123passport"
+        let token = "realtoken456"
+        let privateToken = "privatetok789"
+
+        // Build base64 payload: passport:::token:::privatetoken
+        let payload = "\(passport):::\(token):::\(privateToken)"
+        let base64 = Data(payload.utf8).base64EncodedString()
+
+        let callbackURL = URL(string: "foodle://token=\(base64)")!
+        let result = try client.parseTokenFromSSOCallback(callbackURL: callbackURL, expectedPassport: passport)
+
+        XCTAssertEqual(result.token, token)
+        XCTAssertEqual(result.privateToken, privateToken)
+    }
+
+    func testSSOTokenParsingWithoutPrivateToken() throws {
+        let client = MoodleClient()
+        let passport = "mypassport"
+        let token = "mytoken"
+
+        let payload = "\(passport):::\(token)"
+        let base64 = Data(payload.utf8).base64EncodedString()
+
+        let callbackURL = URL(string: "foodle://token=\(base64)")!
+        let result = try client.parseTokenFromSSOCallback(callbackURL: callbackURL, expectedPassport: passport)
+
+        XCTAssertEqual(result.token, token)
+        XCTAssertNil(result.privateToken)
+    }
+
+    func testSSOTokenParsingRejectsWrongPassport() {
+        let client = MoodleClient()
+        let payload = "wrongpassport:::token123"
+        let base64 = Data(payload.utf8).base64EncodedString()
+
+        let callbackURL = URL(string: "foodle://token=\(base64)")!
+
+        XCTAssertThrowsError(
+            try client.parseTokenFromSSOCallback(callbackURL: callbackURL, expectedPassport: "correctpassport")
+        ) { error in
+            XCTAssertTrue(error is FoodleError)
+        }
+    }
+
+    func testSSOTokenParsingURLSafeBase64() throws {
+        let client = MoodleClient()
+        let passport = "pass"
+        let token = "tok+en/with=special"
+
+        let payload = "\(passport):::\(token)"
+        // URL-safe base64: replace + with -, / with _
+        let base64 = Data(payload.utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+
+        let callbackURL = URL(string: "foodle://token=\(base64)")!
+        let result = try client.parseTokenFromSSOCallback(callbackURL: callbackURL, expectedPassport: passport)
+
+        XCTAssertEqual(result.token, token)
+    }
+
+    // MARK: - Login Type
+
+    func testSiteLoginTypeSSO() {
+        XCTAssertTrue(SiteLoginType.browser.requiresSSO)
+        XCTAssertTrue(SiteLoginType.embedded.requiresSSO)
+        XCTAssertFalse(SiteLoginType.app.requiresSSO)
+    }
+
+    func testSiteCapabilitiesRequiresSSO() {
+        let ssoCapabilities = SiteCapabilities(loginType: .browser)
+        XCTAssertTrue(ssoCapabilities.requiresSSO)
+
+        let appCapabilities = SiteCapabilities(loginType: .app)
+        XCTAssertFalse(appCapabilities.requiresSSO)
+    }
+
+    // MARK: - Module Response
+
     func testModuleResponseDecoding() throws {
         let json = """
         {

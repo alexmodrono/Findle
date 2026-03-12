@@ -88,6 +88,29 @@ public final class MoodleClient: LMSProvider, @unchecked Sendable {
             let siteName = resultData["sitename"] as? String
             let release = resultData["release"] as? String
             let version = resultData["version"] as? String
+            let launchURL = resultData["launchurl"] as? String
+
+            // Parse login type: 1 = app, 2 = browser SSO, 3 = embedded SSO
+            let typeOfLogin = resultData["typeoflogin"] as? Int ?? 1
+            let loginType = SiteLoginType(rawValue: typeOfLogin) ?? .app
+
+            // Parse identity providers (e.g., Microsoft, Google, Okta)
+            var identityProviders: [IdentityProvider] = []
+            if let providers = resultData["identityproviders"] as? [[String: Any]] {
+                for provider in providers {
+                    if let name = provider["name"] as? String,
+                       let urlString = provider["url"] as? String,
+                       let url = URL(string: urlString) {
+                        let iconURL = (provider["iconurl"] as? String).flatMap { URL(string: $0) }
+                        identityProviders.append(IdentityProvider(name: name, iconURL: iconURL, url: url))
+                    }
+                }
+            }
+
+            logger.info("Site login type: \(typeOfLogin) (\(loginType.requiresSSO ? "SSO" : "password", privacy: .public))")
+            if !identityProviders.isEmpty {
+                logger.info("Identity providers: \(identityProviders.map(\.name).joined(separator: ", "), privacy: .public)")
+            }
 
             let capabilities = SiteCapabilities(
                 supportsWebServices: true,
@@ -95,7 +118,10 @@ public final class MoodleClient: LMSProvider, @unchecked Sendable {
                 supportsFileDownload: true,
                 moodleVersion: version,
                 moodleRelease: release,
-                siteName: siteName
+                siteName: siteName,
+                loginType: loginType,
+                launchURL: launchURL,
+                identityProviders: identityProviders
             )
 
             return MoodleSite(
@@ -105,7 +131,7 @@ public final class MoodleClient: LMSProvider, @unchecked Sendable {
             )
         }
 
-        // Fallback: assume basic compatibility
+        // Fallback: assume basic compatibility, default to app login
         return MoodleSite(
             displayName: baseURL.host ?? "Moodle",
             baseURL: baseURL,
@@ -149,6 +175,85 @@ public final class MoodleClient: LMSProvider, @unchecked Sendable {
         }
 
         return AuthToken(token: token, privateToken: tokenResponse.privatetoken)
+    }
+
+    // MARK: - SSO Token Parsing
+
+    public func parseTokenFromSSOCallback(callbackURL: URL, expectedPassport: String) throws -> AuthToken {
+        logger.info("Parsing SSO callback")
+
+        // Moodle redirects to: foodle://token={base64_string}
+        // The base64 decodes to: {passport}:::{token}:::{privatetoken}
+        guard let host = callbackURL.host, host == "token" else {
+            // Try query parameter format: foodle://token?token={base64}
+            // Or path-based: foodle://token={base64}
+            let urlString = callbackURL.absoluteString
+            guard let tokenParam = extractTokenParam(from: urlString) else {
+                throw FoodleError.invalidResponse(detail: "SSO callback URL has unexpected format.")
+            }
+            return try decodeTokenPayload(tokenParam, expectedPassport: expectedPassport)
+        }
+
+        // Handle foodle://token={base64} format where the "host" portion contains the base64
+        let urlString = callbackURL.absoluteString
+        guard let tokenParam = extractTokenParam(from: urlString) else {
+            throw FoodleError.invalidResponse(detail: "Could not extract token from SSO callback.")
+        }
+
+        return try decodeTokenPayload(tokenParam, expectedPassport: expectedPassport)
+    }
+
+    private func extractTokenParam(from urlString: String) -> String? {
+        // Format 1: foodle://token={base64}
+        let scheme = MoodleSite.callbackScheme + "://token="
+        if urlString.hasPrefix(scheme) {
+            return String(urlString.dropFirst(scheme.count))
+        }
+
+        // Format 2: foodle://token?token={base64}  (URL query param)
+        if let components = URLComponents(string: urlString),
+           let tokenItem = components.queryItems?.first(where: { $0.name == "token" }) {
+            return tokenItem.value
+        }
+
+        return nil
+    }
+
+    private func decodeTokenPayload(_ base64String: String, expectedPassport: String) throws -> AuthToken {
+        // The base64 string may be URL-safe encoded; normalize it
+        var base64 = base64String
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+
+        // Pad if necessary
+        let remainder = base64.count % 4
+        if remainder > 0 {
+            base64.append(String(repeating: "=", count: 4 - remainder))
+        }
+
+        guard let data = Data(base64Encoded: base64),
+              let decoded = String(data: data, encoding: .utf8) else {
+            throw FoodleError.invalidResponse(detail: "Could not decode SSO token payload.")
+        }
+
+        // Format: {passport}:::{token}  or  {passport}:::{token}:::{privatetoken}
+        let parts = decoded.components(separatedBy: ":::")
+        guard parts.count >= 2 else {
+            throw FoodleError.invalidResponse(detail: "SSO token payload has unexpected format.")
+        }
+
+        let passport = parts[0]
+        let token = parts[1]
+        let privateToken = parts.count > 2 ? parts[2] : nil
+
+        // Verify the passport matches what we sent to prevent token injection
+        guard passport == expectedPassport else {
+            logger.error("SSO passport mismatch - possible token injection attempt")
+            throw FoodleError.invalidResponse(detail: "SSO security verification failed.")
+        }
+
+        logger.info("SSO token obtained successfully")
+        return AuthToken(token: token, privateToken: privateToken)
     }
 
     // MARK: - User Info
