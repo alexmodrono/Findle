@@ -128,7 +128,8 @@ extension EmbeddedAuthCoordinator: WKNavigationDelegate {
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         let nsError = error as NSError
         // WebKitErrorFrameLoadInterruptedByPolicyChange (102) is expected when we cancel navigation.
-        if nsError.domain == "WebKitErrorDomain" && nsError.code == 102 {
+        // NSURLErrorCancelled (-999) fires when a redirect replaces the current navigation.
+        if isExpectedNavigationError(nsError) {
             return
         }
         logger.error("Embedded SSO navigation failed: \(error.localizedDescription, privacy: .public)")
@@ -136,7 +137,9 @@ extension EmbeddedAuthCoordinator: WKNavigationDelegate {
 
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         let nsError = error as NSError
-        if nsError.domain == "WebKitErrorDomain" && nsError.code == 102 {
+        // Redirects (e.g. Moodle -> Microsoft SSO) cancel the old provisional navigation
+        // with -999. This is normal and not a real failure.
+        if isExpectedNavigationError(nsError) {
             return
         }
         logger.error("Embedded SSO provisional navigation failed: \(error.localizedDescription, privacy: .public)")
@@ -145,5 +148,18 @@ extension EmbeddedAuthCoordinator: WKNavigationDelegate {
         pending?.resume(throwing: FoodleError.ssoCallbackInvalid(
             detail: "The embedded sign-in page failed to load: \(error.localizedDescription)"
         ))
+    }
+
+    /// Errors that are expected during normal SSO redirect chains and should be silently ignored.
+    private func isExpectedNavigationError(_ error: NSError) -> Bool {
+        // WebKitErrorFrameLoadInterruptedByPolicyChange — we cancelled via decidePolicyFor.
+        if error.domain == "WebKitErrorDomain" && error.code == 102 {
+            return true
+        }
+        // NSURLErrorCancelled — a redirect replaced the current navigation.
+        if error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled {
+            return true
+        }
+        return false
     }
 }
