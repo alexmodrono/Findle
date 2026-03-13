@@ -1,6 +1,7 @@
 import Foundation
 import SharedDomain
 import OSLog
+import CommonCrypto
 
 /// Native Moodle web services client implementing the LMSProvider protocol.
 public final class MoodleClient: LMSProvider, @unchecked Sendable {
@@ -89,6 +90,8 @@ public final class MoodleClient: LMSProvider, @unchecked Sendable {
             let release = resultData["release"] as? String
             let version = resultData["version"] as? String
             let launchURL = resultData["launchurl"] as? String
+            let wwwroot = resultData["wwwroot"] as? String
+            let httpswwwroot = resultData["httpswwwroot"] as? String
 
             // Parse login type: 1 = app, 2 = browser SSO, 3 = embedded SSO
             let typeOfLogin = resultData["typeoflogin"] as? Int ?? 1
@@ -107,7 +110,33 @@ public final class MoodleClient: LMSProvider, @unchecked Sendable {
                 }
             }
 
+            // Determine canonical base URL from discovered site root.
+            // Priority: valid httpswwwroot > valid wwwroot > original baseURL.
+            let canonicalBaseURL: URL = {
+                if let https = httpswwwroot, let url = URL(string: https), url.scheme == "https" {
+                    return Self.normalizeURL(url)
+                }
+                if let www = wwwroot, let url = URL(string: www) {
+                    return Self.normalizeURL(url)
+                }
+                return baseURL
+            }()
+
             logger.info("Site login type: \(typeOfLogin) (\(loginType.requiresSSO ? "SSO" : "password", privacy: .public))")
+            if let launchURL {
+                logger.info("Discovered launchurl: \(launchURL, privacy: .public)")
+            } else {
+                logger.info("No launchurl advertised by site")
+            }
+            if let wwwroot {
+                logger.info("Discovered wwwroot: \(wwwroot, privacy: .public)")
+            }
+            if let httpswwwroot {
+                logger.info("Discovered httpswwwroot: \(httpswwwroot, privacy: .public)")
+            }
+            if canonicalBaseURL != baseURL {
+                logger.info("Canonical base URL set to discovered root: \(canonicalBaseURL.absoluteString, privacy: .public)")
+            }
             if !identityProviders.isEmpty {
                 logger.info("Identity providers: \(identityProviders.map(\.name).joined(separator: ", "), privacy: .public)")
             }
@@ -121,12 +150,15 @@ public final class MoodleClient: LMSProvider, @unchecked Sendable {
                 siteName: siteName,
                 loginType: loginType,
                 launchURL: launchURL,
-                identityProviders: identityProviders
+                identityProviders: identityProviders,
+                wwwroot: wwwroot,
+                httpswwwroot: httpswwwroot,
+                showLoginForm: true
             )
 
             return MoodleSite(
-                displayName: siteName ?? baseURL.host ?? "Moodle",
-                baseURL: baseURL,
+                displayName: siteName ?? canonicalBaseURL.host ?? "Moodle",
+                baseURL: canonicalBaseURL,
                 capabilities: capabilities
             )
         }
@@ -179,38 +211,27 @@ public final class MoodleClient: LMSProvider, @unchecked Sendable {
 
     // MARK: - SSO Token Parsing
 
-    public func parseTokenFromSSOCallback(callbackURL: URL, expectedPassport: String) throws -> AuthToken {
+    public func parseTokenFromSSOCallback(callbackURLString: String, site: MoodleSite, passport: String) throws -> AuthToken {
         logger.info("Parsing SSO callback")
 
-        // Moodle redirects to: foodle://token={base64_string}
-        // The base64 decodes to: {passport}:::{token}:::{privatetoken}
-        guard let host = callbackURL.host, host == "token" else {
-            // Try query parameter format: foodle://token?token={base64}
-            // Or path-based: foodle://token={base64}
-            let urlString = callbackURL.absoluteString
-            guard let tokenParam = extractTokenParam(from: urlString) else {
-                throw FoodleError.invalidResponse(detail: "SSO callback URL has unexpected format.")
-            }
-            return try decodeTokenPayload(tokenParam, expectedPassport: expectedPassport)
+        guard let base64String = Self.extractTokenParam(from: callbackURLString) else {
+            throw FoodleError.invalidResponse(detail: "SSO callback URL has unexpected format.")
         }
 
-        // Handle foodle://token={base64} format where the "host" portion contains the base64
-        let urlString = callbackURL.absoluteString
-        guard let tokenParam = extractTokenParam(from: urlString) else {
-            throw FoodleError.invalidResponse(detail: "Could not extract token from SSO callback.")
-        }
-
-        return try decodeTokenPayload(tokenParam, expectedPassport: expectedPassport)
+        return try decodeTokenPayload(base64String, site: site, passport: passport)
     }
 
-    private func extractTokenParam(from urlString: String) -> String? {
-        // Format 1: foodle://token={base64}
-        let scheme = MoodleSite.callbackScheme + "://token="
-        if urlString.hasPrefix(scheme) {
-            return String(urlString.dropFirst(scheme.count))
+    /// Extract the base64 token parameter from a raw callback URL string.
+    /// Handles both `scheme://token=<base64>` and `scheme://token?token=<base64>` formats,
+    /// and accepts any URL scheme (foodle, moodlemobile, openlms, etc.).
+    static func extractTokenParam(from urlString: String) -> String? {
+        // Format 1: scheme://token=<base64> — the token is everything after "://token="
+        if let range = urlString.range(of: "://token=") {
+            let value = String(urlString[range.upperBound...])
+            return value.isEmpty ? nil : value
         }
 
-        // Format 2: foodle://token?token={base64}  (URL query param)
+        // Format 2: scheme://token?token=<base64> (URL query param)
         if let components = URLComponents(string: urlString),
            let tokenItem = components.queryItems?.first(where: { $0.name == "token" }) {
             return tokenItem.value
@@ -219,9 +240,12 @@ public final class MoodleClient: LMSProvider, @unchecked Sendable {
         return nil
     }
 
-    private func decodeTokenPayload(_ base64String: String, expectedPassport: String) throws -> AuthToken {
+    private func decodeTokenPayload(_ base64String: String, site: MoodleSite, passport: String) throws -> AuthToken {
+        let decodedPercentEscapes = base64String.removingPercentEncoding ?? base64String
+
         // The base64 string may be URL-safe encoded; normalize it
-        var base64 = base64String
+        var base64 = decodedPercentEscapes
+            .replacingOccurrences(of: " ", with: "+")
             .replacingOccurrences(of: "-", with: "+")
             .replacingOccurrences(of: "_", with: "/")
 
@@ -236,24 +260,71 @@ public final class MoodleClient: LMSProvider, @unchecked Sendable {
             throw FoodleError.invalidResponse(detail: "Could not decode SSO token payload.")
         }
 
-        // Format: {passport}:::{token}  or  {passport}:::{token}:::{privatetoken}
+        // Moodle payload format: md5(siteURL + passport):::token[:::privatetoken]
         let parts = decoded.components(separatedBy: ":::")
         guard parts.count >= 2 else {
             throw FoodleError.invalidResponse(detail: "SSO token payload has unexpected format.")
         }
 
-        let passport = parts[0]
+        let signature = parts[0]
         let token = parts[1]
         let privateToken = parts.count > 2 ? parts[2] : nil
 
-        // Verify the passport matches what we sent to prevent token injection
-        guard passport == expectedPassport else {
-            logger.error("SSO passport mismatch - possible token injection attempt")
+        // Build candidate site URLs for signature validation.
+        // Moodle computes md5(wwwroot + passport), so we try all known URL variants.
+        let candidateURLs = Self.signatureCandidateURLs(for: site)
+
+        let matched = candidateURLs.contains { candidate in
+            let expected = Self.md5("\(candidate)\(passport)")
+            return expected == signature
+        }
+
+        guard matched else {
+            logger.error("SSO signature mismatch - none of the candidate URLs matched")
             throw FoodleError.invalidResponse(detail: "SSO security verification failed.")
         }
 
         logger.info("SSO token obtained successfully")
         return AuthToken(token: token, privateToken: privateToken)
+    }
+
+    /// Build an ordered list of candidate site URL strings for SSO signature validation.
+    /// Moodle computes `md5(wwwroot + passport)` so we try the known URL variants.
+    static func signatureCandidateURLs(for site: MoodleSite) -> [String] {
+        var candidates: [String] = []
+
+        // Prefer the discovered wwwroot and httpswwwroot first.
+        if let wwwroot = site.capabilities.wwwroot {
+            candidates.append(wwwroot)
+        }
+        if let httpswwwroot = site.capabilities.httpswwwroot {
+            candidates.append(httpswwwroot)
+        }
+
+        // The canonical base URL.
+        let base = site.baseURL.absoluteString
+        candidates.append(base)
+
+        // Try the HTTP/HTTPS alternate of the canonical URL.
+        if base.hasPrefix("https://") {
+            candidates.append("http://" + base.dropFirst("https://".count))
+        } else if base.hasPrefix("http://") {
+            candidates.append("https://" + base.dropFirst("http://".count))
+        }
+
+        // Deduplicate while preserving order.
+        var seen = Set<String>()
+        return candidates.filter { seen.insert($0).inserted }
+    }
+
+    /// Compute the MD5 hex digest of a string.
+    static func md5(_ string: String) -> String {
+        let data = Data(string.utf8)
+        var digest = [UInt8](repeating: 0, count: Int(CC_MD5_DIGEST_LENGTH))
+        data.withUnsafeBytes { body in
+            _ = CC_MD5(body.baseAddress, CC_LONG(data.count), &digest)
+        }
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 
     // MARK: - User Info
@@ -470,5 +541,21 @@ public final class MoodleClient: LMSProvider, @unchecked Sendable {
             urlString = String(urlString.dropLast())
         }
         return URL(string: urlString) ?? url
+    }
+
+    // MARK: - Diagnostics
+
+    /// Log a privacy-safe summary of a site's SSO capabilities for manual verification.
+    public func logSSODiagnostics(for site: MoodleSite) {
+        logger.info("SSO diagnostics for \(site.displayName, privacy: .public)")
+        logger.info("  Base URL: \(site.baseURL.absoluteString, privacy: .public)")
+        logger.info("  Login type: \(site.capabilities.loginType.rawValue) (requiresSSO: \(site.capabilities.loginType.requiresSSO, privacy: .public))")
+        logger.info("  Has advertised launchURL: \(site.capabilities.launchURL != nil, privacy: .public)")
+        logger.debug("  Advertised launchURL: \(site.capabilities.launchURL ?? "<none>", privacy: .private)")
+        logger.info("  wwwroot: \(site.capabilities.wwwroot ?? "<none>", privacy: .public)")
+        logger.info("  httpswwwroot: \(site.capabilities.httpswwwroot ?? "<none>", privacy: .public)")
+        logger.info("  Identity providers: \(site.capabilities.identityProviders.map(\.name).joined(separator: ", "), privacy: .public)")
+        logger.info("  Moodle version: \(site.capabilities.moodleVersion ?? "unknown", privacy: .public)")
+        logger.info("  Moodle release: \(site.capabilities.moodleRelease ?? "unknown", privacy: .public)")
     }
 }

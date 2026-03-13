@@ -11,8 +11,16 @@ public protocol LMSProvider: Sendable {
     func authenticate(site: MoodleSite, username: String, password: String) async throws -> AuthToken
 
     /// Parse a token from an SSO callback URL.
-    /// The callback URL is in the form: `foodle://token={base64(passport:::token:::privatetoken)}`
-    func parseTokenFromSSOCallback(callbackURL: URL, expectedPassport: String) throws -> AuthToken
+    ///
+    /// Moodle redirects to `<scheme>://token=<base64>` where the base64 decodes to
+    /// `md5(siteURL + passport):::token[:::privatetoken]`. The signature is validated
+    /// against the site's known URLs.
+    ///
+    /// - Parameters:
+    ///   - callbackURLString: The raw callback URL string (may use any recognized scheme).
+    ///   - site: The Moodle site that initiated the SSO flow.
+    ///   - passport: The random passport nonce sent in the launch URL.
+    func parseTokenFromSSOCallback(callbackURLString: String, site: MoodleSite, passport: String) throws -> AuthToken
 
     /// Fetch info about the authenticated user.
     func fetchUserInfo(site: MoodleSite, token: AuthToken) async throws -> MoodleUser

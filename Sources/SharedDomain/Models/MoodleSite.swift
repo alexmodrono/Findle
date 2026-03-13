@@ -24,24 +24,12 @@ public struct MoodleSite: Sendable, Codable, Equatable, Identifiable {
         baseURL.appendingPathComponent("login/token.php")
     }
 
-    /// The SSO launch URL for browser-based authentication.
-    /// - Parameter passport: A random string to verify the callback authenticity.
-    /// - Returns: The URL to open in ASWebAuthenticationSession.
-    public func ssoLaunchURL(passport: String) -> URL {
-        var components = URLComponents(
-            url: baseURL.appendingPathComponent("admin/tool/mobile/launch.php"),
-            resolvingAgainstBaseURL: false
-        )!
-        components.queryItems = [
-            URLQueryItem(name: "service", value: "moodle_mobile_app"),
-            URLQueryItem(name: "passport", value: passport),
-            URLQueryItem(name: "urlscheme", value: MoodleSite.callbackScheme)
-        ]
-        return components.url!
-    }
-
     /// The custom URL scheme used for SSO callbacks.
     public static let callbackScheme = "foodle"
+
+    /// All URL schemes recognized as valid SSO callbacks.
+    /// Moodle may redirect to branded schemes depending on the mobile app configuration.
+    public static let acceptedCallbackSchemes: Set<String> = ["foodle", "moodlemobile", "openlms"]
 }
 
 /// How the site expects users to authenticate.
@@ -71,6 +59,18 @@ public struct SiteCapabilities: Sendable, Codable, Equatable {
     public var launchURL: String?
     public var identityProviders: [IdentityProvider]
 
+    /// The `wwwroot` field from `tool_mobile_get_public_config`.
+    /// This is the canonical site root URL as known by the Moodle instance.
+    public var wwwroot: String?
+
+    /// The `httpswwwroot` field from `tool_mobile_get_public_config`.
+    /// The HTTPS variant of the site root, if available.
+    public var httpswwwroot: String?
+
+    /// Whether the site advertises that a login form should be shown
+    /// (`enablemobilewebservice` / config flag). Defaults to `true`.
+    public var showLoginForm: Bool
+
     public init(
         supportsWebServices: Bool = false,
         supportsMobileAPI: Bool = false,
@@ -80,7 +80,10 @@ public struct SiteCapabilities: Sendable, Codable, Equatable {
         siteName: String? = nil,
         loginType: SiteLoginType = .app,
         launchURL: String? = nil,
-        identityProviders: [IdentityProvider] = []
+        identityProviders: [IdentityProvider] = [],
+        wwwroot: String? = nil,
+        httpswwwroot: String? = nil,
+        showLoginForm: Bool = true
     ) {
         self.supportsWebServices = supportsWebServices
         self.supportsMobileAPI = supportsMobileAPI
@@ -91,6 +94,9 @@ public struct SiteCapabilities: Sendable, Codable, Equatable {
         self.loginType = loginType
         self.launchURL = launchURL
         self.identityProviders = identityProviders
+        self.wwwroot = wwwroot
+        self.httpswwwroot = httpswwwroot
+        self.showLoginForm = showLoginForm
     }
 
     public var isCompatible: Bool {

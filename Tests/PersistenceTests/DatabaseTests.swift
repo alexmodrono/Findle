@@ -42,9 +42,128 @@ final class DatabaseTests: XCTestCase {
         XCTAssertEqual(fetched?.capabilities.moodleRelease, "4.3.2")
     }
 
+    func testSaveFetchSiteWithLoginCapabilities() throws {
+        let site = MoodleSite(
+            id: "sso-site-1",
+            displayName: "SSO University",
+            baseURL: URL(string: "https://sso.test.edu")!,
+            capabilities: SiteCapabilities(
+                supportsWebServices: true,
+                supportsMobileAPI: true,
+                supportsFileDownload: true,
+                moodleVersion: "2024042200",
+                moodleRelease: "4.4.0",
+                loginType: .browser,
+                launchURL: "https://sso.test.edu/auth/mobile/launch"
+            )
+        )
+
+        try database.saveSite(site)
+        let fetched = try database.fetchSite(id: "sso-site-1")
+
+        XCTAssertNotNil(fetched)
+        XCTAssertEqual(fetched?.capabilities.loginType, .browser)
+        XCTAssertEqual(fetched?.capabilities.launchURL, "https://sso.test.edu/auth/mobile/launch")
+        XCTAssertTrue(fetched?.capabilities.requiresSSO ?? false)
+    }
+
+    func testSaveFetchSiteWithEmbeddedLogin() throws {
+        let site = MoodleSite(
+            id: "embedded-site-1",
+            displayName: "Embedded University",
+            baseURL: URL(string: "https://embedded.test.edu")!,
+            capabilities: SiteCapabilities(
+                supportsWebServices: true,
+                supportsMobileAPI: true,
+                supportsFileDownload: true,
+                loginType: .embedded,
+                launchURL: nil
+            )
+        )
+
+        try database.saveSite(site)
+        let fetched = try database.fetchSite(id: "embedded-site-1")
+
+        XCTAssertNotNil(fetched)
+        XCTAssertEqual(fetched?.capabilities.loginType, .embedded)
+        XCTAssertNil(fetched?.capabilities.launchURL)
+    }
+
+    func testSaveFetchSiteDefaultsToAppLogin() throws {
+        let site = MoodleSite(
+            id: "app-site-1",
+            displayName: "App University",
+            baseURL: URL(string: "https://app.test.edu")!,
+            capabilities: SiteCapabilities(
+                supportsWebServices: true,
+                supportsMobileAPI: true,
+                supportsFileDownload: true
+            )
+        )
+
+        try database.saveSite(site)
+        let fetched = try database.fetchSite(id: "app-site-1")
+
+        XCTAssertNotNil(fetched)
+        XCTAssertEqual(fetched?.capabilities.loginType, .app)
+        XCTAssertNil(fetched?.capabilities.launchURL)
+    }
+
     func testFetchNonexistentSite() throws {
         let result = try database.fetchSite(id: "nonexistent")
         XCTAssertNil(result)
+    }
+
+    // MARK: - Schema v3 Fields (wwwroot, httpswwwroot, showLoginForm)
+
+    func testSaveFetchSiteWithDiscoveredRoots() throws {
+        let site = MoodleSite(
+            id: "v3-site-1",
+            displayName: "V3 University",
+            baseURL: URL(string: "https://v3.test.edu")!,
+            capabilities: SiteCapabilities(
+                supportsWebServices: true,
+                supportsMobileAPI: true,
+                supportsFileDownload: true,
+                loginType: .embedded,
+                launchURL: "https://v3.test.edu/admin/tool/mobile/launch.php",
+                wwwroot: "https://v3.test.edu",
+                httpswwwroot: "https://v3.test.edu",
+                showLoginForm: false
+            )
+        )
+
+        try database.saveSite(site)
+        let fetched = try database.fetchSite(id: "v3-site-1")
+
+        XCTAssertNotNil(fetched)
+        XCTAssertEqual(fetched?.capabilities.wwwroot, "https://v3.test.edu")
+        XCTAssertEqual(fetched?.capabilities.httpswwwroot, "https://v3.test.edu")
+        XCTAssertEqual(fetched?.capabilities.showLoginForm, false)
+        XCTAssertEqual(fetched?.capabilities.loginType, .embedded)
+        XCTAssertEqual(fetched?.capabilities.launchURL, "https://v3.test.edu/admin/tool/mobile/launch.php")
+    }
+
+    func testSaveFetchSiteNilDiscoveredRoots() throws {
+        let site = MoodleSite(
+            id: "v3-nil-site",
+            displayName: "Nil Roots",
+            baseURL: URL(string: "https://nil.test.edu")!,
+            capabilities: SiteCapabilities(
+                supportsWebServices: true,
+                supportsMobileAPI: true,
+                supportsFileDownload: true,
+                loginType: .app
+            )
+        )
+
+        try database.saveSite(site)
+        let fetched = try database.fetchSite(id: "v3-nil-site")
+
+        XCTAssertNotNil(fetched)
+        XCTAssertNil(fetched?.capabilities.wwwroot)
+        XCTAssertNil(fetched?.capabilities.httpswwwroot)
+        XCTAssertEqual(fetched?.capabilities.showLoginForm, true)
     }
 
     // MARK: - Account Tests

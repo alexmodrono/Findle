@@ -10,7 +10,7 @@ public final class Database: @unchecked Sendable {
     private let logger = Logger(subsystem: "es.amodrono.foodle.persistence", category: "Database")
     private let path: String
 
-    public static let schemaVersion = 1
+    public static let schemaVersion = 3
 
     public init(path: String? = nil) throws {
         if let path = path {
@@ -36,6 +36,7 @@ public final class Database: @unchecked Sendable {
         try execute("PRAGMA foreign_keys = ON")
 
         try createSchema()
+        try migrateSchema()
         logger.info("Database opened at \(self.path, privacy: .public)")
     }
 
@@ -59,7 +60,12 @@ public final class Database: @unchecked Sendable {
                 moodle_version TEXT,
                 moodle_release TEXT,
                 site_name TEXT,
-                created_at REAL NOT NULL DEFAULT (strftime('%s', 'now'))
+                created_at REAL NOT NULL DEFAULT (strftime('%s', 'now')),
+                login_type INTEGER NOT NULL DEFAULT 1,
+                launch_url TEXT,
+                wwwroot TEXT,
+                httpswwwroot TEXT,
+                show_login_form INTEGER NOT NULL DEFAULT 1
             )
         """)
 
@@ -138,17 +144,75 @@ public final class Database: @unchecked Sendable {
         """)
     }
 
+    private func migrateSchema() throws {
+        // Read the current user_version pragma.
+        let currentVersion: Int32 = try queue.sync {
+            let stmt = try prepareStatement("PRAGMA user_version")
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+            return sqlite3_column_int(stmt, 0)
+        }
+
+        if currentVersion < 2 {
+            // v1 -> v2: add login_type and launch_url columns to sites.
+            let columns = try existingColumns(table: "sites")
+            if !columns.contains("login_type") {
+                try execute("ALTER TABLE sites ADD COLUMN login_type INTEGER NOT NULL DEFAULT 1")
+            }
+            if !columns.contains("launch_url") {
+                try execute("ALTER TABLE sites ADD COLUMN launch_url TEXT")
+            }
+            logger.info("Migrated database schema to version 2")
+        }
+
+        if currentVersion < 3 {
+            // v2 -> v3: add wwwroot, httpswwwroot, show_login_form columns to sites.
+            let columns = try existingColumns(table: "sites")
+            if !columns.contains("wwwroot") {
+                try execute("ALTER TABLE sites ADD COLUMN wwwroot TEXT")
+            }
+            if !columns.contains("httpswwwroot") {
+                try execute("ALTER TABLE sites ADD COLUMN httpswwwroot TEXT")
+            }
+            if !columns.contains("show_login_form") {
+                try execute("ALTER TABLE sites ADD COLUMN show_login_form INTEGER NOT NULL DEFAULT 1")
+            }
+            logger.info("Migrated database schema to version 3")
+        }
+
+        try execute("PRAGMA user_version = \(Self.schemaVersion)")
+    }
+
+    private func existingColumns(table: String) throws -> Set<String> {
+        try queue.sync {
+            let stmt = try prepareStatement("PRAGMA table_info(\(table))")
+            defer { sqlite3_finalize(stmt) }
+            var names = Set<String>()
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let namePtr = sqlite3_column_text(stmt, 1) {
+                    names.insert(String(cString: namePtr))
+                }
+            }
+            return names
+        }
+    }
+
     // MARK: - Execution
 
     func execute(_ sql: String) throws {
         try queue.sync {
-            var errorMessage: UnsafeMutablePointer<CChar>?
-            let status = sqlite3_exec(db, sql, nil, nil, &errorMessage)
-            if status != SQLITE_OK {
-                let message = errorMessage.map { String(cString: $0) } ?? "Unknown error"
-                sqlite3_free(errorMessage)
-                throw FoodleError.databaseError(detail: message)
-            }
+            try executeUnsafe(sql)
+        }
+    }
+
+    /// Execute SQL without acquiring the queue. Only call from within a `queue.sync` block.
+    private func executeUnsafe(_ sql: String) throws {
+        var errorMessage: UnsafeMutablePointer<CChar>?
+        let status = sqlite3_exec(db, sql, nil, nil, &errorMessage)
+        if status != SQLITE_OK {
+            let message = errorMessage.map { String(cString: $0) } ?? "Unknown error"
+            sqlite3_free(errorMessage)
+            throw FoodleError.databaseError(detail: message)
         }
     }
 
@@ -169,8 +233,9 @@ extension Database {
     public func saveSite(_ site: MoodleSite) throws {
         let sql = """
             INSERT OR REPLACE INTO sites (id, display_name, base_url, supports_web_services,
-                supports_mobile_api, supports_file_download, moodle_version, moodle_release, site_name)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                supports_mobile_api, supports_file_download, moodle_version, moodle_release, site_name,
+                login_type, launch_url, wwwroot, httpswwwroot, show_login_form)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         try queue.sync {
             let stmt = try prepareStatement(sql)
@@ -185,6 +250,11 @@ extension Database {
             if let v = site.capabilities.moodleVersion { sqlite3_bind_text(stmt, 7, (v as NSString).utf8String, -1, nil) }
             if let r = site.capabilities.moodleRelease { sqlite3_bind_text(stmt, 8, (r as NSString).utf8String, -1, nil) }
             if let n = site.capabilities.siteName { sqlite3_bind_text(stmt, 9, (n as NSString).utf8String, -1, nil) }
+            sqlite3_bind_int(stmt, 10, Int32(site.capabilities.loginType.rawValue))
+            if let l = site.capabilities.launchURL { sqlite3_bind_text(stmt, 11, (l as NSString).utf8String, -1, nil) }
+            if let w = site.capabilities.wwwroot { sqlite3_bind_text(stmt, 12, (w as NSString).utf8String, -1, nil) }
+            if let h = site.capabilities.httpswwwroot { sqlite3_bind_text(stmt, 13, (h as NSString).utf8String, -1, nil) }
+            sqlite3_bind_int(stmt, 14, site.capabilities.showLoginForm ? 1 : 0)
 
             let status = sqlite3_step(stmt)
             guard status == SQLITE_DONE else {
@@ -194,13 +264,21 @@ extension Database {
     }
 
     public func fetchSite(id: String) throws -> MoodleSite? {
-        let sql = "SELECT * FROM sites WHERE id = ?"
+        let sql = """
+            SELECT id, display_name, base_url, supports_web_services, supports_mobile_api,
+                   supports_file_download, moodle_version, moodle_release, site_name,
+                   created_at, login_type, launch_url, wwwroot, httpswwwroot, show_login_form
+            FROM sites WHERE id = ?
+        """
         return try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, nil)
 
             guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+
+            let loginTypeRaw = Int(sqlite3_column_int(stmt, 10))
+            let loginType = SiteLoginType(rawValue: loginTypeRaw) ?? .app
 
             return MoodleSite(
                 id: String(cString: sqlite3_column_text(stmt, 0)),
@@ -212,7 +290,12 @@ extension Database {
                     supportsFileDownload: sqlite3_column_int(stmt, 5) == 1,
                     moodleVersion: sqlite3_column_text(stmt, 6).map { String(cString: $0) },
                     moodleRelease: sqlite3_column_text(stmt, 7).map { String(cString: $0) },
-                    siteName: sqlite3_column_text(stmt, 8).map { String(cString: $0) }
+                    siteName: sqlite3_column_text(stmt, 8).map { String(cString: $0) },
+                    loginType: loginType,
+                    launchURL: sqlite3_column_text(stmt, 11).map { String(cString: $0) },
+                    wwwroot: sqlite3_column_text(stmt, 12).map { String(cString: $0) },
+                    httpswwwroot: sqlite3_column_text(stmt, 13).map { String(cString: $0) },
+                    showLoginForm: sqlite3_column_int(stmt, 14) == 1
                 )
             )
         }
@@ -291,7 +374,7 @@ extension Database {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         try queue.sync {
-            try execute("BEGIN TRANSACTION")
+            try executeUnsafe("BEGIN TRANSACTION")
             for course in courses {
                 let stmt = try prepareStatement(sql)
                 defer { sqlite3_finalize(stmt) }
@@ -309,7 +392,7 @@ extension Database {
 
                 _ = sqlite3_step(stmt)
             }
-            try execute("COMMIT")
+            try executeUnsafe("COMMIT")
         }
     }
 
@@ -355,7 +438,7 @@ extension Database {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         try queue.sync {
-            try execute("BEGIN TRANSACTION")
+            try executeUnsafe("BEGIN TRANSACTION")
             for item in items {
                 let stmt = try prepareStatement(sql)
                 defer { sqlite3_finalize(stmt) }
@@ -379,7 +462,7 @@ extension Database {
 
                 _ = sqlite3_step(stmt)
             }
-            try execute("COMMIT")
+            try executeUnsafe("COMMIT")
         }
     }
 

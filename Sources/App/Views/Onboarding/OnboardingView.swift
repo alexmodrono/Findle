@@ -1,6 +1,7 @@
 import SwiftUI
 import AuthenticationServices
 import SharedDomain
+import FoodleNetworking
 
 struct OnboardingView: View {
     @EnvironmentObject var appState: AppState
@@ -12,6 +13,8 @@ struct OnboardingView: View {
     @State private var validatedSite: MoodleSite?
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var showEmbeddedSSO = false
+    @State private var embeddedAuthCoordinator: EmbeddedAuthCoordinator?
 
     enum OnboardingStep {
         case welcome
@@ -65,6 +68,20 @@ struct OnboardingView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: 520, height: 520)
+        .sheet(isPresented: $showEmbeddedSSO) {
+            if let site = validatedSite, let coordinator = embeddedAuthCoordinator {
+                EmbeddedSSOView(
+                    site: site,
+                    coordinator: coordinator,
+                    onCancel: {
+                        showEmbeddedSSO = false
+                        appState.cancelEmbeddedSSO()
+                        embeddedAuthCoordinator = nil
+                        withAnimation { step = .sso }
+                    }
+                )
+            }
+        }
     }
 
     // MARK: - Steps
@@ -354,26 +371,82 @@ struct OnboardingView: View {
         errorMessage = nil
 
         do {
-            // Use the key window as the presentation anchor for ASWebAuthenticationSession
-            guard let window = NSApplication.shared.keyWindow else {
-                throw FoodleError.internalError(detail: "No window available for authentication.")
-            }
-            let context = WindowPresentationContext(window: window)
+            if site.capabilities.loginType == .embedded {
+                // Embedded SSO: present WKWebView in a sheet.
+                let coordinator = appState.createEmbeddedAuthCoordinator()
+                embeddedAuthCoordinator = coordinator
 
-            withAnimation { step = .connecting }
-            try await appState.signInWithSSO(site: site, presentationContext: context)
-            withAnimation { step = .complete }
+                // Start the async auth flow. The sheet will be shown, and
+                // the coordinator's WKWebView will intercept the callback.
+                // We need to start auth first (which creates the webView),
+                // then show the sheet.
+                Task { @MainActor in
+                    do {
+                        try await appState.signInWithEmbeddedSSO(site: site, coordinator: coordinator)
+                        showEmbeddedSSO = false
+                        embeddedAuthCoordinator = nil
+                        withAnimation { step = .complete }
+                    } catch is CancellationError {
+                        showEmbeddedSSO = false
+                        embeddedAuthCoordinator = nil
+                        withAnimation { step = .sso }
+                    } catch let error as FoodleError where error.isCancelled {
+                        showEmbeddedSSO = false
+                        embeddedAuthCoordinator = nil
+                        withAnimation { step = .sso }
+                    } catch {
+                        showEmbeddedSSO = false
+                        embeddedAuthCoordinator = nil
+                        handleSSOError(error)
+                    }
+                    isLoading = false
+                }
+
+                // Small delay to let the coordinator create the webView before showing sheet.
+                try? await Task.sleep(for: .milliseconds(100))
+                showEmbeddedSSO = true
+            } else {
+                // Browser SSO: open system browser via ASWebAuthenticationSession.
+                guard let window = NSApplication.shared.keyWindow else {
+                    throw FoodleError.internalError(detail: "No window available for authentication.")
+                }
+                let context = WindowPresentationContext(window: window)
+
+                withAnimation { step = .connecting }
+                try await appState.signInWithBrowserSSO(site: site, presentationContext: context)
+                withAnimation { step = .complete }
+                isLoading = false
+            }
         } catch is CancellationError {
             withAnimation { step = .sso }
+            isLoading = false
         } catch let error as FoodleError where error.isCancelled {
-            // User cancelled - go back to SSO step without showing an error
             withAnimation { step = .sso }
+            isLoading = false
         } catch {
-            errorMessage = error.localizedDescription
-            withAnimation { step = .sso }
+            handleSSOError(error)
+            isLoading = false
         }
+    }
 
-        isLoading = false
+    private func handleSSOError(_ error: Error) {
+        if let foodleError = error as? FoodleError {
+            switch foodleError {
+            case .ssoLaunchURLUnavailable:
+                errorMessage = "This site requires browser sign-in, but Foodle could not build a valid sign-in URL. Please contact your Moodle administrator or try again."
+            case .ssoLaunchURLInvalid:
+                errorMessage = "The site's advertised sign-in URL is invalid. Please contact your Moodle administrator or try again."
+            case .ssoSessionStartFailed:
+                errorMessage = "Foodle could not start the browser sign-in flow for this site."
+            case .ssoCallbackInvalid:
+                errorMessage = "The sign-in callback from the site was invalid or incomplete. Please try again."
+            default:
+                errorMessage = foodleError.localizedDescription
+            }
+        } else {
+            errorMessage = error.localizedDescription
+        }
+        withAnimation { step = .sso }
     }
 }
 
