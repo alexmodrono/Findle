@@ -25,7 +25,6 @@ final class AppState: ObservableObject {
     private var currentToken: AuthToken?
     private var currentSite: MoodleSite?
     private var activeWebAuthSession: WebAuthSession?
-    private var activeEmbeddedAuthCoordinator: EmbeddedAuthCoordinator?
     private let logger = Logger(subsystem: "es.amodrono.foodle", category: "AppState")
 
     enum AppScreen {
@@ -102,29 +101,6 @@ final class AppState: ObservableObject {
 
         let result = try await webAuth.authenticate(site: site, presentationContext: presentationContext)
         try await completeSignIn(site: site, token: result.token)
-    }
-
-    /// Create an embedded auth coordinator for a site. The caller presents the web view
-    /// and then calls `completeEmbeddedSSO` to finish the flow.
-    func createEmbeddedAuthCoordinator() -> EmbeddedAuthCoordinator {
-        let coordinator = EmbeddedAuthCoordinator()
-        activeEmbeddedAuthCoordinator = coordinator
-        return coordinator
-    }
-
-    /// Sign in via embedded SSO using a WKWebView.
-    /// Used for `SiteLoginType.embedded`.
-    func signInWithEmbeddedSSO(site: MoodleSite, coordinator: EmbeddedAuthCoordinator) async throws {
-        defer { activeEmbeddedAuthCoordinator = nil }
-
-        let result = try await coordinator.authenticate(site: site)
-        try await completeSignIn(site: site, token: result.token)
-    }
-
-    /// Cancel the active embedded SSO flow.
-    func cancelEmbeddedSSO() {
-        activeEmbeddedAuthCoordinator?.cancel()
-        activeEmbeddedAuthCoordinator = nil
     }
 
     /// Shared post-authentication setup: fetch user info, persist, configure File Provider.
