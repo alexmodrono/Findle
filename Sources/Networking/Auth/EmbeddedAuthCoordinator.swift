@@ -55,6 +55,15 @@ public final class EmbeddedAuthCoordinator: NSObject {
         config.processPool = WKProcessPool()
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
+        // Register all known Moodle/Open LMS callback schemes with the web view.
+        // Without this, WKWebView passes unknown schemes to the system URL handler
+        // (showing "no application set to open the URL") instead of routing them
+        // through the navigation delegate where we intercept the token callback.
+        let schemeHandler = SSOCallbackSchemeHandler()
+        for scheme in MoodleSite.acceptedCallbackSchemes {
+            config.setURLSchemeHandler(schemeHandler, forURLScheme: scheme)
+        }
+
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -206,5 +215,30 @@ extension EmbeddedAuthCoordinator: WKUIDelegate {
         }
         // Return nil to prevent creating a new web view.
         return nil
+    }
+}
+
+// MARK: - WKURLSchemeHandler
+
+/// A no-op URL scheme handler that claims ownership of Moodle callback schemes.
+///
+/// When registered with `WKWebViewConfiguration.setURLSchemeHandler(_:forURLScheme:)`,
+/// this prevents WKWebView from passing custom-scheme URLs (like `ltgopenlmsapp://`,
+/// `moodlemobile://`, etc.) to the macOS system URL handler. Instead, navigations to
+/// these schemes go through the `WKNavigationDelegate` pipeline where we intercept
+/// the token callback in `decidePolicyFor`.
+///
+/// The handler itself never completes the URL task — the navigation delegate cancels
+/// the navigation before the scheme handler needs to produce a response.
+private final class SSOCallbackSchemeHandler: NSObject, WKURLSchemeHandler {
+    func webView(_ webView: WKWebView, start urlSchemeTask: any WKURLSchemeTask) {
+        // Intentionally left empty. The navigation delegate's decidePolicyFor
+        // cancels the navigation before this handler needs to produce a response.
+        // If we reach here, fail gracefully so WKWebView doesn't hang.
+        urlSchemeTask.didFailWithError(URLError(.cancelled))
+    }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: any WKURLSchemeTask) {
+        // Nothing to clean up.
     }
 }
