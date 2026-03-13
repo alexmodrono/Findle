@@ -46,10 +46,13 @@ public final class EmbeddedAuthCoordinator: NSObject {
         logger.info("Starting embedded SSO for \(site.displayName, privacy: .public)")
         logger.info("Launch URL source: \(buildResult.source == .advertised ? "advertised" : "fallback", privacy: .public)")
 
-        // Create a fresh, ephemeral web view configuration.
+        // Use the default data store and shared process pool. A non-persistent store
+        // with a dedicated process pool causes WKWebView to spawn isolated WebContent
+        // processes for cross-origin navigations (e.g. Moodle -> Microsoft). Those child
+        // processes fail to inherit the app's sandbox profile and crash on system service
+        // lookups. The default store shares a single process pool across origins, avoiding
+        // this. Session data is cleaned up explicitly after authentication completes.
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = .nonPersistent()
-        config.processPool = WKProcessPool()
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
         let webView = WKWebView(frame: .zero, configuration: config)
@@ -68,9 +71,19 @@ public final class EmbeddedAuthCoordinator: NSObject {
     /// Cancel the embedded SSO flow. Returns the user to the SSO step without crashing.
     public func cancel() {
         webView?.stopLoading()
+        cleanUpWebData()
         let pending = continuation
         continuation = nil
         pending?.resume(throwing: FoodleError.cancelled)
+    }
+
+    /// Remove session cookies and website data left by the SSO flow.
+    private func cleanUpWebData() {
+        let dataStore = webView?.configuration.websiteDataStore ?? .default()
+        let dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
+        dataStore.fetchDataRecords(ofTypes: dataTypes) { records in
+            dataStore.removeData(ofTypes: dataTypes, for: records) {}
+        }
     }
 
     private func generatePassport() -> String {
@@ -82,6 +95,7 @@ public final class EmbeddedAuthCoordinator: NSObject {
     private func completeWithCallbackURL(_ urlString: String) {
         guard let site = site, let pending = continuation else { return }
         continuation = nil
+        cleanUpWebData()
 
         do {
             let client = MoodleClient()
