@@ -104,7 +104,7 @@ final class AppState: ObservableObject {
     }
 
     /// Shared post-authentication setup: fetch user info, persist, configure File Provider.
-    private func completeSignIn(site: MoodleSite, token: AuthToken) async throws {
+    func completeSignIn(site: MoodleSite, token: AuthToken) async throws {
         let user = try await moodleClient.fetchUserInfo(site: site, token: token)
 
         guard let db = database else { throw FoodleError.databaseError(detail: "Database not available") }

@@ -1,6 +1,7 @@
 import SwiftUI
 import AuthenticationServices
 import SharedDomain
+import FoodleNetworking
 
 struct OnboardingView: View {
     @EnvironmentObject var appState: AppState
@@ -12,6 +13,9 @@ struct OnboardingView: View {
     @State private var validatedSite: MoodleSite?
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var showEmbeddedSSO = false
+    @State private var embeddedAuthCoordinator: EmbeddedAuthCoordinator?
+
     enum OnboardingStep {
         case welcome
         case serverURL
@@ -64,6 +68,20 @@ struct OnboardingView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: 520, height: 520)
+        .sheet(isPresented: $showEmbeddedSSO) {
+            if let site = validatedSite, let coordinator = embeddedAuthCoordinator {
+                EmbeddedSSOView(
+                    site: site,
+                    coordinator: coordinator,
+                    onCancel: {
+                        showEmbeddedSSO = false
+                        coordinator.cancel()
+                        embeddedAuthCoordinator = nil
+                        withAnimation { step = .sso }
+                    }
+                )
+            }
+        }
     }
 
     // MARK: - Steps
@@ -352,12 +370,17 @@ struct OnboardingView: View {
         isLoading = true
         errorMessage = nil
 
+        if site.capabilities.loginType == .embedded {
+            await signInWithEmbeddedSSO(site: site)
+        } else {
+            await signInWithBrowserSSO(site: site)
+        }
+
+        isLoading = false
+    }
+
+    private func signInWithBrowserSSO(site: MoodleSite) async {
         do {
-            // Both .browser and .embedded login types use ASWebAuthenticationSession
-            // on macOS. ASWebAuthenticationSession uses Safari's own process which has
-            // proper entitlements for cross-origin navigation (e.g. Moodle -> Microsoft).
-            // A WKWebView-based embedded flow would require full code signing with
-            // entitlements to work in the sandbox, which isn't reliable during development.
             guard let window = NSApplication.shared.keyWindow else {
                 throw FoodleError.internalError(detail: "No window available for authentication.")
             }
@@ -373,8 +396,42 @@ struct OnboardingView: View {
         } catch {
             handleSSOError(error)
         }
+    }
 
-        isLoading = false
+    private func signInWithEmbeddedSSO(site: MoodleSite) async {
+        let coordinator = EmbeddedAuthCoordinator()
+        embeddedAuthCoordinator = coordinator
+
+        // Start the async auth in a detached task. authenticate() creates the
+        // webView and then suspends until the callback is intercepted.
+        let authTask = Task { @MainActor in
+            try await coordinator.authenticate(site: site)
+        }
+
+        // Give the coordinator time to create the webView before showing the sheet.
+        try? await Task.sleep(for: .milliseconds(50))
+        showEmbeddedSSO = true
+
+        do {
+            let result = try await authTask.value
+            showEmbeddedSSO = false
+            embeddedAuthCoordinator = nil
+            withAnimation { step = .connecting }
+            try await appState.completeSignIn(site: site, token: result.token)
+            withAnimation { step = .complete }
+        } catch is CancellationError {
+            showEmbeddedSSO = false
+            embeddedAuthCoordinator = nil
+            withAnimation { step = .sso }
+        } catch let error as FoodleError where error.isCancelled {
+            showEmbeddedSSO = false
+            embeddedAuthCoordinator = nil
+            withAnimation { step = .sso }
+        } catch {
+            showEmbeddedSSO = false
+            embeddedAuthCoordinator = nil
+            handleSSOError(error)
+        }
     }
 
     private func handleSSOError(_ error: Error) {
