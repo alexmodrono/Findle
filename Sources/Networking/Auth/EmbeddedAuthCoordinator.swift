@@ -50,9 +50,11 @@ public final class EmbeddedAuthCoordinator: NSObject {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.processPool = WKProcessPool()
+        config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
+        webView.uiDelegate = self
         self.webView = webView
 
         let request = URLRequest(url: launchURL)
@@ -161,5 +163,45 @@ extension EmbeddedAuthCoordinator: WKNavigationDelegate {
             return true
         }
         return false
+    }
+}
+
+// MARK: - WKUIDelegate
+
+extension EmbeddedAuthCoordinator: WKUIDelegate {
+
+    /// Handle `window.open()` and `target="_blank"` links by loading them in the
+    /// existing web view instead of silently dropping them.
+    ///
+    /// Identity provider buttons on Moodle login pages (e.g. "Login with Microsoft")
+    /// typically use popup navigation. Without this, WKWebView ignores the click entirely.
+    public func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        // If the navigation target is not the main frame (i.e. it's a popup),
+        // load the request in the current web view instead of opening a new one.
+        if navigationAction.targetFrame == nil || navigationAction.targetFrame?.isMainFrame == false {
+            if let url = navigationAction.request.url {
+                logger.info("Handling popup navigation in-place: \(url.host ?? "", privacy: .public)")
+
+                // Check if this is actually the SSO callback before loading.
+                let urlString = url.absoluteString
+                let scheme = url.scheme?.lowercased() ?? ""
+                let isHTTP = scheme == "http" || scheme == "https"
+
+                if !isHTTP && urlString.contains("token=") {
+                    logger.info("Intercepted SSO callback from popup with scheme: \(scheme, privacy: .public)")
+                    completeWithCallbackURL(urlString)
+                    return nil
+                }
+
+                webView.load(navigationAction.request)
+            }
+        }
+        // Return nil to prevent creating a new web view.
+        return nil
     }
 }
