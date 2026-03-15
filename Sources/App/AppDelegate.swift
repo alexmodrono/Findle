@@ -20,17 +20,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             object: nil,
             queue: .main
         ) { [weak self] note in
-            guard let window = note.object as? NSWindow, window.canBecomeMain else { return }
-            // Defer check so the window has time to be removed from the windows array.
-            DispatchQueue.main.async { self?.updateActivationPolicy() }
+            Task { @MainActor in
+                guard let window = note.object as? NSWindow, window.canBecomeMain else { return }
+                // Defer one run-loop cycle so the window has time to be removed from the windows array.
+                try? await Task.sleep(for: .zero)
+                self?.updateActivationPolicy()
+            }
         }
         let didBecomeKey = NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeKeyNotification,
             object: nil,
             queue: .main
         ) { [weak self] note in
-            guard let window = note.object as? NSWindow, window.canBecomeMain else { return }
-            self?.updateActivationPolicy()
+            Task { @MainActor in
+                guard let window = note.object as? NSWindow, window.canBecomeMain else { return }
+                self?.updateActivationPolicy()
+            }
         }
 
         windowObservers = [willClose, didBecomeKey]
@@ -58,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 
     /// Switch to accessory (menu-bar-only) mode when no main windows are visible,
     /// and back to regular (Dock icon) mode when a main window is shown.
+    @MainActor
     private func updateActivationPolicy() {
         let showMenuBar = UserDefaults.standard.bool(forKey: "showMenuBarIcon")
 
