@@ -7,16 +7,36 @@ import OSLog
 /// The File Provider extension that exposes Moodle course content in Finder.
 /// Uses the replicated extension model for modern macOS cloud-file behavior.
 final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
-    private let domain: NSFileProviderDomain
-    private let logger = Logger(subsystem: "es.amodrono.foodle.file-provider", category: "Extension")
-    private var database: Database?
+    let domain: NSFileProviderDomain
+    let logger = Logger(subsystem: "es.amodrono.foodle.file-provider", category: "Extension")
+    var database: Database?
+    private var databaseSecurityScopedURL: URL?
+    private var rootContainerName: String {
+        "Findle-\(FileNameSanitizer.sanitize(domain.displayName))"
+    }
+
+    /// Extract the site ID from the domain identifier (format: es.amodrono.foodle.domain.<siteID>).
+    var siteID: String? {
+        let prefix = "es.amodrono.foodle.domain."
+        let raw = domain.identifier.rawValue
+        guard raw.hasPrefix(prefix) else { return nil }
+        return String(raw.dropFirst(prefix.count))
+    }
 
     required init(domain: NSFileProviderDomain) {
         self.domain = domain
         super.init()
 
         do {
-            self.database = try Database()
+            let stateDirectoryURL = try Self.stateDirectoryURL(for: domain)
+            _ = stateDirectoryURL.startAccessingSecurityScopedResource()
+            self.databaseSecurityScopedURL = stateDirectoryURL
+            let databaseURL = Self.databaseURL(in: stateDirectoryURL)
+            try FileManager.default.createDirectory(
+                at: databaseURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            self.database = try Database(path: databaseURL.path)
         } catch {
             logger.error("Failed to initialize database: \(error.localizedDescription, privacy: .public)")
         }
@@ -25,7 +45,27 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     }
 
     func invalidate() {
+        databaseSecurityScopedURL?.stopAccessingSecurityScopedResource()
+        databaseSecurityScopedURL = nil
         logger.info("File Provider extension invalidated")
+    }
+
+    private static func stateDirectoryURL(for domain: NSFileProviderDomain) throws -> URL {
+        guard let manager = NSFileProviderManager(for: domain) else {
+            throw NSError(domain: NSCocoaErrorDomain, code: NSFeatureUnsupportedError)
+        }
+
+        guard #available(macOS 15.0, *) else {
+            throw NSError(domain: NSCocoaErrorDomain, code: NSFeatureUnsupportedError)
+        }
+        return try manager.stateDirectoryURL()
+    }
+
+    private static func databaseURL(in stateDirectoryURL: URL) -> URL {
+        stateDirectoryURL
+            .appendingPathComponent(".FoodleState", isDirectory: true)
+            .appendingPathComponent("Foodle", isDirectory: true)
+            .appendingPathComponent("foodle.db")
     }
 
     // MARK: - Item Lookup
@@ -40,7 +80,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         let progress = Progress(totalUnitCount: 1)
 
         if identifier == .rootContainer {
-            completionHandler(RootContainerItem(), nil)
+            completionHandler(RootContainerItem(filename: rootContainerName), nil)
             progress.completedUnitCount = 1
             return progress
         }
@@ -65,18 +105,26 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     ) throws -> NSFileProviderEnumerator {
         logger.debug("Enumerator requested for: \(containerItemIdentifier.rawValue, privacy: .public)")
 
-        guard let db = database else {
+        guard let db = database, isAuthenticated(using: db) else {
             throw NSFileProviderError(.notAuthenticated)
         }
 
         if containerItemIdentifier == .workingSet {
-            return WorkingSetEnumerator(database: db)
+            return WorkingSetEnumerator(database: db, siteID: siteID)
         }
 
         return ItemEnumerator(
             containerIdentifier: containerItemIdentifier,
             database: db
         )
+    }
+
+    private func isAuthenticated(using database: Database) -> Bool {
+        guard let account = try? database.fetchAccounts().last(where: { $0.state.isConnected }) else {
+            return false
+        }
+
+        return (try? KeychainManager.shared.retrieveToken(forAccount: account.id)) != nil
     }
 
     // MARK: - Content Fetch (Download/Materialization)

@@ -1,16 +1,18 @@
 import Foundation
 import SharedDomain
 import FoodleNetworking
+import FoodlePersistence
 
 /// Handles file downloads for the File Provider extension.
 /// Structured as a static utility to avoid Sendable issues with NSObject-based extension classes.
 enum FileDownloader {
-    static func download(item: LocalItem) async throws -> URL {
+    static func download(item: LocalItem, database: Database) async throws -> URL {
         guard let remoteURL = item.remoteURL else {
             throw FoodleError.downloadFailed(itemID: item.id, reason: "No remote URL available")
         }
 
-        guard let tokenString = try KeychainManager.shared.retrieveToken(forAccount: item.siteID) else {
+        let tokenAccountID = try database.fetchAccounts().first(where: { $0.siteID == item.siteID })?.id ?? item.siteID
+        guard let tokenString = try KeychainManager.shared.retrieveToken(forAccount: tokenAccountID) else {
             throw FoodleError.authenticationRequired
         }
 

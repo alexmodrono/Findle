@@ -72,6 +72,10 @@ public actor SyncEngine {
         // Fetch remote content tree
         let sections = try await provider.fetchCourseContents(site: site, token: token, courseID: course.id)
 
+        // Look up Finder tags for this course
+        let courseTags = try database.fetchCourseTags(courseID: course.id, siteID: site.id)
+        let courseTagData = FinderTag.tagData(from: courseTags)
+
         // Create the course root folder item
         let courseItemID = "course-\(site.id)-\(course.id)"
         let courseItem = LocalItem(
@@ -80,11 +84,12 @@ public actor SyncEngine {
             siteID: site.id,
             courseID: course.id,
             remoteID: course.id,
-            filename: course.sanitizedFolderName,
+            filename: course.effectiveFolderName,
             isDirectory: true,
             creationDate: course.startDate,
             modificationDate: Date(),
-            syncState: .materialized
+            syncState: .materialized,
+            tagData: courseTagData
         )
 
         var allItems: [LocalItem] = [courseItem]
@@ -149,7 +154,39 @@ public actor SyncEngine {
         syncProgress[course.id]?.processedItems = allItems.count
         syncProgress[course.id]?.state = .synced
 
+        // Auto-download pinned items that aren't yet materialized
+        await downloadPinnedItems(site: site, token: token)
+
         logger.info("Course \(course.id) sync complete: \(allItems.count) items")
+    }
+
+    /// Download all pinned items that are not yet materialized.
+    private func downloadPinnedItems(site: MoodleSite, token: AuthToken) async {
+        do {
+            let pinnedItems = try database.fetchPinnedItems(siteID: site.id)
+            let pending = pinnedItems.filter { $0.syncState != .materialized }
+
+            guard !pending.isEmpty else { return }
+            logger.info("Downloading \(pending.count) pinned items")
+
+            for item in pending {
+                guard item.remoteURL != nil else { continue }
+                let destination = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(item.filename)
+                do {
+                    try await downloadItem(
+                        itemID: item.id,
+                        site: site,
+                        token: token,
+                        destination: destination
+                    )
+                } catch {
+                    logger.error("Failed to download pinned item \(item.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                }
+            }
+        } catch {
+            logger.error("Failed to fetch pinned items: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     // MARK: - Item Building
@@ -284,8 +321,11 @@ public actor SyncEngine {
         var modified: [LocalItem] = []
         var removed: [LocalItem] = []
 
-        for (id, item) in incomingByID {
+        for (id, var item) in incomingByID {
             if let existing = existingByID[id] {
+                // Preserve user-set pin state across syncs
+                item.isPinned = existing.isPinned
+
                 if existing.contentVersion != item.contentVersion ||
                    existing.fileSize != item.fileSize ||
                    existing.filename != item.filename {

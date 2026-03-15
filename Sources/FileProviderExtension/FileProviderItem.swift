@@ -79,6 +79,10 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
         false
     }
 
+    var tagData: Data? {
+        localItem.tagData
+    }
+
     // MARK: - Type Inference
 
     private func inferType() -> UTType {
@@ -92,12 +96,19 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
 
 /// Represents the root container of the File Provider domain.
 final class RootContainerItem: NSObject, NSFileProviderItem {
+    private let rootName: String
+
+    init(filename: String) {
+        self.rootName = filename
+    }
+
     var itemIdentifier: NSFileProviderItemIdentifier { .rootContainer }
     var parentItemIdentifier: NSFileProviderItemIdentifier { .rootContainer }
-    var filename: String { "Foodle" }
+    var filename: String { rootName }
     var contentType: UTType { .folder }
     var capabilities: NSFileProviderItemCapabilities { [.allowsReading, .allowsContentEnumerating] }
     var itemVersion: NSFileProviderItemVersion {
-        NSFileProviderItemVersion(contentVersion: Data("1".utf8), metadataVersion: Data("1".utf8))
+        let versionData = Data(rootName.utf8)
+        return NSFileProviderItemVersion(contentVersion: versionData, metadataVersion: versionData)
     }
 }

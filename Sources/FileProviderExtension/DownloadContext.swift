@@ -27,7 +27,7 @@ final class DownloadContext: @unchecked Sendable {
 
     func execute() async {
         do {
-            let downloadedURL = try await FileDownloader.download(item: item)
+            let downloadedURL = try await FileDownloader.download(item: item, database: database)
             var updatedItem = item
             updatedItem.syncState = .materialized
             updatedItem.localPath = downloadedURL.path

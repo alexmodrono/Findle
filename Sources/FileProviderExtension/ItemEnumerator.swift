@@ -33,6 +33,8 @@ final class ItemEnumerator: NSObject, NSFileProviderEnumerator {
             let items = try database.fetchItems(parentID: parentID)
             let providerItems = items.map { FileProviderItem(localItem: $0) }
 
+            logger.debug("Enumerated \(providerItems.count, privacy: .public) items for \(self.containerIdentifier.rawValue, privacy: .public)")
+
             observer.didEnumerate(providerItems)
             observer.finishEnumerating(upTo: nil)
         } catch {
@@ -45,9 +47,35 @@ final class ItemEnumerator: NSObject, NSFileProviderEnumerator {
         for observer: NSFileProviderChangeObserver,
         from anchor: NSFileProviderSyncAnchor
     ) {
-        // For incremental changes, re-enumerate all items in this container.
-        // A production implementation would track changes and only send deltas.
-        observer.finishEnumeratingChanges(upTo: anchor, moreComing: false)
+        logger.debug("Enumerating changes for container: \(self.containerIdentifier.rawValue, privacy: .public)")
+
+        do {
+            let parentID: String?
+            if containerIdentifier == .rootContainer {
+                parentID = nil
+            } else {
+                parentID = containerIdentifier.rawValue
+            }
+
+            let items = try database.fetchItems(parentID: parentID)
+            let providerItems = items.map { FileProviderItem(localItem: $0) }
+
+            if !providerItems.isEmpty {
+                observer.didUpdate(providerItems)
+            }
+
+            let deletedIDs = try database.fetchPendingDeletions()
+            if !deletedIDs.isEmpty {
+                let identifiers = deletedIDs.map { NSFileProviderItemIdentifier($0) }
+                observer.didDeleteItems(withIdentifiers: identifiers)
+            }
+
+            let newAnchor = NSFileProviderSyncAnchor(Data("\(Date().timeIntervalSince1970)".utf8))
+            observer.finishEnumeratingChanges(upTo: newAnchor, moreComing: false)
+        } catch {
+            logger.error("Change enumeration failed: \(error.localizedDescription, privacy: .public)")
+            observer.finishEnumeratingWithError(error)
+        }
     }
 
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
@@ -56,13 +84,15 @@ final class ItemEnumerator: NSObject, NSFileProviderEnumerator {
     }
 }
 
-/// Enumerates the working set (recently accessed / important items).
+/// Enumerates the working set — all items in the domain that the system should track.
 final class WorkingSetEnumerator: NSObject, NSFileProviderEnumerator {
     private let database: Database
+    private let siteID: String?
     private let logger = Logger(subsystem: "es.amodrono.foodle.file-provider", category: "WorkingSet")
 
-    init(database: Database) {
+    init(database: Database, siteID: String? = nil) {
         self.database = database
+        self.siteID = siteID
     }
 
     func invalidate() {}
@@ -71,19 +101,61 @@ final class WorkingSetEnumerator: NSObject, NSFileProviderEnumerator {
         for observer: NSFileProviderEnumerationObserver,
         startingAt page: NSFileProviderPage
     ) {
-        // Working set: return pinned and recently materialized items
-        observer.didEnumerate([])
-        observer.finishEnumerating(upTo: nil)
+        logger.debug("Enumerating working set")
+
+        do {
+            let items: [LocalItem]
+            if let siteID {
+                items = try database.fetchAllItems(siteID: siteID)
+            } else {
+                // Fall back to root items if siteID unknown
+                items = try database.fetchItems(parentID: nil)
+            }
+
+            let providerItems = items.map { FileProviderItem(localItem: $0) }
+            logger.debug("Working set: \(providerItems.count, privacy: .public) items")
+
+            observer.didEnumerate(providerItems)
+            observer.finishEnumerating(upTo: nil)
+        } catch {
+            logger.error("Working set enumeration failed: \(error.localizedDescription, privacy: .public)")
+            observer.finishEnumeratingWithError(error)
+        }
     }
 
     func enumerateChanges(
         for observer: NSFileProviderChangeObserver,
         from anchor: NSFileProviderSyncAnchor
     ) {
-        observer.finishEnumeratingChanges(upTo: anchor, moreComing: false)
+        do {
+            let items: [LocalItem]
+            if let siteID {
+                items = try database.fetchAllItems(siteID: siteID)
+            } else {
+                items = try database.fetchItems(parentID: nil)
+            }
+
+            let providerItems = items.map { FileProviderItem(localItem: $0) }
+
+            if !providerItems.isEmpty {
+                observer.didUpdate(providerItems)
+            }
+
+            let deletedIDs = try database.fetchPendingDeletions()
+            if !deletedIDs.isEmpty {
+                let identifiers = deletedIDs.map { NSFileProviderItemIdentifier($0) }
+                observer.didDeleteItems(withIdentifiers: identifiers)
+            }
+
+            let newAnchor = NSFileProviderSyncAnchor(Data("\(Date().timeIntervalSince1970)".utf8))
+            observer.finishEnumeratingChanges(upTo: newAnchor, moreComing: false)
+        } catch {
+            observer.finishEnumeratingWithError(error)
+        }
     }
 
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
-        completionHandler(NSFileProviderSyncAnchor(Data("0".utf8)))
+        let anchorData = Data("\(Date().timeIntervalSince1970)".utf8)
+        completionHandler(NSFileProviderSyncAnchor(anchorData))
     }
 }
