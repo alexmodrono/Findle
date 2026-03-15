@@ -11,11 +11,11 @@
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>Foodle</string>
+    <string>$(PRODUCT_NAME)</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>1.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
@@ -30,10 +30,10 @@
     <array>
         <dict>
             <key>CFBundleURLName</key>
-            <string>es.amodrono.foodle.sso-callback</string>
+            <string>es.amodrono.findle.sso-callback</string>
             <key>CFBundleURLSchemes</key>
             <array>
-                <string>foodle</string>
+                <string>findle</string>
             </array>
             <key>CFBundleTypeRole</key>
             <string>Viewer</string>

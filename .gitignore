@@ -50,3 +50,11 @@ Package.resolved
 *.env
 .env.*
 Secrets/
+
+# Local-only workspace content
+Docs/
+.agents/
+.cl[a]ude/
+CLA[U]DE.md
+skills-lock.json
+Resources/Icon/Foodle.icon/

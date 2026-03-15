@@ -1,104 +1,161 @@
-# Foodle
+<p align="center">
+  <img src="Resources/Assets.xcassets/AppIcon.appiconset/icon_128x128@2x.png" width="128" alt="Findle App Icon" />
+</p>
 
-A native macOS app that syncs Moodle / Open LMS course content to your Mac using Apple's File Provider framework. Course files appear directly in Finder, just like iCloud Drive or Dropbox.
+<h1 align="center">Findle</h1>
+
+<p align="center">
+  <b>A native macOS app that syncs Moodle and Open LMS course content directly to your Mac using Apple's File Provider framework.</b>
+</p>
+
+<p align="center">
+  <a href="https://apple.com/macos"><img src="https://img.shields.io/badge/macOS-14.0%2B-lightgrey.svg" alt="macOS"></a>
+  <a href="https://swift.org"><img src="https://img.shields.io/badge/Swift-6.0-F05138.svg" alt="Swift"></a>
+  <!-- <a href="https://github.com/USERNAME/Findle/actions"><img src="https://github.com/USERNAME/Findle/actions/workflows/release.yml/badge.svg" alt="Build Status"></a> -->
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
+  <a href="http://makeapullrequest.com"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"></a>
+</p>
+
+<p align="center">
+  <em>Your course files right in Finder, behaving exactly like iCloud Drive or Dropbox.</em>
+</p>
+
+---
+
+## Overview
+
+Findle is built to make managing university or school materials painless. Instead of constantly logging into Moodle to download PDFs and slides, Findle seamlessly integrates your courses right into macOS Finder. It's built from the ground up in Swift and SwiftUI, leveraging Apple's native File Provider framework to ensure your files are synced securely, dynamically, and entirely on-demand.
+
+## Screenshots & Demo
+
+> **Note on adding media:**
+> If you are setting up this repository for the first time, this is a great place to drop a quick GIF (using something like Kap or CleanShot X) showing how Findle integrates into the Finder sidebar and downloads files on the fly. 
+> 
+> Once you have the URL, just replace the placeholder image below.
+
+<div align="center">
+  <img src="https://via.placeholder.com/600x400.png?text=Finder+Integration+Demo+GIF" alt="Findle Finder Demo" width="600"/>
+  <br/>
+  <em>Findle seamlessly integrating with Finder's sidebar.</em>
+</div>
 
 ## Features
 
-- Native macOS app built with Swift and SwiftUI
-- File Provider integration for Finder sidebar presence and on-demand downloads
-- Secure authentication via Moodle web services API
-- Automatic course discovery and content enumeration
-- Metadata-first sync with placeholder files
-- On-demand content materialization (files download when opened)
-- SQLite-backed local persistence
-- Keychain-secured credentials
-- Incremental sync with per-course change tracking
+- **Native macOS Experience:** Built specifically for the Mac using Swift and SwiftUI, so it feels fast and right at home.
+- **File Provider Integration:** First-class Finder sidebar presence. Files only download when you actually need them, saving local disk space.
+- **Secure by Default:** Authentication happens via the official Moodle Web Services API, and credentials are stored securely in the macOS Keychain.
+- **Smart Sync:** The app handles automatic course discovery, enumerates content, and performs incremental syncs using per-course change tracking.
+- **Efficient Storage:** Under the hood, a local SQLite database caches metadata so you can browse your course structure instantly, using placeholder files until you double-click them.
 
 ## Requirements
+
+Before you start building, make sure you have the following:
 
 - macOS 14.0 (Sonoma) or later
 - Xcode 16.0 or later
 - Swift 6.0
-- [XcodeGen](https://github.com/yonaskolb/XcodeGen) (for project generation)
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen) (for generating the Xcode project)
 
-## Setup
+## Setup & Installation
 
-1. Install XcodeGen if needed:
-   ```sh
+Getting the project up and running locally is pretty straightforward thanks to XcodeGen.
+
+1. **Install XcodeGen** (if you haven't already):
+   ```bash
    brew install xcodegen
    ```
 
-2. Generate the Xcode project:
-   ```sh
+2. **Generate the Xcode project:**
+   ```bash
    xcodegen generate
    ```
 
-3. Open the generated project:
-   ```sh
+3. **Open the project:**
+   ```bash
    open Foodle.xcodeproj
    ```
 
-4. Select the `Foodle` scheme, then build and run.
+4. **Configure Code Signing:**
+   The File Provider extension requires code signing with a valid Apple Development Team. Since the team identifier is not committed to the repo, you'll need to go into the Xcode project settings and select your own Development Team for all targets before you can build successfully.
 
-Note: The File Provider extension requires code signing with a valid development team. Set your team in the project settings.
+5. Select the `Foodle` scheme, build, and run.
 
 ## Architecture
 
-See [Docs/ARCHITECTURE.md](Docs/ARCHITECTURE.md) for a detailed architecture overview.
-
-### Module Structure
+Findle is split into a modular set of Swift packages and targets. This keeps the separation of concerns clean and makes it easier to work on isolated features.
 
 | Module | Purpose |
 |--------|---------|
-| `SharedDomain` | Core types, models, state machines, errors |
-| `FoodleNetworking` | Moodle API client, authentication, Keychain |
-| `FoodlePersistence` | SQLite database, metadata cache, sync cursors |
-| `FoodleSyncEngine` | Sync orchestration, diffing, download management |
-| `FoodleFileProvider` | File Provider extension for Finder integration |
-| `Foodle` (App) | SwiftUI app: onboarding, settings, diagnostics |
+| `SharedDomain` | Core types, models, state machines, and shared error handling. |
+| `FoodleNetworking` | The Moodle API client, authentication logic, and Keychain integration. |
+| `FoodlePersistence` | The SQLite database layer, metadata cache, and sync cursors. |
+| `FoodleSyncEngine` | Orchestrates the sync process, computes diffs, and manages downloads. |
+| `FoodleFileProvider`| The Apple File Provider extension that hooks directly into Finder. |
+| `Foodle` (App) | The main SwiftUI app shell, handling onboarding, diagnostics, and settings. |
 
-### Data Flow
-
-```
-Moodle Server -> Networking -> SyncEngine -> Persistence -> FileProvider -> Finder
+### Data Flow Overview
+```mermaid
+graph LR
+    M[Moodle Server] --> N[Networking]
+    N --> S[SyncEngine]
+    S --> P[Persistence]
+    P --> F[FileProvider]
+    F --> M_F[macOS Finder]
 ```
 
 ## Testing
 
-Run tests in Xcode using `Cmd+U`, or:
+Reliability is maintained with unit and integration tests. You can run the test suites directly in Xcode using `Cmd+U`, or via the command line if you prefer:
 
-```sh
+```bash
 xcodebuild test -project Foodle.xcodeproj -scheme SharedDomainTests
 xcodebuild test -project Foodle.xcodeproj -scheme PersistenceTests
 ```
 
-Test fixtures are located in the `Fixtures/` directory.
+Mock API responses and test fixtures can be found in the `Fixtures/` directory.
 
 ## Project Structure
 
-```
+If you're looking around the codebase, here is how things are organized:
+
+```text
 Foodle/
 ├── Sources/
-│   ├── App/                    Main macOS application
-│   ├── SharedDomain/           Shared models and types
-│   ├── Networking/             Moodle API client
-│   ├── Persistence/            SQLite database
-│   ├── SyncEngine/             Sync orchestration
-│   └── FileProviderExtension/  File Provider extension
-├── Tests/                      Unit and integration tests
-├── Fixtures/                   Mock API response data
-├── Resources/                  Plists, entitlements, assets
-├── Docs/                       Architecture documentation
-└── project.yml                 XcodeGen project definition
+│   ├── App/                    # Main macOS application
+│   ├── SharedDomain/           # Shared models and types
+│   ├── Networking/             # Moodle API client
+│   ├── Persistence/            # SQLite database
+│   ├── SyncEngine/             # Sync orchestration
+│   └── FileProviderExtension/  # Apple File Provider extension
+├── Tests/                      # Unit and integration tests
+├── Fixtures/                   # Mock API response data
+├── Resources/                  # Plists, entitlements, and XCAssets
+└── project.yml                 # XcodeGen project definition
 ```
 
 ## Roadmap
 
-- [ ] End-to-end vertical slice (authenticate -> enumerate -> Finder placeholders)
+There's still a lot to be done. Here is what is currently on the radar:
+
+- [x] Complete the end-to-end vertical slice (authenticate -> enumerate -> Finder placeholders)
 - [ ] Background sync refresh
-- [ ] Offline pinning support
+- [x] Offline pinning support
 - [ ] Multi-account support
-- [ ] Optional offline mirror to user-chosen folder
-- [ ] Spotlight integration
-- [ ] Assignment submission support
-- [ ] Additional LMS backend adapters
+- [ ] Optional offline mirror to a user-chosen folder
+- [x] Spotlight integration
+- [ ] Assignment submission support directly from the Mac
+- [ ] Support for additional LMS backends
+
+## Contributing
+
+Contributions are always welcome! If you have an idea to improve Findle or fix a bug:
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request for review.
+
+## License
+
+This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for the full details.

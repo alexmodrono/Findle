@@ -1,0 +1,190 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  APP_NAME: Findle
+  SCHEME: Foodle
+  BUNDLE_ID: es.amodrono.foodle
+
+jobs:
+  build-and-release:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Import signing certificate
+        env:
+          CERTIFICATE_P12_BASE64: ${{ secrets.CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+        run: |
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain"
+
+          echo -n "$CERTIFICATE_P12_BASE64" | base64 --decode -o "$CERT_PATH"
+
+          security create-keychain -p "" "$KEYCHAIN_PATH"
+          security set-keychain-settings "$KEYCHAIN_PATH"
+          security unlock-keychain -p "" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain
+
+      - name: Set version in Info.plist
+        run: |
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.version.outputs.version }}" Resources/Info/App-Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" Resources/Info/App-Info.plist
+
+      - name: Build archive
+        run: |
+          xcodebuild archive \
+            -project Foodle.xcodeproj \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -archivePath "$RUNNER_TEMP/Foodle.xcarchive" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Developer ID Application" \
+            DEVELOPMENT_TEAM="${{ secrets.TEAM_ID }}" \
+            OTHER_CODE_SIGN_FLAGS="--keychain $RUNNER_TEMP/build.keychain"
+
+      - name: Export archive
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>developer-id</string>
+              <key>teamID</key>
+              <string>${{ secrets.TEAM_ID }}</string>
+              <key>signingStyle</key>
+              <string>manual</string>
+              <key>signingCertificate</key>
+              <string>Developer ID Application</string>
+          </dict>
+          </plist>
+          EOF
+
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Foodle.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
+
+      - name: Notarize app
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          NOTARIZATION_PASSWORD: ${{ secrets.NOTARIZATION_PASSWORD }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          APP_PATH="$RUNNER_TEMP/export/$APP_NAME.app"
+
+          # Create a ZIP for notarization submission
+          ditto -c -k --keepParent "$APP_PATH" "$RUNNER_TEMP/notarize.zip"
+
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --apple-id "$APPLE_ID" \
+            --password "$NOTARIZATION_PASSWORD" \
+            --team-id "$TEAM_ID" \
+            --wait
+
+          xcrun stapler staple "$APP_PATH"
+
+      - name: Create DMG
+        run: |
+          brew install create-dmg
+
+          create-dmg \
+            --volname "$APP_NAME" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "$APP_NAME.app" 150 185 \
+            --app-drop-link 450 185 \
+            --hide-extension "$APP_NAME.app" \
+            "$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.dmg" \
+            "$RUNNER_TEMP/export/$APP_NAME.app"
+
+      - name: Create ZIP
+        run: |
+          cd "$RUNNER_TEMP/export"
+          ditto -c -k --keepParent "$APP_NAME.app" "$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.zip"
+
+      - name: Compute SHA256
+        id: sha
+        run: |
+          SHA=$(shasum -a 256 "$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.zip" | awk '{print $1}')
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "SHA256: $SHA"
+
+      - name: Upload artifacts to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" \
+            "$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.dmg" \
+            "$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.zip"
+
+      - name: Update Homebrew cask
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          SHA="${{ steps.sha.outputs.sha256 }}"
+          REPO="${{ github.repository }}"
+
+          # Extract tap repo owner from current repo
+          OWNER="${REPO%%/*}"
+
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${OWNER}/homebrew-tap.git" "$RUNNER_TEMP/homebrew-tap"
+
+          mkdir -p "$RUNNER_TEMP/homebrew-tap/Casks"
+          cat > "$RUNNER_TEMP/homebrew-tap/Casks/findle.rb" <<CASK
+          cask "findle" do
+            version "$VERSION"
+            sha256 "$SHA"
+
+            url "https://github.com/${REPO}/releases/download/v#{version}/Findle-#{version}.zip"
+            name "Findle"
+            desc "Sync Moodle course content to your Mac via Finder"
+            homepage "https://github.com/${REPO}"
+
+            depends_on macos: ">= :sonoma"
+
+            app "Findle.app"
+
+            zap trash: [
+              "~/Library/Group Containers/group.es.amodrono.foodle",
+              "~/Library/Containers/es.amodrono.foodle",
+              "~/Library/Containers/es.amodrono.foodle.file-provider",
+            ]
+          end
+          CASK
+
+          cd "$RUNNER_TEMP/homebrew-tap"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/findle.rb
+          git commit -m "Update findle to $VERSION"
+          git push
+
+      - name: Clean up keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/build.keychain" 2>/dev/null || true
