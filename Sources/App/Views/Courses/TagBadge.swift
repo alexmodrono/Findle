@@ -11,22 +11,23 @@ struct TagBadge: View {
     let onRemove: () -> Void
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 5) {
             Circle()
                 .fill(tag.color.swiftUIColor)
                 .frame(width: 8, height: 8)
 
             Text(tag.name)
-                .font(.callout)
+                .font(.subheadline)
 
-            Button("Remove tag", systemImage: "xmark", action: onRemove)
+            Button("Remove tag", systemImage: "xmark.circle.fill", action: onRemove)
                 .labelStyle(.iconOnly)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+                .imageScale(.small)
+                .foregroundStyle(.tertiary)
                 .buttonStyle(.plain)
         }
-        .padding(.horizontal, 8)
+        .padding(.leading, 8)
+        .padding(.trailing, 6)
         .padding(.vertical, 4)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+        .background(.fill.tertiary, in: Capsule())
     }
 }

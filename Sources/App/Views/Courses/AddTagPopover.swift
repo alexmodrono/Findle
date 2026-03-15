@@ -14,7 +14,7 @@ struct AddTagPopover: View {
     let onCancel: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             Text("New Tag")
                 .font(.headline)
 
@@ -27,20 +27,22 @@ struct AddTagPopover: View {
                 }
 
             LabeledContent("Color") {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     ForEach(FinderTag.Color.allCases.filter { $0 != .none }, id: \.rawValue) { tagColor in
                         Button {
                             color = tagColor
                         } label: {
                             Circle()
                                 .fill(tagColor.swiftUIColor)
-                                .frame(width: 16, height: 16)
+                                .frame(width: 18, height: 18)
                                 .overlay {
                                     if color == tagColor {
                                         Circle()
-                                            .strokeBorder(.primary, lineWidth: 2)
+                                            .strokeBorder(.white.opacity(0.9), lineWidth: 2)
+                                            .frame(width: 12, height: 12)
                                     }
                                 }
+                                .shadow(color: tagColor.swiftUIColor.opacity(color == tagColor ? 0.4 : 0), radius: 3)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel(tagColor.displayName)
@@ -58,6 +60,6 @@ struct AddTagPopover: View {
             }
         }
         .padding()
-        .frame(width: 260)
+        .frame(width: 280)
     }
 }

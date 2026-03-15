@@ -12,7 +12,7 @@ struct CourseRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "folder.fill")
+            Image(systemName: course.customIconName ?? "folder.fill")
                 .foregroundStyle(course.isSyncEnabled ? .secondary : .quaternary)
                 .imageScale(.large)
 

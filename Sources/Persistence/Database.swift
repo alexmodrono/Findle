@@ -17,7 +17,7 @@ public final class Database: @unchecked Sendable {
     private let path: String
     public var filePath: String { path }
 
-    public static let schemaVersion = 6
+    public static let schemaVersion = 7
 
     public init(path: String? = nil) throws {
         if let path = path {
@@ -290,6 +290,14 @@ public final class Database: @unchecked Sendable {
             logger.info("Migrated database schema to version 6 (pending deletions)")
         }
 
+        if currentVersion < 7 {
+            let courseColumns = try existingColumns(table: "courses")
+            if !courseColumns.contains("custom_icon_name") {
+                try execute("ALTER TABLE courses ADD COLUMN custom_icon_name TEXT")
+            }
+            logger.info("Migrated database schema to version 7 (custom course icons)")
+        }
+
         try execute("PRAGMA user_version = \(Self.schemaVersion)")
     }
 
@@ -478,11 +486,12 @@ extension Database {
 
 extension Database {
     public func saveCourses(_ courses: [MoodleCourse]) throws {
-        // Use INSERT ... ON CONFLICT to preserve user-set custom_folder_name and subscription_state
+        // Use INSERT ... ON CONFLICT to preserve user-set custom_folder_name, custom_icon_name, and subscription_state
         let sql = """
             INSERT INTO courses (id, site_id, short_name, full_name, summary,
-                category_id, start_date, end_date, last_accessed, visible, subscription_state, custom_folder_name)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                category_id, start_date, end_date, last_accessed, visible, subscription_state,
+                custom_folder_name, custom_icon_name)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id, site_id) DO UPDATE SET
                 short_name = excluded.short_name,
                 full_name = excluded.full_name,
@@ -493,7 +502,8 @@ extension Database {
                 last_accessed = excluded.last_accessed,
                 visible = excluded.visible,
                 subscription_state = courses.subscription_state,
-                custom_folder_name = COALESCE(courses.custom_folder_name, excluded.custom_folder_name)
+                custom_folder_name = COALESCE(courses.custom_folder_name, excluded.custom_folder_name),
+                custom_icon_name = COALESCE(courses.custom_icon_name, excluded.custom_icon_name)
         """
         try queue.sync {
             try executeUnsafe("BEGIN TRANSACTION")
@@ -520,6 +530,11 @@ extension Database {
                 } else {
                     sqlite3_bind_null(stmt, 12)
                 }
+                if let cin = course.customIconName {
+                    sqlite3_bind_text(stmt, 13, (cin as NSString).utf8String, -1, nil)
+                } else {
+                    sqlite3_bind_null(stmt, 13)
+                }
 
                 _ = sqlite3_step(stmt)
             }
@@ -536,16 +551,22 @@ extension Database {
 
             var courses: [MoodleCourse] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
-                // Column 10 = subscription_state, Column 11 = custom_folder_name
+                // Column 10 = subscription_state, Column 11 = custom_folder_name, Column 12 = custom_icon_name
+                let colCount = sqlite3_column_count(stmt)
+
                 let subscriptionState: String = {
                     guard sqlite3_column_type(stmt, 10) != SQLITE_NULL else { return "discovered" }
                     return sqlite3_column_text(stmt, 10).map { String(cString: $0) } ?? "discovered"
                 }()
 
                 let customFolderName: String? = {
-                    let colCount = sqlite3_column_count(stmt)
                     guard colCount > 11, sqlite3_column_type(stmt, 11) != SQLITE_NULL else { return nil }
                     return sqlite3_column_text(stmt, 11).map { String(cString: $0) }
+                }()
+
+                let customIconName: String? = {
+                    guard colCount > 12, sqlite3_column_type(stmt, 12) != SQLITE_NULL else { return nil }
+                    return sqlite3_column_text(stmt, 12).map { String(cString: $0) }
                 }()
 
                 courses.append(MoodleCourse(
@@ -560,6 +581,7 @@ extension Database {
                     visible: sqlite3_column_int(stmt, 9) == 1,
                     siteID: siteID,
                     customFolderName: customFolderName,
+                    customIconName: customIconName,
                     isSyncEnabled: subscriptionState != CourseSubscriptionState.unsubscribed.rawValue
                 ))
             }
@@ -588,6 +610,26 @@ extension Database {
             let status = sqlite3_step(stmt)
             guard status == SQLITE_DONE else {
                 throw FoodleError.databaseError(detail: "Failed to update custom folder name")
+            }
+        }
+    }
+    public func updateCourseCustomIconName(courseID: Int, siteID: String, iconName: String?) throws {
+        let sql = "UPDATE courses SET custom_icon_name = ? WHERE id = ? AND site_id = ?"
+        try queue.sync {
+            let stmt = try prepareStatement(sql)
+            defer { sqlite3_finalize(stmt) }
+
+            if let name = iconName, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                sqlite3_bind_text(stmt, 1, (name as NSString).utf8String, -1, nil)
+            } else {
+                sqlite3_bind_null(stmt, 1)
+            }
+            sqlite3_bind_int64(stmt, 2, Int64(courseID))
+            sqlite3_bind_text(stmt, 3, (siteID as NSString).utf8String, -1, nil)
+
+            let status = sqlite3_step(stmt)
+            guard status == SQLITE_DONE else {
+                throw FoodleError.databaseError(detail: "Failed to update custom icon name")
             }
         }
     }

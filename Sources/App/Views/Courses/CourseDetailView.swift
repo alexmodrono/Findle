@@ -18,6 +18,8 @@ struct CourseDetailView: View {
     @State private var newTagName = ""
     @State private var newTagColor: FinderTag.Color = .blue
     @State private var localSyncEnabled = true
+    @State private var customIconName: String?
+    @State private var isPickingIcon = false
 
     var body: some View {
         Form {
@@ -25,17 +27,50 @@ struct CourseDetailView: View {
                 CourseDetailHeader(course: course)
             }
 
-            Section("Finder") {
-                LabeledContent("Folder name") {
-                    TextField(course.sanitizedFolderName, text: $customFolderName)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 240)
-                        .onSubmit { saveFolderName() }
+            Section {
+                LabeledContent {
+                    Button {
+                        isPickingIcon = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: customIconName ?? "folder.fill")
+                                .imageScale(.large)
+                                .foregroundStyle(.blue)
+                            Image(systemName: "chevron.up.chevron.down")
+                                .imageScale(.small)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .popover(isPresented: $isPickingIcon) {
+                        IconPickerView(selectedIcon: $customIconName) {
+                            isPickingIcon = false
+                            saveIconName()
+                        }
+                    }
+                } label: {
+                    Label("Icon", systemImage: "paintbrush")
                 }
 
-                LabeledContent("Tags") {
-                    HStack(spacing: 4) {
-                        FlowLayout(spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Folder name", systemImage: "folder")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+
+                    TextField(course.sanitizedFolderName, text: $customFolderName)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { saveFolderName() }
+
+                    if customFolderName.isEmpty {
+                        Text("Defaults to \(course.sanitizedFolderName)")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                LabeledContent {
+                    HStack(spacing: 6) {
+                        FlowLayout(spacing: 6) {
                             ForEach(tags, id: \.self) { tag in
                                 TagBadge(tag: tag) {
                                     removeTag(tag)
@@ -46,7 +81,8 @@ struct CourseDetailView: View {
                         Button("Add Tag", systemImage: "plus") {
                             isAddingTag = true
                         }
-                        .buttonStyle(.accessoryBar)
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
                         .controlSize(.small)
                         .popover(isPresented: $isAddingTag) {
                             AddTagPopover(
@@ -57,7 +93,11 @@ struct CourseDetailView: View {
                             )
                         }
                     }
+                } label: {
+                    Label("Tags", systemImage: "tag")
                 }
+            } header: {
+                Text("Finder")
             }
 
             Section("Sync") {
@@ -115,6 +155,7 @@ struct CourseDetailView: View {
 
     private func loadCustomization() {
         customFolderName = course.customFolderName ?? ""
+        customIconName = course.customIconName
         tags = appState.fetchCourseTags(for: course)
         localSyncEnabled = course.isSyncEnabled
     }
@@ -122,6 +163,10 @@ struct CourseDetailView: View {
     private func saveFolderName() {
         let trimmed = customFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
         appState.updateCustomFolderName(for: course, name: trimmed.isEmpty ? nil : trimmed)
+    }
+
+    private func saveIconName() {
+        appState.updateCourseCustomIcon(for: course, iconName: customIconName)
     }
 
     private func addTag() {

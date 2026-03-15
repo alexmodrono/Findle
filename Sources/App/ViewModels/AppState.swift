@@ -481,6 +481,18 @@ final class AppState: ObservableObject {
         }
     }
 
+    func updateCourseCustomIcon(for course: MoodleCourse, iconName: String?) {
+        guard let db = database else { return }
+        do {
+            try db.updateCourseCustomIconName(courseID: course.id, siteID: course.siteID, iconName: iconName)
+            if let index = courses.firstIndex(where: { $0.id == course.id && $0.siteID == course.siteID }) {
+                courses[index].customIconName = iconName
+            }
+        } catch {
+            logger.error("Failed to update custom icon: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     func setCourseSyncEnabled(_ enabled: Bool, for course: MoodleCourse) {
         guard let db = database, let site = currentSite else { return }
         let newState: CourseSubscriptionState = enabled ? .discovered : .unsubscribed

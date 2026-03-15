@@ -32,11 +32,11 @@ struct CourseDetailHeader: View {
 
     private var courseIcon: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 10)
-                .fill(.blue.gradient.opacity(0.15))
-                .frame(width: 48, height: 48)
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.blue.gradient.opacity(0.12))
+                .frame(width: 52, height: 52)
 
-            Image(systemName: "folder.fill")
+            Image(systemName: course.customIconName ?? "folder.fill")
                 .font(.title2)
                 .foregroundStyle(.blue)
         }
@@ -44,12 +44,15 @@ struct CourseDetailHeader: View {
     }
 
     private var metadataRow: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             visibilityBadge
 
             if let dateRange = formattedDateRange {
+                Text("·")
+                    .foregroundStyle(.quaternary)
+
                 Text(dateRange)
-                    .font(.caption)
+                    .font(.subheadline)
                     .foregroundStyle(.tertiary)
             }
         }
@@ -61,7 +64,7 @@ struct CourseDetailHeader: View {
             course.visible ? "Visible" : "Hidden",
             systemImage: course.visible ? "eye.fill" : "eye.slash.fill"
         )
-        .font(.caption)
+        .font(.subheadline)
         .foregroundStyle(course.visible ? .green : .orange)
     }
 

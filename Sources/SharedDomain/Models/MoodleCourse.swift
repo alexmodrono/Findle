@@ -18,6 +18,7 @@ public struct MoodleCourse: Sendable, Codable, Equatable, Hashable, Identifiable
     public let visible: Bool
     public let siteID: String
     public var customFolderName: String?
+    public var customIconName: String?
     public var isSyncEnabled: Bool
 
     public init(
@@ -32,6 +33,7 @@ public struct MoodleCourse: Sendable, Codable, Equatable, Hashable, Identifiable
         visible: Bool = true,
         siteID: String,
         customFolderName: String? = nil,
+        customIconName: String? = nil,
         isSyncEnabled: Bool = true
     ) {
         self.id = id
@@ -45,6 +47,7 @@ public struct MoodleCourse: Sendable, Codable, Equatable, Hashable, Identifiable
         self.visible = visible
         self.siteID = siteID
         self.customFolderName = customFolderName
+        self.customIconName = customIconName
         self.isSyncEnabled = isSyncEnabled
     }
 
