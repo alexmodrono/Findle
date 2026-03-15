@@ -4,6 +4,29 @@ import XCTest
 
 final class MoodleClientTests: XCTestCase {
 
+    override func tearDown() {
+        MockURLProtocol.requestHandler = nil
+        super.tearDown()
+    }
+
+    private func makeMockedClient(
+        handler: @escaping MockURLProtocol.RequestHandler
+    ) -> MoodleClient {
+        MockURLProtocol.requestHandler = handler
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        return MoodleClient(session: session)
+    }
+
+    private func makeHTTPResponse(
+        url: URL,
+        statusCode: Int = 200
+    ) -> HTTPURLResponse {
+        HTTPURLResponse(url: url, statusCode: statusCode, httpVersion: nil, headerFields: nil)!
+    }
+
     func testURLNormalization() {
         let url1 = MoodleClient.normalizeURL(URL(string: "https://moodle.example.edu/")!)
         XCTAssertEqual(url1.absoluteString, "https://moodle.example.edu")
@@ -85,12 +108,146 @@ final class MoodleClientTests: XCTestCase {
         XCTAssertEqual(courses[0].shortname, "CS101")
     }
 
+    func testValidateSiteUsesPublicConfigWithoutTokenProbe() async throws {
+        let lock = NSLock()
+        var requestedPaths: [String] = []
+        let client = makeMockedClient { request in
+            lock.lock()
+            requestedPaths.append(request.url?.path ?? "")
+            lock.unlock()
+
+            guard let url = request.url else {
+                throw URLError(.badURL)
+            }
+
+            if url.path == "/lib/ajax/service-nologin.php" {
+                let json = """
+                [
+                  {
+                    "data": {
+                      "sitename": "Example Moodle",
+                      "release": "4.3",
+                      "version": "2024100100",
+                      "typeoflogin": 2
+                    }
+                  }
+                ]
+                """
+                return (self.makeHTTPResponse(url: url), Data(json.utf8))
+            }
+
+            XCTFail("Unexpected validation probe: \(url.path)")
+            throw URLError(.unsupportedURL)
+        }
+
+        let site = try await client.validateSite(url: URL(string: "https://moodle.example.edu")!)
+
+        XCTAssertEqual(site.displayName, "Example Moodle")
+        XCTAssertEqual(site.capabilities.loginType, .browser)
+        XCTAssertEqual(requestedPaths, ["/lib/ajax/service-nologin.php"])
+    }
+
+    func testValidateSiteFallsBackToTokenProbeWhenPublicConfigIsUnreadable() async throws {
+        let lock = NSLock()
+        var requestedPaths: [String] = []
+        let client = makeMockedClient { request in
+            lock.lock()
+            requestedPaths.append(request.url?.path ?? "")
+            lock.unlock()
+
+            guard let url = request.url else {
+                throw URLError(.badURL)
+            }
+
+            switch url.path {
+            case "/lib/ajax/service-nologin.php":
+                return (self.makeHTTPResponse(url: url), Data("<html>not moodle config</html>".utf8))
+            case "/login/token.php":
+                let json = """
+                {"error":"Invalid login","errorcode":"invalidlogin"}
+                """
+                return (self.makeHTTPResponse(url: url), Data(json.utf8))
+            default:
+                XCTFail("Unexpected validation probe: \(url.path)")
+                throw URLError(.unsupportedURL)
+            }
+        }
+
+        let site = try await client.validateSite(url: URL(string: "https://moodle.example.edu")!)
+
+        XCTAssertEqual(site.displayName, "moodle.example.edu")
+        XCTAssertFalse(site.capabilities.supportsMobileAPI)
+        XCTAssertEqual(
+            requestedPaths,
+            ["/lib/ajax/service-nologin.php", "/login/token.php"]
+        )
+    }
+
+    func testValidateSiteSurfacesWebServicesDisabledFromCompatibilityProbe() async {
+        let client = makeMockedClient { request in
+            guard let url = request.url else {
+                throw URLError(.badURL)
+            }
+
+            switch url.path {
+            case "/lib/ajax/service-nologin.php":
+                return (self.makeHTTPResponse(url: url), Data("<html>not moodle config</html>".utf8))
+            case "/login/token.php":
+                let json = """
+                {"error":"Web services disabled","errorcode":"enablewsdescription"}
+                """
+                return (self.makeHTTPResponse(url: url), Data(json.utf8))
+            default:
+                throw URLError(.unsupportedURL)
+            }
+        }
+
+        do {
+            _ = try await client.validateSite(url: URL(string: "https://moodle.example.edu")!)
+            XCTFail("Expected validation to fail")
+        } catch let error as FoodleError {
+            guard case .webServicesDisabled = error else {
+                XCTFail("Expected webServicesDisabled, got \(error)")
+                return
+            }
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testValidateSiteDoesNotRetryFastValidationFailures() async {
+        let lock = NSLock()
+        var requestCount = 0
+        let client = makeMockedClient { request in
+            lock.lock()
+            requestCount += 1
+            lock.unlock()
+
+            _ = request
+            throw URLError(.cannotFindHost)
+        }
+
+        do {
+            _ = try await client.validateSite(url: URL(string: "https://missing.example.edu")!)
+            XCTFail("Expected validation to fail")
+        } catch let error as FoodleError {
+            guard case .siteUnreachable = error else {
+                XCTFail("Expected siteUnreachable, got \(error)")
+                return
+            }
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        XCTAssertEqual(requestCount, 1)
+    }
+
     // MARK: - SSO Token Parsing (MD5 Signature Validation)
 
     /// Helper to build a Moodle-format SSO callback URL string.
     /// Moodle encodes: base64(md5(siteURL + passport) + ":::" + token [+ ":::" + privateToken])
     private func buildCallback(
-        scheme: String = "foodle",
+        scheme: String = "findle",
         siteURL: String,
         passport: String,
         token: String,
@@ -269,7 +426,7 @@ final class MoodleClientTests: XCTestCase {
         // Old-format payload: rawpassport:::token (NOT md5)
         let payload = "rawpassport:::token123"
         let base64 = Data(payload.utf8).base64EncodedString()
-        let callbackString = "foodle://token=\(base64)"
+        let callbackString = "findle://token=\(base64)"
         let site = makeSite(baseURL: "https://moodle.example.edu")
 
         XCTAssertThrowsError(
@@ -320,7 +477,7 @@ final class MoodleClientTests: XCTestCase {
         let payload = "\(signature):::\(token)"
         let base64 = Data(payload.utf8).base64EncodedString()
         let percentEncoded = base64.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
-        let callbackString = "foodle://token=\(percentEncoded)"
+        let callbackString = "findle://token=\(percentEncoded)"
 
         let result = try client.parseTokenFromSSOCallback(
             callbackURLString: callbackString,
@@ -344,7 +501,7 @@ final class MoodleClientTests: XCTestCase {
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
-        let callbackString = "foodle://token=\(base64)"
+        let callbackString = "findle://token=\(base64)"
 
         let result = try client.parseTokenFromSSOCallback(
             callbackURLString: callbackString,
@@ -398,7 +555,7 @@ final class MoodleClientTests: XCTestCase {
 
         XCTAssertThrowsError(
             try client.parseTokenFromSSOCallback(
-                callbackURLString: "foodle://something-else",
+                callbackURLString: "findle://something-else",
                 site: site,
                 passport: "anypassport"
             )
@@ -413,7 +570,7 @@ final class MoodleClientTests: XCTestCase {
 
         XCTAssertThrowsError(
             try client.parseTokenFromSSOCallback(
-                callbackURLString: "foodle://token=!!!not-base64!!!",
+                callbackURLString: "findle://token=!!!not-base64!!!",
                 site: site,
                 passport: "anypassport"
             )
@@ -425,17 +582,17 @@ final class MoodleClientTests: XCTestCase {
     // MARK: - Token Extraction
 
     func testExtractTokenParamHostEquals() {
-        let result = MoodleClient.extractTokenParam(from: "foodle://token=abc123")
+        let result = MoodleClient.extractTokenParam(from: "findle://token=abc123")
         XCTAssertEqual(result, "abc123")
     }
 
     func testExtractTokenParamQueryFormat() {
-        let result = MoodleClient.extractTokenParam(from: "foodle://token?token=abc123")
+        let result = MoodleClient.extractTokenParam(from: "findle://token?token=abc123")
         XCTAssertEqual(result, "abc123")
     }
 
     func testExtractTokenParamNoToken() {
-        let result = MoodleClient.extractTokenParam(from: "foodle://something-else")
+        let result = MoodleClient.extractTokenParam(from: "findle://something-else")
         XCTAssertNil(result)
     }
 
@@ -527,4 +684,35 @@ final class MoodleClientTests: XCTestCase {
         XCTAssertEqual(module.contents?.count, 1)
         XCTAssertEqual(module.contents?[0].filename, "syllabus.pdf")
     }
+}
+
+private final class MockURLProtocol: URLProtocol {
+    typealias RequestHandler = (URLRequest) throws -> (HTTPURLResponse, Data)
+
+    nonisolated(unsafe) static var requestHandler: RequestHandler?
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let handler = Self.requestHandler else {
+            fatalError("MockURLProtocol.requestHandler was not set")
+        }
+
+        do {
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
 }
