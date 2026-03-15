@@ -28,16 +28,18 @@ Findle is built to make managing university or school materials painless. Instea
 
 ## Screenshots & Demo
 
-> **Note on adding media:**
-> If you are setting up this repository for the first time, this is a great place to drop a quick GIF (using something like Kap or CleanShot X) showing how Findle integrates into the Finder sidebar and downloads files on the fly. 
-> 
-> Once you have the URL, just replace the placeholder image below.
-
 <div align="center">
-  <img src="https://via.placeholder.com/600x400.png?text=Finder+Integration+Demo+GIF" alt="Findle Finder Demo" width="600"/>
+  <img src=".github/screenshots/showcase1.png" alt="Findle Finder Sidebar Integration" width="800"/>
   <br/>
-  <em>Findle seamlessly integrating with Finder's sidebar.</em>
+  <em>Browse your courses, toggle sync preferences, and monitor progress directly from the native macOS interface.</em>
 </div>
+
+<br/>
+
+| App Dashboard & Course Management | Settings & Diagnostics |
+| :---: | :---: |
+| <img src=".github/screenshots/showcase2.png" alt="Course Management UI" width="400"/> | <img src=".github/screenshots/showcase3.png" alt="App Settings and Diagnostics" width="400"/> |
+| Findle seamlessly integrating with Finder's sidebar, behaving exactly like iCloud Drive or Dropbox. | Perform quick actions directly from the Finder app, no need to open any browser. |
 
 ## Features
 
