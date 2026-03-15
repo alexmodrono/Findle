@@ -8,14 +8,9 @@ struct ContentView: View {
             switch appState.currentScreen {
             case .onboarding:
                 OnboardingView()
-            case .courses:
-                CoursesView()
-            case .settings:
-                SettingsView()
-            case .diagnostics:
-                DiagnosticsView()
+            case .workspace:
+                WorkspaceView()
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: appState.currentScreen)
     }
 }

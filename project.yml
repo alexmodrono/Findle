@@ -15,7 +15,6 @@ settings:
     ENABLE_HARDENED_RUNTIME: true
     CODE_SIGN_STYLE: Automatic
     CODE_SIGN_IDENTITY: "Apple Development"
-    DEVELOPMENT_TEAM: 54WRV8QX2U
     SWIFT_STRICT_CONCURRENCY: complete
 
 configs:
@@ -27,6 +26,7 @@ schemes:
     build:
       targets:
         Foodle: all
+        FoodleFileProvider: all
     run:
       config: Debug
     test:
@@ -43,12 +43,23 @@ schemes:
     archive:
       config: Release
 
+packages:
+  Airlock:
+    url: https://github.com/alexmodrono/Airlock
+    from: 0.1.0
+
 targets:
   Foodle:
     type: application
     platform: macOS
+    attributes:
+      SystemCapabilities:
+        com.apple.ApplicationGroups.Mac:
+          enabled: 1
     sources:
       - path: Sources/App
+      - path: Resources/Assets.xcassets
+        buildPhase: resources
     dependencies:
       - target: SharedDomain
       - target: FoodleNetworking
@@ -57,12 +68,16 @@ targets:
       - target: FoodleFileProvider
         embed: true
         codeSign: true
+      - package: Airlock
+        product: Airlock
+      - sdk: CoreSpotlight.framework
     settings:
       base:
+        PRODUCT_NAME: Findle
         PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle
         INFOPLIST_FILE: Resources/Info/App-Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/Foodle.entitlements
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_APP_SANDBOX: YES
         COMBINE_HIDPI_IMAGES: true
         LD_RUNPATH_SEARCH_PATHS:
           - "@executable_path/../Frameworks"
@@ -76,6 +91,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.shared-domain
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
+        CODE_SIGN_IDENTITY: "-"
 
   FoodleNetworking:
     type: framework
@@ -88,6 +104,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.networking
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
+        CODE_SIGN_IDENTITY: "-"
 
   FoodlePersistence:
     type: framework
@@ -100,6 +117,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.persistence
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
+        CODE_SIGN_IDENTITY: "-"
 
   FoodleSyncEngine:
     type: framework
@@ -114,10 +132,15 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.sync-engine
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
+        CODE_SIGN_IDENTITY: "-"
 
   FoodleFileProvider:
     type: app-extension
     platform: macOS
+    attributes:
+      SystemCapabilities:
+        com.apple.ApplicationGroups.Mac:
+          enabled: 1
     sources:
       - path: Sources/FileProviderExtension
     dependencies:
@@ -130,17 +153,37 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.file-provider
         INFOPLIST_FILE: Resources/Info/FileProvider-Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/FileProvider.entitlements
+        ENABLE_APP_SANDBOX: YES
         LD_RUNPATH_SEARCH_PATHS:
           - "@executable_path/../Frameworks"
           - "@executable_path/../../../../Frameworks"
     info:
       path: Resources/Info/FileProvider-Info.plist
       properties:
+        CFBundleIcons:
+          CFBundlePrimaryIcon:
+            CFBundleSymbolName: graduationcap
         NSExtension:
           NSExtensionPointIdentifier: com.apple.fileprovider-nonui
           NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).FileProviderExtension"
           NSExtensionFileProviderDocumentGroup: "group.es.amodrono.foodle"
           NSExtensionFileProviderSupportsEnumeration: true
+          NSExtensionFileProviderActions:
+            - NSExtensionFileProviderActionIdentifier: es.amodrono.foodle.action.open-in-moodle
+              NSExtensionFileProviderActionName: Open in Moodle
+              NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
+            - NSExtensionFileProviderActionIdentifier: es.amodrono.foodle.action.copy-moodle-link
+              NSExtensionFileProviderActionName: Copy Moodle Link
+              NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
+            - NSExtensionFileProviderActionIdentifier: es.amodrono.foodle.action.open-course-page
+              NSExtensionFileProviderActionName: Open Course Page
+              NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
+            - NSExtensionFileProviderActionIdentifier: es.amodrono.foodle.action.keep-downloaded
+              NSExtensionFileProviderActionName: Keep Downloaded
+              NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
+            - NSExtensionFileProviderActionIdentifier: es.amodrono.foodle.action.remove-download
+              NSExtensionFileProviderActionName: Remove Download
+              NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
 
   SharedDomainTests:
     type: bundle.unit-test

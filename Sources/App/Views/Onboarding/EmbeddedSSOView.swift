@@ -12,26 +12,30 @@ struct EmbeddedSSOView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Toolbar
-            HStack {
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(site.displayName)
+                        .font(.headline)
+
+                    Text("Continue signing in without leaving Findle.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
                 Spacer()
 
-                Button("Cancel") {
-                    coordinator.cancel()
-                    onCancel()
-                }
-                .controlSize(.small)
+                Button("Cancel", systemImage: "xmark.circle", action: onCancel)
+                    .controlSize(.regular)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
             .background(.bar)
 
             Divider()
 
-            // Web view
             EmbeddedWebViewRepresentable(coordinator: coordinator)
         }
-        .frame(minWidth: 600, minHeight: 500)
+        .frame(minWidth: 760, minHeight: 580)
     }
 }
 
