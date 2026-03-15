@@ -15,17 +15,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         logger.info("Findle launched")
 
         // Watch for main windows opening/closing to toggle Dock icon visibility.
+        // Both observers are delivered on .main queue, so MainActor.assumeIsolated
+        // is safe and avoids sending non-Sendable AppKit types across isolation.
         let willClose = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification,
             object: nil,
             queue: .main
         ) { [weak self] note in
-            let noteObject = note.object
-            Task { @MainActor in
-                guard let window = noteObject as? NSWindow, window.canBecomeMain else { return }
+            MainActor.assumeIsolated {
+                guard let window = note.object as? NSWindow, window.canBecomeMain else { return }
+                _ = window  // silence unused-variable warning; the guard filters non-main windows
                 // Defer one run-loop cycle so the window has time to be removed from the windows array.
-                try? await Task.sleep(for: .zero)
-                self?.updateActivationPolicy()
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        self?.updateActivationPolicy()
+                    }
+                }
             }
         }
         let didBecomeKey = NotificationCenter.default.addObserver(
@@ -33,9 +38,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             object: nil,
             queue: .main
         ) { [weak self] note in
-            let noteObject = note.object
-            Task { @MainActor in
-                guard let window = noteObject as? NSWindow, window.canBecomeMain else { return }
+            MainActor.assumeIsolated {
+                guard let window = note.object as? NSWindow, window.canBecomeMain else { return }
+                _ = window
                 self?.updateActivationPolicy()
             }
         }

@@ -274,8 +274,9 @@ private final class SSOCallbackSchemeHandler: NSObject, WKURLSchemeHandler {
         if urlString.contains("token=") {
             // Notify the coordinator on the main actor, then fail the task
             // so WKWebView doesn't hang waiting for a response.
+            let callback = onCallback
             Task { @MainActor in
-                onCallback(urlString)
+                callback(urlString)
             }
         }
 

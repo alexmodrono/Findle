@@ -355,7 +355,7 @@ final class AppState: ObservableObject {
     /// Called during onboarding's setup step so the Airlock flow can finish
     /// before the workspace appears.
     func activateAfterOnboarding() {
-        guard let site = currentSite, let token = currentToken, let db = database else { return }
+        guard let site = currentSite, currentToken != nil, let db = database else { return }
         syncEngine = SyncEngine(provider: moodleClient, database: db)
 
         do {
@@ -589,7 +589,8 @@ final class AppState: ObservableObject {
                 guard let error = error as? NSError else { return }
                 if error.domain == NSFileProviderErrorDomain && error.code == -2001 {
                     self?.logger.info("File Provider not ready yet, will retry signal in 3s")
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    Task { @MainActor [weak self] in
+                        try? await Task.sleep(for: .seconds(3))
                         manager.signalEnumerator(for: identifier) { retryError in
                             if let retryError = retryError as? NSError {
                                 self?.logger.warning("File Provider signal retry failed: \(retryError.localizedDescription, privacy: .public)")
