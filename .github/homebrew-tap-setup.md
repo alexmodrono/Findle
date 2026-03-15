@@ -28,6 +28,8 @@ Add these secrets to the **Foodle** repository (Settings > Secrets and variables
 | `HOMEBREW_TAP_TOKEN` | A GitHub Personal Access Token (classic) with `repo` scope, so the workflow can push to the `homebrew-tap` repo |
 | `APP_PROVISION_PROFILE_BASE64` | Base64-encoded Developer ID provisioning profile for `es.amodrono.foodle`. Create at developer.apple.com > Profiles, then: `base64 -i profile.provisionprofile \| pbcopy` |
 | `FILEPROVIDER_PROVISION_PROFILE_BASE64` | Base64-encoded Developer ID provisioning profile for `es.amodrono.foodle.file-provider` |
+| `SPARKLE_PRIVATE_ED_KEY` | Sparkle EdDSA private key for signing updates. Generate with `generate_keys` from Sparkle's tools |
+| `SPARKLE_PUBLIC_ED_KEY` | Sparkle EdDSA public key (embedded in Info.plist via build settings) |
 
 ## 3. Creating a release
 
@@ -49,8 +51,9 @@ The workflow will:
 2. Sign it with your Developer ID certificate
 3. Notarize and staple it
 4. Create a `.dmg` and `.zip`
-5. Upload both to the GitHub Release
-6. Update the Homebrew cask formula automatically
+5. Sign the `.zip` with Sparkle's EdDSA key and generate `appcast.xml`
+6. Upload all artifacts to the GitHub Release
+7. Update the Homebrew cask formula automatically
 
 ## 4. Exporting your Developer ID certificate
 

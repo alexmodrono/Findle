@@ -5,11 +5,13 @@
 
 import SwiftUI
 import CoreSpotlight
+import Sparkle
 
 @main
 struct FoodleApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var appState = AppState()
+    @StateObject private var updateController = UpdateController()
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
 
     var body: some Scene {
@@ -30,6 +32,7 @@ struct FoodleApp: App {
         Settings {
             SettingsView()
                 .environmentObject(appState)
+                .environmentObject(updateController)
         }
 
         MenuBarExtra(isInserted: $showMenuBarIcon) {

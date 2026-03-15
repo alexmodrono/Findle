@@ -7,6 +7,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var updateController: UpdateController
     @AppStorage("launchAtLogin") private var launchAtLogin = false
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
     @AppStorage("notifyOnSyncComplete") private var notifyOnSyncComplete = false
@@ -22,6 +23,17 @@ struct SettingsView: View {
             Section("General") {
                 Toggle("Launch Findle at login", isOn: $launchAtLogin)
                 Toggle("Show in menu bar", isOn: $showMenuBarIcon)
+                Toggle(
+                    "Automatically check for updates",
+                    isOn: Binding(
+                        get: { updateController.updater.automaticallyChecksForUpdates },
+                        set: { updateController.updater.automaticallyChecksForUpdates = $0 }
+                    )
+                )
+                Button("Check for Updates…") {
+                    updateController.checkForUpdates()
+                }
+                .disabled(!updateController.canCheckForUpdates)
                 if showMenuBarIcon {
                     Text("Findle stays accessible from the menu bar when you close the window.")
                         .font(.caption)

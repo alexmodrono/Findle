@@ -47,6 +47,9 @@ packages:
   Airlock:
     url: https://github.com/alexmodrono/Airlock
     from: 0.1.0
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.6.0
 
 targets:
   Foodle:
@@ -72,6 +75,8 @@ targets:
         codeSign: true
       - package: Airlock
         product: Airlock
+      - package: Sparkle
+        product: Sparkle
       - sdk: CoreSpotlight.framework
     settings:
       base:

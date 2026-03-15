@@ -26,6 +26,10 @@
     <string>NSApplication</string>
     <key>LSUIElement</key>
     <false/>
+    <key>SUFeedURL</key>
+    <string>https://github.com/alexmodrono/Findle/releases/latest/download/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>$(SPARKLE_PUBLIC_ED_KEY)</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>

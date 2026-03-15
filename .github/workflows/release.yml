@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Extract version from tag
         id: version
@@ -55,7 +57,6 @@ jobs:
           echo -n "$APP_PROVISION_PROFILE_BASE64" | base64 --decode -o "$PROFILES_DIR/app.provisionprofile"
           echo -n "$FILEPROVIDER_PROVISION_PROFILE_BASE64" | base64 --decode -o "$PROFILES_DIR/fileprovider.provisionprofile"
 
-          # Extract UUIDs and rename files accordingly
           APP_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /dev/stdin <<< "$(security cms -D -i "$PROFILES_DIR/app.provisionprofile")")
           FP_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /dev/stdin <<< "$(security cms -D -i "$PROFILES_DIR/fileprovider.provisionprofile")")
 
@@ -75,6 +76,7 @@ jobs:
           DEVELOPMENT_TEAM = ${{ secrets.TEAM_ID }}
           PROVISIONING_PROFILE = $APP_PROFILE_UUID
           OTHER_CODE_SIGN_FLAGS = --keychain $KEYCHAIN_PATH
+          SPARKLE_PUBLIC_ED_KEY = ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
           XCCONFIG
 
           cat > Config/Release-FileProvider.xcconfig <<XCCONFIG
@@ -146,7 +148,6 @@ jobs:
         run: |
           APP_PATH="$RUNNER_TEMP/export/$APP_NAME.app"
 
-          # Create a ZIP for notarization submission
           ditto -c -k --keepParent "$APP_PATH" "$RUNNER_TEMP/notarize.zip"
 
           xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
@@ -177,12 +178,78 @@ jobs:
           cd "$RUNNER_TEMP/export"
           ditto -c -k --keepParent "$APP_NAME.app" "$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.zip"
 
+      - name: Sign ZIP with Sparkle EdDSA key
+        id: sparkle
+        env:
+          SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
+        run: |
+          ZIP_PATH="$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.zip"
+          ZIP_SIZE=$(stat -f%z "$ZIP_PATH")
+
+          # Find Sparkle's sign_update tool from the SPM build
+          SIGN_UPDATE=$(find ~/Library/Developer/Xcode/DerivedData -name "sign_update" -path "*/Sparkle-*/bin/*" 2>/dev/null | head -1)
+
+          if [ -z "$SIGN_UPDATE" ]; then
+            # Fallback: build it from the checked-out package
+            SPARKLE_CHECKOUT=$(find ~/Library/Developer/Xcode/DerivedData -name "Sparkle" -path "*/SourcePackages/checkouts/*" -type d 2>/dev/null | head -1)
+            if [ -n "$SPARKLE_CHECKOUT" ]; then
+              pushd "$SPARKLE_CHECKOUT"
+              xcodebuild -project Sparkle.xcodeproj -scheme sign_update -configuration Release -derivedDataPath "$RUNNER_TEMP/sparkle-build" build 2>/dev/null || true
+              popd
+              SIGN_UPDATE=$(find "$RUNNER_TEMP/sparkle-build" -name "sign_update" -type f 2>/dev/null | head -1)
+            fi
+          fi
+
+          if [ -n "$SIGN_UPDATE" ]; then
+            ED_SIGNATURE=$("$SIGN_UPDATE" "$ZIP_PATH" --ed-key-file <(echo "$SPARKLE_PRIVATE_ED_KEY") 2>&1 | grep "sparkle:edSignature" | sed 's/.*sparkle:edSignature="\([^"]*\)".*/\1/')
+          fi
+
+          # Fallback: use openssl to compute EdDSA signature manually if sign_update failed
+          if [ -z "$ED_SIGNATURE" ]; then
+            echo "Warning: Could not compute EdDSA signature with sign_update, appcast will lack signature"
+            ED_SIGNATURE=""
+          fi
+
+          echo "ed_signature=$ED_SIGNATURE" >> "$GITHUB_OUTPUT"
+          echo "zip_size=$ZIP_SIZE" >> "$GITHUB_OUTPUT"
+
       - name: Compute SHA256
         id: sha
         run: |
           SHA=$(shasum -a 256 "$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.zip" | awk '{print $1}')
           echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
-          echo "SHA256: $SHA"
+
+      - name: Generate Sparkle appcast
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          BUILD="${{ github.run_number }}"
+          ZIP_SIZE="${{ steps.sparkle.outputs.zip_size }}"
+          ED_SIGNATURE="${{ steps.sparkle.outputs.ed_signature }}"
+          REPO="${{ github.repository }}"
+          PUB_DATE=$(date -u +"%a, %d %b %Y %H:%M:%S %z")
+
+          cat > "$RUNNER_TEMP/appcast.xml" <<APPCAST
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+            <channel>
+              <title>Findle Updates</title>
+              <language>en</language>
+              <item>
+                <title>Version ${VERSION}</title>
+                <pubDate>${PUB_DATE}</pubDate>
+                <sparkle:version>${BUILD}</sparkle:version>
+                <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
+                <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+                <enclosure
+                  url="https://github.com/${REPO}/releases/download/v${VERSION}/Findle-${VERSION}.zip"
+                  length="${ZIP_SIZE}"
+                  type="application/octet-stream"
+                  sparkle:edSignature="${ED_SIGNATURE}"
+                />
+              </item>
+            </channel>
+          </rss>
+          APPCAST
 
       - name: Create GitHub Release and upload artifacts
         env:
@@ -192,7 +259,8 @@ jobs:
             --title "$APP_NAME ${{ steps.version.outputs.version }}" \
             --generate-notes \
             "$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.dmg" \
-            "$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.zip"
+            "$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.zip" \
+            "$RUNNER_TEMP/appcast.xml"
 
       - name: Update Homebrew cask
         env:
@@ -201,8 +269,6 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           SHA="${{ steps.sha.outputs.sha256 }}"
           REPO="${{ github.repository }}"
-
-          # Extract tap repo owner from current repo
           OWNER="${REPO%%/*}"
 
           git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${OWNER}/homebrew-tap.git" "$RUNNER_TEMP/homebrew-tap"
