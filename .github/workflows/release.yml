@@ -27,9 +27,6 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Generate Xcode project
-        run: xcodegen generate
-
       - name: Import signing certificate
         env:
           CERTIFICATE_P12_BASE64: ${{ secrets.CERTIFICATE_P12_BASE64 }}
@@ -47,6 +44,56 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -k "" "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain
 
+      - name: Install provisioning profiles
+        env:
+          APP_PROVISION_PROFILE_BASE64: ${{ secrets.APP_PROVISION_PROFILE_BASE64 }}
+          FILEPROVIDER_PROVISION_PROFILE_BASE64: ${{ secrets.FILEPROVIDER_PROVISION_PROFILE_BASE64 }}
+        run: |
+          PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILES_DIR"
+
+          echo -n "$APP_PROVISION_PROFILE_BASE64" | base64 --decode -o "$PROFILES_DIR/app.provisionprofile"
+          echo -n "$FILEPROVIDER_PROVISION_PROFILE_BASE64" | base64 --decode -o "$PROFILES_DIR/fileprovider.provisionprofile"
+
+          # Extract UUIDs and rename files accordingly
+          APP_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /dev/stdin <<< "$(security cms -D -i "$PROFILES_DIR/app.provisionprofile")")
+          FP_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /dev/stdin <<< "$(security cms -D -i "$PROFILES_DIR/fileprovider.provisionprofile")")
+
+          mv "$PROFILES_DIR/app.provisionprofile" "$PROFILES_DIR/$APP_UUID.provisionprofile"
+          mv "$PROFILES_DIR/fileprovider.provisionprofile" "$PROFILES_DIR/$FP_UUID.provisionprofile"
+
+          echo "APP_PROFILE_UUID=$APP_UUID" >> "$GITHUB_ENV"
+          echo "FP_PROFILE_UUID=$FP_UUID" >> "$GITHUB_ENV"
+
+      - name: Write signing xcconfig files
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain"
+
+          cat > Config/Release-App.xcconfig <<XCCONFIG
+          CODE_SIGN_STYLE = Manual
+          CODE_SIGN_IDENTITY = Developer ID Application
+          DEVELOPMENT_TEAM = ${{ secrets.TEAM_ID }}
+          PROVISIONING_PROFILE = $APP_PROFILE_UUID
+          OTHER_CODE_SIGN_FLAGS = --keychain $KEYCHAIN_PATH
+          XCCONFIG
+
+          cat > Config/Release-FileProvider.xcconfig <<XCCONFIG
+          CODE_SIGN_STYLE = Manual
+          CODE_SIGN_IDENTITY = Developer ID Application
+          DEVELOPMENT_TEAM = ${{ secrets.TEAM_ID }}
+          PROVISIONING_PROFILE = $FP_PROFILE_UUID
+          OTHER_CODE_SIGN_FLAGS = --keychain $KEYCHAIN_PATH
+          XCCONFIG
+
+          cat > Config/Release-Framework.xcconfig <<XCCONFIG
+          CODE_SIGN_STYLE = Manual
+          CODE_SIGN_IDENTITY = -
+          DEVELOPMENT_TEAM = ${{ secrets.TEAM_ID }}
+          XCCONFIG
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
       - name: Set version in Info.plist
         run: |
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.version.outputs.version }}" Resources/Info/App-Info.plist
@@ -58,11 +105,7 @@ jobs:
             -project Foodle.xcodeproj \
             -scheme "$SCHEME" \
             -configuration Release \
-            -archivePath "$RUNNER_TEMP/Foodle.xcarchive" \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="Developer ID Application" \
-            DEVELOPMENT_TEAM="${{ secrets.TEAM_ID }}" \
-            OTHER_CODE_SIGN_FLAGS="--keychain $RUNNER_TEMP/build.keychain"
+            -archivePath "$RUNNER_TEMP/Foodle.xcarchive"
 
       - name: Export archive
         run: |
@@ -79,6 +122,13 @@ jobs:
               <string>manual</string>
               <key>signingCertificate</key>
               <string>Developer ID Application</string>
+              <key>provisioningProfiles</key>
+              <dict>
+                  <key>es.amodrono.foodle</key>
+                  <string>${APP_PROFILE_UUID}</string>
+                  <key>es.amodrono.foodle.file-provider</key>
+                  <string>${FP_PROFILE_UUID}</string>
+              </dict>
           </dict>
           </plist>
           EOF

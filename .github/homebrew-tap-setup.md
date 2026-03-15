@@ -26,6 +26,8 @@ Add these secrets to the **Foodle** repository (Settings > Secrets and variables
 | `APPLE_ID` | Your Apple ID email (for notarization) |
 | `NOTARIZATION_PASSWORD` | App-specific password for notarization. Generate at appleid.apple.com > Sign-In and Security > App-Specific Passwords |
 | `HOMEBREW_TAP_TOKEN` | A GitHub Personal Access Token (classic) with `repo` scope, so the workflow can push to the `homebrew-tap` repo |
+| `APP_PROVISION_PROFILE_BASE64` | Base64-encoded Developer ID provisioning profile for `es.amodrono.foodle`. Create at developer.apple.com > Profiles, then: `base64 -i profile.provisionprofile \| pbcopy` |
+| `FILEPROVIDER_PROVISION_PROFILE_BASE64` | Base64-encoded Developer ID provisioning profile for `es.amodrono.foodle.file-provider` |
 
 ## 3. Creating a release
 
