@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://apple.com/macos"><img src="https://img.shields.io/badge/macOS-14.0%2B-lightgrey.svg" alt="macOS"></a>
   <a href="https://swift.org"><img src="https://img.shields.io/badge/Swift-6.0-F05138.svg" alt="Swift"></a>
-  <!-- <a href="https://github.com/USERNAME/Findle/actions"><img src="https://github.com/USERNAME/Findle/actions/workflows/release.yml/badge.svg" alt="Build Status"></a> -->
+  <a href="https://github.com/alexmodrono/Findle/actions"><img src="https://github.com/alexmodrono/Findle/actions/workflows/release.yml/badge.svg" alt="Build Status"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
   <a href="http://makeapullrequest.com"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"></a>
 </p>
@@ -47,20 +47,32 @@ Findle is built to make managing university or school materials painless. Instea
 - **File Provider Integration:** First-class Finder sidebar presence. Files only download when you actually need them, saving local disk space.
 - **Secure by Default:** Authentication happens via the official Moodle Web Services API, and credentials are stored securely in the macOS Keychain.
 - **Smart Sync:** The app handles automatic course discovery, enumerates content, and performs incremental syncs using per-course change tracking.
+- **Automatic Updates:** Built-in update checking via Sparkle, so you always have the latest version.
 - **Efficient Storage:** Under the hood, a local SQLite database caches metadata so you can browse your course structure instantly, using placeholder files until you double-click them.
 
-## Requirements
+## Installation
 
-Before you start building, make sure you have the following:
+### Download
+
+Download the latest `.dmg` from the [Releases](https://github.com/alexmodrono/Findle/releases/latest) page. Open the disk image and drag Findle to your Applications folder.
+
+### Homebrew
+
+```bash
+brew tap alexmodrono/tap
+brew install --cask findle
+```
+
+## Building from Source
+
+### Requirements
 
 - macOS 14.0 (Sonoma) or later
 - Xcode 16.0 or later
 - Swift 6.0
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) (for generating the Xcode project)
 
-## Setup & Installation
-
-Getting the project up and running locally is pretty straightforward thanks to XcodeGen.
+### Steps
 
 1. **Install XcodeGen** (if you haven't already):
    ```bash
@@ -78,13 +90,15 @@ Getting the project up and running locally is pretty straightforward thanks to X
    ```
 
 4. **Configure Code Signing:**
-   The File Provider extension requires code signing with a valid Apple Development Team. Since the team identifier is not committed to the repo, you'll need to go into the Xcode project settings and select your own Development Team for all targets before you can build successfully.
+   The File Provider extension requires code signing with a valid Apple Development Team. Go into the Xcode project settings and select your own Development Team for all targets before building.
 
 5. Select the `Foodle` scheme, build, and run.
 
+> **Note:** The Xcode project and scheme are named `Foodle` for historical reasons, but the built app is called **Findle**.
+
 ## Architecture
 
-Findle is split into a modular set of Swift packages and targets. This keeps the separation of concerns clean and makes it easier to work on isolated features.
+Findle is split into a modular set of frameworks and targets. This keeps the separation of concerns clean and makes it easier to work on isolated features.
 
 | Module | Purpose |
 |--------|---------|
@@ -93,7 +107,7 @@ Findle is split into a modular set of Swift packages and targets. This keeps the
 | `FoodlePersistence` | The SQLite database layer, metadata cache, and sync cursors. |
 | `FoodleSyncEngine` | Orchestrates the sync process, computes diffs, and manages downloads. |
 | `FoodleFileProvider`| The Apple File Provider extension that hooks directly into Finder. |
-| `Foodle` (App) | The main SwiftUI app shell, handling onboarding, diagnostics, and settings. |
+| `Findle` (App) | The main SwiftUI app shell, handling onboarding, diagnostics, and settings. |
 
 ### Data Flow Overview
 ```mermaid
@@ -107,7 +121,7 @@ graph LR
 
 ## Testing
 
-Reliability is maintained with unit and integration tests. You can run the test suites directly in Xcode using `Cmd+U`, or via the command line if you prefer:
+Reliability is maintained with unit and integration tests. You can run the test suites directly in Xcode using `Cmd+U`, or via the command line:
 
 ```bash
 xcodebuild test -project Foodle.xcodeproj -scheme SharedDomainTests
@@ -118,10 +132,8 @@ Mock API responses and test fixtures can be found in the `Fixtures/` directory.
 
 ## Project Structure
 
-If you're looking around the codebase, here is how things are organized:
-
 ```text
-Foodle/
+Findle/
 ├── Sources/
 │   ├── App/                    # Main macOS application
 │   ├── SharedDomain/           # Shared models and types
