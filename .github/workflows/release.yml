@@ -76,7 +76,6 @@ jobs:
           DEVELOPMENT_TEAM = ${{ secrets.TEAM_ID }}
           PROVISIONING_PROFILE = $APP_PROFILE_UUID
           OTHER_CODE_SIGN_FLAGS = --keychain $KEYCHAIN_PATH
-          SPARKLE_PUBLIC_ED_KEY = ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
           XCCONFIG
 
           cat > Config/Release-FileProvider.xcconfig <<XCCONFIG
