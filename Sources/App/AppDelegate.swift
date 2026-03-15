@@ -20,8 +20,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             object: nil,
             queue: .main
         ) { [weak self] note in
+            let noteObject = note.object
             Task { @MainActor in
-                guard let window = note.object as? NSWindow, window.canBecomeMain else { return }
+                guard let window = noteObject as? NSWindow, window.canBecomeMain else { return }
                 // Defer one run-loop cycle so the window has time to be removed from the windows array.
                 try? await Task.sleep(for: .zero)
                 self?.updateActivationPolicy()
@@ -32,8 +33,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             object: nil,
             queue: .main
         ) { [weak self] note in
+            let noteObject = note.object
             Task { @MainActor in
-                guard let window = note.object as? NSWindow, window.canBecomeMain else { return }
+                guard let window = noteObject as? NSWindow, window.canBecomeMain else { return }
                 self?.updateActivationPolicy()
             }
         }
