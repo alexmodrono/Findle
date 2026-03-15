@@ -15,8 +15,8 @@ public struct EmbeddedAuthResult: Sendable {
 /// The web view loads the SSO launch URL and intercepts the redirect to a
 /// non-HTTP(S) scheme containing the token callback.
 ///
-/// Each authentication attempt uses a fresh non-persistent `WKWebsiteDataStore`
-/// and a new `WKProcessPool` to avoid leaking session state between attempts.
+/// Each authentication attempt cleans up the shared/default website data store
+/// after completion or cancellation to avoid persisting SSO session state.
 @MainActor
 public final class EmbeddedAuthCoordinator: NSObject {
 
@@ -29,13 +29,12 @@ public final class EmbeddedAuthCoordinator: NSObject {
     private var passport: String = ""
     private var site: MoodleSite?
 
-    /// Start the embedded SSO flow and return the resulting auth token.
+    /// Configure the embedded web view and start loading the SSO entry page.
     ///
-    /// - Parameters:
-    ///   - site: The Moodle site to authenticate with.
-    /// - Returns: The authentication result containing the token and passport.
-    /// - Throws: `FoodleError` on failure or cancellation.
-    public func authenticate(site: MoodleSite) async throws -> EmbeddedAuthResult {
+    /// Call `waitForResult()` after presenting `webView` to await the callback.
+    ///
+    /// - Parameter site: The Moodle site to authenticate with.
+    public func prepareAuthentication(site: MoodleSite) throws {
         self.site = site
         self.passport = generatePassport()
 
@@ -46,20 +45,21 @@ public final class EmbeddedAuthCoordinator: NSObject {
         logger.info("Starting embedded SSO for \(site.displayName, privacy: .public)")
         logger.info("Launch URL source: \(buildResult.source == .advertised ? "advertised" : "fallback", privacy: .public)")
 
-        // Use a non-persistent data store to avoid leaking SSO session cookies.
-        // This requires the App Sandbox to be disabled (or the app to be fully
-        // code-signed with entitlements) because WKWebView spawns separate
-        // WebContent processes for cross-origin navigations that need sandbox access.
+        // Use the shared/default store and process pool so cross-origin SSO
+        // redirects stay inside WebKit's normal process model. A non-persistent
+        // store paired with a fresh process pool causes extra sandboxed
+        // WebContent processes to spin up and emit launchservicesd/RunningBoard
+        // warnings on macOS during Microsoft/Google SSO hops.
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = .nonPersistent()
-        config.processPool = WKProcessPool()
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
         // Register all known Moodle/Open LMS callback schemes with the web view.
         // Without this, WKWebView passes unknown schemes to the system URL handler
         // (showing "no application set to open the URL") instead of routing them
         // through the navigation delegate where we intercept the token callback.
-        let schemeHandler = SSOCallbackSchemeHandler()
+        let schemeHandler = SSOCallbackSchemeHandler { [weak self] urlString in
+            self?.completeWithCallbackURL(urlString)
+        }
         for scheme in MoodleSite.acceptedCallbackSchemes {
             config.setURLSchemeHandler(schemeHandler, forURLScheme: scheme)
         }
@@ -71,7 +71,21 @@ public final class EmbeddedAuthCoordinator: NSObject {
 
         let request = URLRequest(url: launchURL)
         webView.load(request)
+    }
 
+    /// Start the embedded SSO flow and return the resulting auth token.
+    ///
+    /// - Parameters:
+    ///   - site: The Moodle site to authenticate with.
+    /// - Returns: The authentication result containing the token and passport.
+    /// - Throws: `FoodleError` on failure or cancellation.
+    public func authenticate(site: MoodleSite) async throws -> EmbeddedAuthResult {
+        try prepareAuthentication(site: site)
+        return try await waitForResult()
+    }
+
+    /// Wait for the embedded SSO callback after `prepareAuthentication(site:)`.
+    public func waitForResult() async throws -> EmbeddedAuthResult {
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
         }
@@ -80,9 +94,19 @@ public final class EmbeddedAuthCoordinator: NSObject {
     /// Cancel the embedded SSO flow. Returns the user to the SSO step without crashing.
     public func cancel() {
         webView?.stopLoading()
+        cleanUpWebData()
         let pending = continuation
         continuation = nil
         pending?.resume(throwing: FoodleError.cancelled)
+    }
+
+    /// Remove session cookies and website data left by the SSO flow.
+    private func cleanUpWebData() {
+        let dataStore = webView?.configuration.websiteDataStore ?? .default()
+        let dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
+        dataStore.fetchDataRecords(ofTypes: dataTypes) { records in
+            dataStore.removeData(ofTypes: dataTypes, for: records) {}
+        }
     }
 
     private func generatePassport() -> String {
@@ -94,6 +118,7 @@ public final class EmbeddedAuthCoordinator: NSObject {
     private func completeWithCallbackURL(_ urlString: String) {
         guard let site = site, let pending = continuation else { return }
         continuation = nil
+        cleanUpWebData()
 
         do {
             let client = MoodleClient()
@@ -116,7 +141,7 @@ extension EmbeddedAuthCoordinator: WKNavigationDelegate {
     public func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
-        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
     ) {
         guard let url = navigationAction.request.url else {
             decisionHandler(.allow)
@@ -157,6 +182,7 @@ extension EmbeddedAuthCoordinator: WKNavigationDelegate {
             return
         }
         logger.error("Embedded SSO provisional navigation failed: \(error.localizedDescription, privacy: .public)")
+        cleanUpWebData()
         let pending = continuation
         continuation = nil
         pending?.resume(throwing: FoodleError.ssoCallbackInvalid(
@@ -220,21 +246,34 @@ extension EmbeddedAuthCoordinator: WKUIDelegate {
 
 // MARK: - WKURLSchemeHandler
 
-/// A no-op URL scheme handler that claims ownership of Moodle callback schemes.
+/// URL scheme handler that intercepts Moodle SSO callback schemes.
 ///
 /// When registered with `WKWebViewConfiguration.setURLSchemeHandler(_:forURLScheme:)`,
 /// this prevents WKWebView from passing custom-scheme URLs (like `ltgopenlmsapp://`,
-/// `moodlemobile://`, etc.) to the macOS system URL handler. Instead, navigations to
-/// these schemes go through the `WKNavigationDelegate` pipeline where we intercept
-/// the token callback in `decidePolicyFor`.
+/// `moodlemobile://`, etc.) to the macOS system URL handler.
 ///
-/// The handler itself never completes the URL task — the navigation delegate cancels
-/// the navigation before the scheme handler needs to produce a response.
+/// When a registered scheme is loaded, the handler checks for a token callback
+/// and notifies the coordinator directly. This is necessary because registered
+/// scheme handlers receive the request *instead of* the navigation delegate's
+/// `decidePolicyFor` — so the navigation delegate alone cannot intercept them.
 private final class SSOCallbackSchemeHandler: NSObject, WKURLSchemeHandler {
+    private let onCallback: @MainActor (String) -> Void
+
+    init(onCallback: @escaping @MainActor (String) -> Void) {
+        self.onCallback = onCallback
+    }
+
     func webView(_ webView: WKWebView, start urlSchemeTask: any WKURLSchemeTask) {
-        // Intentionally left empty. The navigation delegate's decidePolicyFor
-        // cancels the navigation before this handler needs to produce a response.
-        // If we reach here, fail gracefully so WKWebView doesn't hang.
+        let urlString = urlSchemeTask.request.url?.absoluteString ?? ""
+
+        if urlString.contains("token=") {
+            // Notify the coordinator on the main actor, then fail the task
+            // so WKWebView doesn't hang waiting for a response.
+            Task { @MainActor in
+                onCallback(urlString)
+            }
+        }
+
         urlSchemeTask.didFailWithError(URLError(.cancelled))
     }
 

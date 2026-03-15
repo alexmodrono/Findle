@@ -25,13 +25,14 @@ public struct MoodleSite: Sendable, Codable, Equatable, Identifiable {
     }
 
     /// The custom URL scheme used for SSO callbacks.
-    public static let callbackScheme = "foodle"
+    public static let callbackScheme = "findle"
 
     /// All URL schemes recognized as valid SSO callbacks.
     /// Moodle/Open LMS may redirect to branded schemes depending on the site's
     /// mobile app configuration. These are registered with WKWebView so the
     /// navigation delegate intercepts them instead of the system URL handler.
     public static let acceptedCallbackSchemes: Set<String> = [
+        "findle",
         "foodle",
         "moodlemobile",
         "openlms",

@@ -18,59 +18,52 @@ public final class MoodleClient: LMSProvider, @unchecked Sendable {
     // MARK: - Site Validation
 
     public func validateSite(url: URL) async throws -> MoodleSite {
+        try await validateSite(url: url) { _ in }
+    }
+
+    public func validateSite(
+        url: URL,
+        onProgress: @escaping @Sendable (SiteValidationProgress) async -> Void
+    ) async throws -> MoodleSite {
         let normalizedURL = Self.normalizeURL(url)
         logger.info("Validating site: \(normalizedURL.absoluteString, privacy: .public)")
 
-        // Try to get site info via the mobile web services check
-        let infoURL = normalizedURL.appendingPathComponent("login/token.php")
-        var request = URLRequest(url: infoURL)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        // Send a minimal request to check if the endpoint exists
-        request.httpBody = "username=_check_&password=_check_&service=moodle_mobile_app".data(using: .utf8)
-        request.timeoutInterval = 15
+        try Task.checkCancellation()
 
-        let (data, response) = try await performRequest(request)
+        await onProgress(.checkingConfiguration)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw FoodleError.siteUnreachable(url: normalizedURL)
-        }
-
-        // Even with bad credentials, a valid Moodle site returns JSON with an error
-        // A non-Moodle site returns HTML or a different status code
-        if httpResponse.statusCode == 200 {
-            // Try to parse the response - if it's JSON, it's likely Moodle
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                // Check for Moodle-specific error codes
-                let errorCode = json["errorcode"] as? String
-                let isValidMoodle = errorCode == "invalidlogin"
-                    || errorCode == "enablewsdescription"
-                    || errorCode == "sitemaintenance"
-                    || json["token"] != nil
-
-                if !isValidMoodle && errorCode == "enablewsdescription" {
-                    throw FoodleError.webServicesDisabled
-                }
-
-                // Now try to get actual site info
-                return try await fetchSiteInfo(baseURL: normalizedURL)
-            }
-        }
-
-        // Try a secondary check - the site info API
         do {
-            return try await fetchSiteInfo(baseURL: normalizedURL)
+            return try await fetchSiteInfo(baseURL: normalizedURL, requestPolicy: .interactiveValidation)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as FoodleError {
+            guard shouldAttemptCompatibilityProbe(after: error) else {
+                throw error
+            }
+            logger.info("Public site config request failed; falling back to token endpoint compatibility probe")
         } catch {
-            throw FoodleError.siteIncompatible(reason: "Could not verify Moodle web services at this URL.")
+            logger.info("Public site config request failed; falling back to token endpoint compatibility probe")
         }
+
+        try Task.checkCancellation()
+        await onProgress(.checkingCompatibility)
+
+        return try await probeTokenEndpointCompatibility(
+            baseURL: normalizedURL,
+            requestPolicy: .interactiveCompatibilityProbe
+        )
     }
 
-    private func fetchSiteInfo(baseURL: URL) async throws -> MoodleSite {
+    private func fetchSiteInfo(
+        baseURL: URL,
+        requestPolicy: RequestPolicy = .standard
+    ) async throws -> MoodleSite {
         // Use ajax.php to get site info without authentication
         let ajaxURL = baseURL.appendingPathComponent("lib/ajax/service-nologin.php")
         var request = URLRequest(url: ajaxURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = requestPolicy.timeoutInterval
 
         let body: [[String: Any]] = [
             [
@@ -81,11 +74,30 @@ public final class MoodleClient: LMSProvider, @unchecked Sendable {
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, _) = try await performRequest(request)
+        let (data, response) = try await performRequest(request, policy: requestPolicy)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw FoodleError.siteUnreachable(url: baseURL)
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw FoodleError.requestFailed(
+                statusCode: httpResponse.statusCode,
+                detail: String(data: data, encoding: .utf8) ?? "Unknown"
+            )
+        }
 
         if let responses = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-           let first = responses.first,
-           let resultData = first["data"] as? [String: Any] {
+           let first = responses.first {
+            if let exception = first["exception"] as? [String: Any] {
+                let detail = exception["message"] as? String ?? "Missing public site configuration."
+                throw FoodleError.siteIncompatible(reason: detail)
+            }
+
+            guard let resultData = first["data"] as? [String: Any] else {
+                throw FoodleError.invalidResponse(detail: "Missing public site configuration.")
+            }
+
             let siteName = resultData["sitename"] as? String
             let release = resultData["release"] as? String
             let version = resultData["version"] as? String
@@ -163,7 +175,48 @@ public final class MoodleClient: LMSProvider, @unchecked Sendable {
             )
         }
 
-        // Fallback: assume basic compatibility, default to app login
+        throw FoodleError.invalidResponse(detail: "Could not decode Moodle public site configuration.")
+    }
+
+    private func probeTokenEndpointCompatibility(
+        baseURL: URL,
+        requestPolicy: RequestPolicy
+    ) async throws -> MoodleSite {
+        let infoURL = baseURL.appendingPathComponent("login/token.php")
+        var request = URLRequest(url: infoURL)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = "username=_check_&password=_check_&service=moodle_mobile_app".data(using: .utf8)
+        request.timeoutInterval = requestPolicy.timeoutInterval
+
+        let (data, response) = try await performRequest(request, policy: requestPolicy)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw FoodleError.siteUnreachable(url: baseURL)
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            throw FoodleError.siteIncompatible(reason: "Could not verify Moodle web services at this URL.")
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw FoodleError.siteIncompatible(reason: "Could not verify Moodle web services at this URL.")
+        }
+
+        let errorCode = json["errorcode"] as? String
+        if errorCode == "enablewsdescription" {
+            throw FoodleError.webServicesDisabled
+        }
+
+        let isValidMoodle = errorCode == "invalidlogin"
+            || errorCode == "sitemaintenance"
+            || json["token"] != nil
+
+        guard isValidMoodle else {
+            throw FoodleError.siteIncompatible(reason: "Could not verify Moodle web services at this URL.")
+        }
+
+        logger.info("Token endpoint compatibility probe succeeded")
         return MoodleSite(
             displayName: baseURL.host ?? "Moodle",
             baseURL: baseURL,
@@ -173,6 +226,15 @@ public final class MoodleClient: LMSProvider, @unchecked Sendable {
                 supportsFileDownload: true
             )
         )
+    }
+
+    private func shouldAttemptCompatibilityProbe(after error: FoodleError) -> Bool {
+        switch error {
+        case .networkUnavailable, .timeout, .siteUnreachable, .webServicesDisabled:
+            return false
+        default:
+            return true
+        }
     }
 
     // MARK: - Authentication
@@ -505,20 +567,66 @@ public final class MoodleClient: LMSProvider, @unchecked Sendable {
 
     // MARK: - Request Execution
 
-    private func performRequest(_ request: URLRequest, retryCount: Int = 3) async throws -> (Data, URLResponse) {
+    private enum RequestPolicy {
+        case standard
+        case interactiveValidation
+        case interactiveCompatibilityProbe
+
+        var retryCount: Int {
+            switch self {
+            case .standard:
+                return 3
+            case .interactiveValidation, .interactiveCompatibilityProbe:
+                return 1
+            }
+        }
+
+        var timeoutInterval: TimeInterval {
+            switch self {
+            case .standard:
+                return 15
+            case .interactiveValidation:
+                return 6
+            case .interactiveCompatibilityProbe:
+                return 4
+            }
+        }
+
+        var mapsHostErrorsToSiteUnreachable: Bool {
+            switch self {
+            case .standard:
+                return false
+            case .interactiveValidation, .interactiveCompatibilityProbe:
+                return true
+            }
+        }
+    }
+
+    private func performRequest(
+        _ request: URLRequest,
+        policy: RequestPolicy = .standard
+    ) async throws -> (Data, URLResponse) {
+        var request = request
+        if request.timeoutInterval <= 0 {
+            request.timeoutInterval = policy.timeoutInterval
+        }
+
         var lastError: Error?
-        for attempt in 0..<retryCount {
+        for attempt in 0..<policy.retryCount {
+            try Task.checkCancellation()
+
             do {
                 return try await session.data(for: request)
+            } catch is CancellationError {
+                throw CancellationError()
             } catch let error as URLError {
                 lastError = error
-                if error.code == .notConnectedToInternet || error.code == .networkConnectionLost {
-                    throw FoodleError.networkUnavailable
+
+                if let mappedError = mapTransportError(error, requestURL: request.url, policy: policy) {
+                    throw mappedError
                 }
-                if error.code == .timedOut {
-                    throw FoodleError.timeout
-                }
-                if attempt < retryCount - 1 {
+
+                if attempt < policy.retryCount - 1 {
                     let delay = pow(2.0, Double(attempt)) * 0.5
                     try await Task.sleep(for: .seconds(delay))
                     logger.debug("Retrying request (attempt \(attempt + 1))")
@@ -527,7 +635,32 @@ public final class MoodleClient: LMSProvider, @unchecked Sendable {
                 throw error
             }
         }
+
         throw lastError ?? FoodleError.networkUnavailable
+    }
+
+    private func mapTransportError(
+        _ error: URLError,
+        requestURL: URL?,
+        policy: RequestPolicy
+    ) -> FoodleError? {
+        switch error.code {
+        case .notConnectedToInternet, .networkConnectionLost:
+            return .networkUnavailable
+        case .timedOut:
+            return .timeout
+        case .badURL, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed,
+                .secureConnectionFailed, .appTransportSecurityRequiresSecureConnection,
+                .serverCertificateHasBadDate, .serverCertificateHasUnknownRoot,
+                .serverCertificateNotYetValid, .clientCertificateRejected,
+                .clientCertificateRequired:
+            if policy.mapsHostErrorsToSiteUnreachable, let requestURL {
+                return .siteUnreachable(url: requestURL)
+            }
+            return nil
+        default:
+            return nil
+        }
     }
 
     // MARK: - URL Normalization

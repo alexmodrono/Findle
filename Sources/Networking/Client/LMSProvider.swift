@@ -1,6 +1,12 @@
 import Foundation
 import SharedDomain
 
+/// High-level progress states emitted while validating a Moodle site.
+public enum SiteValidationProgress: Sendable {
+    case checkingConfiguration
+    case checkingCompatibility
+}
+
 /// Protocol for LMS backend providers. Moodle is the primary implementation;
 /// additional backends (Canvas, Blackboard, etc.) can be added by conforming to this protocol.
 public protocol LMSProvider: Sendable {

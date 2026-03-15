@@ -1,6 +1,6 @@
 import Foundation
 
-/// Top-level error domain for the Foodle app.
+/// Top-level error domain for the Findle app.
 public enum FoodleError: Error, Sendable, LocalizedError {
     // Authentication
     case invalidCredentials
@@ -87,13 +87,13 @@ public enum FoodleError: Error, Sendable, LocalizedError {
         case .enumerationFailed(let detail):
             return "Could not enumerate items: \(detail)"
         case .ssoLaunchURLUnavailable(let detail):
-            return "This site requires browser sign-in, but Foodle could not build a valid sign-in URL. \(detail)"
+            return "This site requires browser sign-in, but Findle could not build a valid sign-in URL. \(detail)"
         case .ssoLaunchURLInvalid(let detail):
             return "The site's advertised sign-in URL is invalid. \(detail)"
         case .ssoCallbackInvalid(let detail):
             return "The sign-in callback from the site was invalid or incomplete. \(detail)"
         case .ssoSessionStartFailed(let detail):
-            return "Foodle could not start the browser sign-in flow for this site. \(detail)"
+            return "Findle could not start the browser sign-in flow for this site. \(detail)"
         case .internalError(let detail):
             return "Internal error: \(detail)"
         case .cancelled:

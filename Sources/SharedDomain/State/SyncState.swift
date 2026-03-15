@@ -62,6 +62,7 @@ public struct LocalItem: Sendable, Codable, Equatable, Identifiable {
     public var localPath: String?
     public var remoteURL: URL?
     public var contentVersion: String?
+    public var tagData: Data?
 
     public init(
         id: String = UUID().uuidString,
@@ -79,7 +80,8 @@ public struct LocalItem: Sendable, Codable, Equatable, Identifiable {
         isPinned: Bool = false,
         localPath: String? = nil,
         remoteURL: URL? = nil,
-        contentVersion: String? = nil
+        contentVersion: String? = nil,
+        tagData: Data? = nil
     ) {
         self.id = id
         self.parentID = parentID
@@ -97,5 +99,6 @@ public struct LocalItem: Sendable, Codable, Equatable, Identifiable {
         self.localPath = localPath
         self.remoteURL = remoteURL
         self.contentVersion = contentVersion
+        self.tagData = tagData
     }
 }
