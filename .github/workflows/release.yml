@@ -184,11 +184,13 @@ jobs:
           echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
           echo "SHA256: $SHA"
 
-      - name: Upload artifacts to GitHub Release
+      - name: Create GitHub Release and upload artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "$GITHUB_REF_NAME" \
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$APP_NAME ${{ steps.version.outputs.version }}" \
+            --generate-notes \
             "$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.dmg" \
             "$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.zip"
 
