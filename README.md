@@ -29,7 +29,7 @@ Findle is built to make managing university or school materials painless. Instea
 ## Screenshots & Demo
 
 <div align="center">
-  <img src=".github/screenshots/showcase1.png" alt="Findle Finder Sidebar Integration" width="800"/>
+  <img src=".github/screenshots/showcase1.jpg" alt="Findle Finder Sidebar Integration" width="800"/>
   <br/>
   <em>Browse your courses, toggle sync preferences, and monitor progress directly from the native macOS interface.</em>
 </div>
@@ -38,7 +38,7 @@ Findle is built to make managing university or school materials painless. Instea
 
 | App Dashboard & Course Management | Settings & Diagnostics |
 | :---: | :---: |
-| <img src=".github/screenshots/showcase2.png" alt="Course Management UI" width="400"/> | <img src=".github/screenshots/showcase3.png" alt="App Settings and Diagnostics" width="400"/> |
+| <img src=".github/screenshots/showcase2.jpg" alt="Course Management UI" width="400"/> | <img src=".github/screenshots/showcase3.jpg" alt="App Settings and Diagnostics" width="400"/> |
 | Findle seamlessly integrating with Finder's sidebar, behaving exactly like iCloud Drive or Dropbox. | Perform quick actions directly from the Finder app, no need to open any browser. |
 
 ## Features
