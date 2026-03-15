@@ -26,7 +26,7 @@
 
 Findle is built to make managing university or school materials painless. Instead of constantly logging into Moodle to download PDFs and slides, Findle seamlessly integrates your courses right into macOS Finder. It's built from the ground up in Swift and SwiftUI, leveraging Apple's native File Provider framework to ensure your files are synced securely, dynamically, and entirely on-demand.
 
-<video src="https://github.com/alexmodrono/Findle/raw/refs/heads/main/.github/screenshots/demo.mp4" width="800" autoplay loop muted playsinline></video>
+https://github.com/user-attachments/assets/7257c605-1fb9-45e1-ae41-f9e7dade8365
 
 ## Screenshots & Demo
 
