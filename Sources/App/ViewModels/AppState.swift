@@ -12,7 +12,7 @@ import SharedDomain
 import FoodleNetworking
 import FoodlePersistence
 import FoodleSyncEngine
-import FileProvider
+@preconcurrency import FileProvider
 import OSLog
 
 /// The central observable state for the Foodle app.
@@ -585,20 +585,19 @@ final class AppState: ObservableObject {
         }
         let identifiers: [NSFileProviderItemIdentifier] = [.workingSet, .rootContainer]
         for identifier in identifiers {
-            manager.signalEnumerator(for: identifier) { [weak self] error in
-                guard let error = error as? NSError else { return }
-                if error.domain == NSFileProviderErrorDomain && error.code == -2001 {
-                    self?.logger.info("File Provider not ready yet, will retry signal in 3s")
-                    Task { @MainActor [weak self] in
-                        try? await Task.sleep(for: .seconds(3))
-                        manager.signalEnumerator(for: identifier) { retryError in
-                            if let retryError = retryError as? NSError {
-                                self?.logger.warning("File Provider signal retry failed: \(retryError.localizedDescription, privacy: .public)")
-                            }
-                        }
+            Task {
+                do {
+                    try await manager.signalEnumerator(for: identifier)
+                } catch let error as NSError where error.domain == NSFileProviderErrorDomain && error.code == -2001 {
+                    logger.info("File Provider not ready yet, will retry signal in 3s")
+                    try? await Task.sleep(for: .seconds(3))
+                    do {
+                        try await manager.signalEnumerator(for: identifier)
+                    } catch {
+                        logger.warning("File Provider signal retry failed: \(error.localizedDescription, privacy: .public)")
                     }
-                } else {
-                    self?.logger.error("Failed to signal File Provider: \(error.localizedDescription, privacy: .public) [\(error.domain, privacy: .public):\(error.code)]")
+                } catch {
+                    logger.error("Failed to signal File Provider: \(error.localizedDescription, privacy: .public)")
                 }
             }
         }
