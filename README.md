@@ -28,7 +28,7 @@ Findle is built to make managing university or school materials painless. Instea
 
 https://github.com/user-attachments/assets/7257c605-1fb9-45e1-ae41-f9e7dade8365
 
-## Screenshots & Demo
+## Screenshots
 
 <div align="center">
   
