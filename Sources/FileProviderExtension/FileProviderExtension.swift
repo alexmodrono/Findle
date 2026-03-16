@@ -160,15 +160,15 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             }
         }
 
-        // Perform the download asynchronously.
-        let downloadContext = DownloadContext(
-            item: localItem,
-            database: db,
-            completionHandler: completionHandler,
-            progress: progress
-        )
-        Task.detached {
-            await downloadContext.execute()
+        do {
+            try FileDownloader.startDownload(
+                item: localItem,
+                database: db,
+                progress: progress,
+                completionHandler: completionHandler
+            )
+        } catch {
+            completionHandler(nil, nil, error)
         }
 
         return progress

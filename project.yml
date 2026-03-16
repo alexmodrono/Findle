@@ -34,6 +34,7 @@ schemes:
       targets:
         - SharedDomainTests
         - NetworkingTests
+        - FileProviderTests
         - PersistenceTests
         - SyncEngineTests
     profile:
@@ -237,6 +238,21 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.persistence-tests
+
+  FileProviderTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/FileProviderTests
+      - path: Sources/FileProviderExtension/FileDownloader.swift
+      - path: Sources/FileProviderExtension/FileProviderItem.swift
+    dependencies:
+      - target: SharedDomain
+      - target: FoodleNetworking
+      - target: FoodlePersistence
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.file-provider-tests
 
   SyncEngineTests:
     type: bundle.unit-test

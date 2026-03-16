@@ -8,6 +8,15 @@ import AuthenticationServices
 import SharedDomain
 import OSLog
 
+protocol WebAuthenticationSessionProtocol: AnyObject {
+    var presentationContextProvider: (any ASWebAuthenticationPresentationContextProviding)? { get set }
+    var prefersEphemeralWebBrowserSession: Bool { get set }
+    func start() -> Bool
+    func cancel()
+}
+
+extension ASWebAuthenticationSession: WebAuthenticationSessionProtocol {}
+
 /// Manages browser-based SSO authentication using ASWebAuthenticationSession.
 /// This is used when Moodle sites report `SiteLoginType.browser` (SAML, OAuth2, CAS, etc.)
 ///
@@ -16,16 +25,38 @@ import OSLog
 @MainActor
 public final class WebAuthSession: NSObject {
     private let logger = Logger(subsystem: "es.amodrono.foodle.networking", category: "WebAuth")
+    typealias SessionFactory = (
+        URL,
+        String?,
+        @escaping (URL?, Error?) -> Void
+    ) -> any WebAuthenticationSessionProtocol
 
     /// Strong reference to the active session. ASWebAuthenticationSession does not
     /// retain itself — the caller must keep a reference until the callback fires.
     /// Without this, ARC can deallocate the session mid-flow, causing Safari to
     /// show "cannot open the page because the address is invalid."
-    private var activeSession: ASWebAuthenticationSession?
+    private var activeSession: (any WebAuthenticationSessionProtocol)?
 
     /// ASWebAuthenticationSession keeps a weak reference to its presentation context
     /// provider, so retain it for the full duration of the browser flow.
     private var activePresentationContext: (any ASWebAuthenticationPresentationContextProviding)?
+    private let sessionFactory: SessionFactory
+
+    public override init() {
+        self.sessionFactory = { url, callbackURLScheme, completionHandler in
+            ASWebAuthenticationSession(
+                url: url,
+                callbackURLScheme: callbackURLScheme,
+                completionHandler: completionHandler
+            )
+        }
+        super.init()
+    }
+
+    init(sessionFactory: @escaping SessionFactory) {
+        self.sessionFactory = sessionFactory
+        super.init()
+    }
 
     /// Perform browser-based SSO authentication for a Moodle site.
     /// Opens the system browser via `ASWebAuthenticationSession`, lets the user authenticate
@@ -67,40 +98,39 @@ public final class WebAuthSession: NSObject {
         do {
             callbackURL = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
                 let completionGate = SessionCompletionGate()
-                let session = ASWebAuthenticationSession(
-                    url: launchURL,
-                    callbackURLScheme: callbackScheme
-                ) { [weak self] url, error in
-                    guard completionGate.markCompleted() else {
-                        logger.error("Ignoring duplicate ASWebAuthenticationSession completion for \(site.displayName, privacy: .public)")
-                        return
-                    }
-
-                    // Clear the strong reference now that the session has completed.
-                    self?.activeSession = nil
-                    self?.activePresentationContext = nil
-
-                    if let error = error {
-                        let nsError = error as NSError
-                        logger.error("SSO authentication session failed for \(site.displayName, privacy: .public) with \(nsError.domain, privacy: .public) (\(nsError.code, privacy: .public)): \(error.localizedDescription, privacy: .public)")
-                        if (error as NSError).code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
-                            continuation.resume(throwing: FoodleError.cancelled)
-                        } else {
-                            continuation.resume(throwing: FoodleError.ssoCallbackInvalid(
-                                detail: "SSO authentication failed: \(error.localizedDescription)"
-                            ))
+                let session = sessionFactory(launchURL, callbackScheme) { [weak self] url, error in
+                    Task { @MainActor [weak self] in
+                        guard completionGate.markCompleted() else {
+                            logger.error("Ignoring duplicate ASWebAuthenticationSession completion for \(site.displayName, privacy: .public)")
+                            return
                         }
-                        return
-                    }
 
-                    guard let url = url else {
-                        continuation.resume(throwing: FoodleError.ssoCallbackInvalid(
-                            detail: "No callback URL received from SSO."
-                        ))
-                        return
-                    }
+                        // Clear the strong reference now that the session has completed.
+                        self?.activeSession = nil
+                        self?.activePresentationContext = nil
 
-                    continuation.resume(returning: url)
+                        if let error = error {
+                            let nsError = error as NSError
+                            logger.error("SSO authentication session failed for \(site.displayName, privacy: .public) with \(nsError.domain, privacy: .public) (\(nsError.code, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+                            if nsError.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
+                                continuation.resume(throwing: FoodleError.cancelled)
+                            } else {
+                                continuation.resume(throwing: FoodleError.ssoCallbackInvalid(
+                                    detail: "SSO authentication failed: \(error.localizedDescription)"
+                                ))
+                            }
+                            return
+                        }
+
+                        guard let url else {
+                            continuation.resume(throwing: FoodleError.ssoCallbackInvalid(
+                                detail: "No callback URL received from SSO."
+                            ))
+                            return
+                        }
+
+                        continuation.resume(returning: url)
+                    }
                 }
 
                 session.presentationContextProvider = presentationContext

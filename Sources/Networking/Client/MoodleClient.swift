@@ -9,15 +9,12 @@ import OSLog
 import CommonCrypto
 
 /// Native Moodle web services client implementing the LMSProvider protocol.
-public final class MoodleClient: LMSProvider, @unchecked Sendable {
+public final class MoodleClient: LMSProvider, Sendable {
     private let session: URLSession
     private let logger = Logger(subsystem: "es.amodrono.foodle.networking", category: "MoodleClient")
-    private let decoder: JSONDecoder
 
     public init(session: URLSession = .shared) {
         self.session = session
-        self.decoder = JSONDecoder()
-        self.decoder.dateDecodingStrategy = .secondsSince1970
     }
 
     // MARK: - Site Validation
@@ -260,7 +257,7 @@ public final class MoodleClient: LMSProvider, @unchecked Sendable {
         request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
 
         let (data, _) = try await performRequest(request)
-        let tokenResponse = try decoder.decode(TokenResponse.self, from: data)
+        let tokenResponse = try Self.makeDecoder().decode(TokenResponse.self, from: data)
 
         if let error = tokenResponse.error {
             if error.contains("invalidlogin") || tokenResponse.errorcode == "invalidlogin" {
@@ -555,7 +552,7 @@ public final class MoodleClient: LMSProvider, @unchecked Sendable {
         }
 
         // Check for Moodle-level errors in the JSON
-        if let errorResponse = try? decoder.decode(MoodleErrorResponse.self, from: data) {
+        if let errorResponse = try? Self.makeDecoder().decode(MoodleErrorResponse.self, from: data) {
             if errorResponse.errorcode != nil {
                 if errorResponse.errorcode == "invalidtoken" || errorResponse.errorcode == "accessexception" {
                     throw FoodleError.tokenExpired
@@ -567,7 +564,13 @@ public final class MoodleClient: LMSProvider, @unchecked Sendable {
             }
         }
 
-        return try decoder.decode(T.self, from: data)
+        return try Self.makeDecoder().decode(T.self, from: data)
+    }
+
+    private static func makeDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        return decoder
     }
 
     // MARK: - Request Execution

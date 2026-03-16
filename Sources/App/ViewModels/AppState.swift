@@ -402,15 +402,7 @@ final class AppState: ObservableObject {
 
     private func removeAllFileProviderDomains() async {
         do {
-            let domainPairs: [(id: String, name: String)] = try await withCheckedThrowingContinuation { continuation in
-                NSFileProviderManager.getDomainsWithCompletionHandler { domains, error in
-                    if let error { continuation.resume(throwing: error) }
-                    else {
-                        let pairs = domains.map { (id: $0.identifier.rawValue, name: $0.displayName) }
-                        continuation.resume(returning: pairs)
-                    }
-                }
-            }
+            let domainPairs = try await Self.fileProviderDomainPairs()
             for pair in domainPairs {
                 let domain = NSFileProviderDomain(
                     identifier: NSFileProviderDomainIdentifier(pair.id),
@@ -630,11 +622,10 @@ final class AppState: ObservableObject {
             }
 
             let authError = NSFileProviderError(.notAuthenticated)
-            let signalError: Error? = await withCheckedContinuation { continuation in
-                manager.signalErrorResolved(authError) { error in
-                    continuation.resume(returning: error)
-                }
-            }
+            let signalError = await Self.signalResolvedFileProviderError(
+                using: manager,
+                authError: authError
+            )
 
             if let signalError = signalError as? NSError {
                 logger.warning("Failed to resolve File Provider authentication (attempt \(attempt)): \(signalError.localizedDescription, privacy: .public) [\(signalError.domain, privacy: .public):\(signalError.code)]")
@@ -888,12 +879,47 @@ final class AppState: ObservableObject {
         let domain = NSFileProviderDomain(identifier: domainID, displayName: site.displayName)
         guard let manager = NSFileProviderManager(for: domain) else { return nil }
 
-        return await withCheckedContinuation { continuation in
-            manager.getUserVisibleURL(for: .rootContainer) { url, error in
+        let result = await Self.userVisibleFileProviderURL(using: manager, for: .rootContainer)
+        if let error = result.error {
+            logger.warning("Failed to resolve File Provider root URL: \(error.localizedDescription, privacy: .public)")
+        }
+        return result.url
+    }
+
+    // FileProvider completion handlers may arrive on XPC-managed background queues,
+    // so these bridges must not inherit AppState's main-actor isolation.
+    nonisolated private static func fileProviderDomainPairs() async throws -> [(id: String, name: String)] {
+        try await withCheckedThrowingContinuation { continuation in
+            NSFileProviderManager.getDomainsWithCompletionHandler { domains, error in
                 if let error {
-                    self.logger.warning("Failed to resolve File Provider root URL: \(error.localizedDescription, privacy: .public)")
+                    continuation.resume(throwing: error)
+                    return
                 }
-                continuation.resume(returning: url)
+
+                let pairs = domains.map { (id: $0.identifier.rawValue, name: $0.displayName) }
+                continuation.resume(returning: pairs)
+            }
+        }
+    }
+
+    nonisolated private static func signalResolvedFileProviderError(
+        using manager: NSFileProviderManager,
+        authError: NSFileProviderError
+    ) async -> Error? {
+        await withCheckedContinuation { continuation in
+            manager.signalErrorResolved(authError) { error in
+                continuation.resume(returning: error)
+            }
+        }
+    }
+
+    nonisolated private static func userVisibleFileProviderURL(
+        using manager: NSFileProviderManager,
+        for identifier: NSFileProviderItemIdentifier
+    ) async -> (url: URL?, error: Error?) {
+        await withCheckedContinuation { continuation in
+            manager.getUserVisibleURL(for: identifier) { url, error in
+                continuation.resume(returning: (url, error))
             }
         }
     }

@@ -3,48 +3,6 @@
 // Licensed under the Apache License, Version 2.0.
 // You may obtain a copy of the License in the LICENSE file at the root of this repository.
 
-import Foundation
-import FileProvider
-import SharedDomain
-import FoodleNetworking
-import FoodlePersistence
-
-/// Encapsulates a download operation's state for use across isolation boundaries.
-/// Marked @unchecked Sendable because the completion handler is called exactly once
-/// and the File Provider framework guarantees serial access per item.
-final class DownloadContext: @unchecked Sendable {
-    private let item: LocalItem
-    private let database: Database
-    private let completionHandler: (URL?, NSFileProviderItem?, Error?) -> Void
-    private let progress: Progress
-
-    init(
-        item: LocalItem,
-        database: Database,
-        completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void,
-        progress: Progress
-    ) {
-        self.item = item
-        self.database = database
-        self.completionHandler = completionHandler
-        self.progress = progress
-    }
-
-    func execute() async {
-        do {
-            let downloadedURL = try await FileDownloader.download(item: item, database: database)
-            var updatedItem = item
-            updatedItem.syncState = .materialized
-            updatedItem.localPath = downloadedURL.path
-            try database.updateItemSyncState(
-                id: item.id,
-                state: .materialized,
-                localPath: downloadedURL.path
-            )
-            completionHandler(downloadedURL, FileProviderItem(localItem: updatedItem), nil)
-            progress.completedUnitCount = 100
-        } catch {
-            completionHandler(nil, nil, error)
-        }
-    }
-}
+// Intentionally left empty.
+// The download flow now lives in FileDownloader.swift, but this file remains so
+// the checked-in Xcode project continues to resolve its existing file reference.
