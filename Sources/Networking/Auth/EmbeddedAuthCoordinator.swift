@@ -17,12 +17,8 @@ public struct EmbeddedAuthResult: Sendable {
 /// Coordinates embedded SSO authentication using a WKWebView.
 ///
 /// Used when a Moodle site reports `SiteLoginType.embedded` (typeoflogin=3).
-/// The web view loads the SSO launch URL and intercepts the redirect to a
-/// non-HTTP(S) scheme containing the token callback.
-///
-/// Each authentication attempt uses a non-persistent (in-memory) website data
-/// store, so SSO session state is automatically discarded when the coordinator
-/// is released.
+/// The web view loads the SSO launch URL and intercepts the redirect back to
+/// a custom callback scheme containing the token payload.
 @MainActor
 public final class EmbeddedAuthCoordinator: NSObject {
 
@@ -35,6 +31,7 @@ public final class EmbeddedAuthCoordinator: NSObject {
     private var passport: String = ""
     private var site: MoodleSite?
     private var pendingRequest: URLRequest?
+    private var dataStoreIdentifier: UUID?
 
     /// Configure the embedded web view for SSO authentication without loading the page.
     ///
@@ -53,25 +50,17 @@ public final class EmbeddedAuthCoordinator: NSObject {
         logger.info("Starting embedded SSO for \(site.displayName, privacy: .public)")
         logger.info("Launch URL source: \(buildResult.source == .advertised ? "advertised" : "fallback", privacy: .public)")
 
-        // Use a non-persistent (in-memory) data store so that WebKit's
-        // Intelligent Tracking Prevention starts with a clean slate.  With the
-        // default persistent store, ITP can classify cross-site SSO redirects
-        // (e.g. Moodle → login.microsoftonline.com) as tracking navigations
-        // and silently block them in sandboxed, notarized release builds —
-        // even though they work fine under development signing.
-        //
-        // A non-persistent store may spin up extra WebContent processes and
-        // emit launchservicesd / RunningBoard console warnings during the
-        // cross-origin hops; those warnings are cosmetic and do not affect
-        // the SSO flow.
+        // Create a fresh persistent data store for each SSO attempt so that
+        // ITP starts with a clean slate while cookies persist across the
+        // redirect chain.
+        let storeID = UUID()
+        self.dataStoreIdentifier = storeID
+
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = .nonPersistent()
+        config.websiteDataStore = WKWebsiteDataStore(forIdentifier: storeID)
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
         // Register all known Moodle/Open LMS callback schemes with the web view.
-        // Without this, WKWebView passes unknown schemes to the system URL handler
-        // (showing "no application set to open the URL") instead of routing them
-        // through the navigation delegate where we intercept the token callback.
         let schemeHandler = SSOCallbackSchemeHandler { [weak self] urlString in
             self?.completeWithCallbackURL(urlString)
         }
@@ -91,9 +80,6 @@ public final class EmbeddedAuthCoordinator: NSObject {
     /// Load the SSO launch page in the web view.
     ///
     /// Call this after the web view is in the view hierarchy (e.g. from `.onAppear`).
-    /// In sandboxed, notarized release builds, WebKit's networking process requires
-    /// the web view to be in a valid window hierarchy before cross-origin SSO
-    /// redirects (e.g. Moodle → Microsoft 365) work reliably.
     public func loadLaunchPage() {
         guard let webView, let request = pendingRequest else { return }
         pendingRequest = nil
@@ -105,25 +91,20 @@ public final class EmbeddedAuthCoordinator: NSObject {
     /// This is a convenience that configures the web view, loads the page immediately,
     /// and waits for the result. Prefer the two-step `configure(site:)` +
     /// `loadLaunchPage()` flow when the web view must be in the view hierarchy first.
-    ///
-    /// - Parameters:
-    ///   - site: The Moodle site to authenticate with.
-    /// - Returns: The authentication result containing the token and passport.
-    /// - Throws: `FoodleError` on failure or cancellation.
     public func authenticate(site: MoodleSite) async throws -> EmbeddedAuthResult {
         try configure(site: site)
         loadLaunchPage()
         return try await waitForResult()
     }
 
-    /// Wait for the embedded SSO callback after `prepareAuthentication(site:)`.
+    /// Wait for the embedded SSO callback.
     public func waitForResult() async throws -> EmbeddedAuthResult {
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
         }
     }
 
-    /// Cancel the embedded SSO flow. Returns the user to the SSO step without crashing.
+    /// Cancel the embedded SSO flow.
     public func cancel() {
         webView?.stopLoading()
         cleanUpWebData()
@@ -132,12 +113,13 @@ public final class EmbeddedAuthCoordinator: NSObject {
         pending?.resume(throwing: FoodleError.cancelled)
     }
 
-    /// Remove session cookies and website data left by the SSO flow.
+    // MARK: - Private
+
     private func cleanUpWebData() {
-        let dataStore = webView?.configuration.websiteDataStore ?? .default()
-        let dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
-        dataStore.fetchDataRecords(ofTypes: dataTypes) { records in
-            dataStore.removeData(ofTypes: dataTypes, for: records) {}
+        guard let id = dataStoreIdentifier else { return }
+        dataStoreIdentifier = nil
+        Task {
+            try? await WKWebsiteDataStore.remove(forIdentifier: id)
         }
     }
 
@@ -213,22 +195,15 @@ extension EmbeddedAuthCoordinator: WKNavigationDelegate {
 
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         let nsError = error as NSError
-        // WebKitErrorFrameLoadInterruptedByPolicyChange (102) is expected when we cancel navigation.
-        // NSURLErrorCancelled (-999) fires when a redirect replaces the current navigation.
-        if isExpectedNavigationError(nsError) {
-            return
-        }
-        logger.error("Embedded SSO navigation failed: \(error.localizedDescription, privacy: .public)")
+        if isExpectedNavigationError(nsError) { return }
+        logger.error("Navigation failed: \(nsError.domain, privacy: .public) \(nsError.code, privacy: .public) — \(error.localizedDescription, privacy: .public)")
     }
 
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         let nsError = error as NSError
-        // Redirects (e.g. Moodle -> Microsoft SSO) cancel the old provisional navigation
-        // with -999. This is normal and not a real failure.
-        if isExpectedNavigationError(nsError) {
-            return
-        }
-        logger.error("Embedded SSO provisional navigation failed: \(error.localizedDescription, privacy: .public)")
+        if isExpectedNavigationError(nsError) { return }
+
+        logger.error("Provisional navigation failed: \(error.localizedDescription, privacy: .public)")
         cleanUpWebData()
         let pending = continuation
         continuation = nil
@@ -237,16 +212,17 @@ extension EmbeddedAuthCoordinator: WKNavigationDelegate {
         ))
     }
 
-    /// Errors that are expected during normal SSO redirect chains and should be silently ignored.
+    public func webView(
+        _ webView: WKWebView,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping @MainActor @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        completionHandler(.performDefaultHandling, nil)
+    }
+
     private func isExpectedNavigationError(_ error: NSError) -> Bool {
-        // WebKitErrorFrameLoadInterruptedByPolicyChange — we cancelled via decidePolicyFor.
-        if error.domain == "WebKitErrorDomain" && error.code == 102 {
-            return true
-        }
-        // NSURLErrorCancelled — a redirect replaced the current navigation.
-        if error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled {
-            return true
-        }
+        if error.domain == "WebKitErrorDomain" && error.code == 102 { return true }
+        if error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled { return true }
         return false
     }
 }
@@ -255,30 +231,19 @@ extension EmbeddedAuthCoordinator: WKNavigationDelegate {
 
 extension EmbeddedAuthCoordinator: WKUIDelegate {
 
-    /// Handle `window.open()` and `target="_blank"` links by loading them in the
-    /// existing web view instead of silently dropping them.
-    ///
-    /// Identity provider buttons on Moodle login pages (e.g. "Login with Microsoft")
-    /// typically use popup navigation. Without this, WKWebView ignores the click entirely.
     public func webView(
         _ webView: WKWebView,
         createWebViewWith configuration: WKWebViewConfiguration,
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        // If the navigation target is not the main frame (i.e. it's a popup),
-        // load the request in the current web view instead of opening a new one.
         if navigationAction.targetFrame == nil || navigationAction.targetFrame?.isMainFrame == false {
             if let url = navigationAction.request.url {
-                logger.info("Handling popup navigation in-place: \(url.host ?? "", privacy: .public)")
-
-                // Check if this is actually the SSO callback before loading.
                 let urlString = url.absoluteString
                 let scheme = url.scheme?.lowercased() ?? ""
                 let isHTTP = scheme == "http" || scheme == "https"
 
                 if !isHTTP && urlString.contains("token=") {
-                    logger.info("Intercepted SSO callback from popup with scheme: \(scheme, privacy: .public)")
                     completeWithCallbackURL(urlString)
                     return nil
                 }
@@ -286,23 +251,12 @@ extension EmbeddedAuthCoordinator: WKUIDelegate {
                 webView.load(navigationAction.request)
             }
         }
-        // Return nil to prevent creating a new web view.
         return nil
     }
 }
 
 // MARK: - WKURLSchemeHandler
 
-/// URL scheme handler that intercepts Moodle SSO callback schemes.
-///
-/// When registered with `WKWebViewConfiguration.setURLSchemeHandler(_:forURLScheme:)`,
-/// this prevents WKWebView from passing custom-scheme URLs (like `ltgopenlmsapp://`,
-/// `moodlemobile://`, etc.) to the macOS system URL handler.
-///
-/// When a registered scheme is loaded, the handler checks for a token callback
-/// and notifies the coordinator directly. This is necessary because registered
-/// scheme handlers receive the request *instead of* the navigation delegate's
-/// `decidePolicyFor` — so the navigation delegate alone cannot intercept them.
 private final class SSOCallbackSchemeHandler: NSObject, WKURLSchemeHandler {
     private let onCallback: @MainActor (String) -> Void
 
@@ -314,8 +268,6 @@ private final class SSOCallbackSchemeHandler: NSObject, WKURLSchemeHandler {
         let urlString = urlSchemeTask.request.url?.absoluteString ?? ""
 
         if urlString.contains("token=") {
-            // Notify the coordinator on the main actor, then fail the task
-            // so WKWebView doesn't hang waiting for a response.
             let callback = onCallback
             Task { @MainActor in
                 callback(urlString)
@@ -325,7 +277,5 @@ private final class SSOCallbackSchemeHandler: NSObject, WKURLSchemeHandler {
         urlSchemeTask.didFailWithError(URLError(.cancelled))
     }
 
-    func webView(_ webView: WKWebView, stop urlSchemeTask: any WKURLSchemeTask) {
-        // Nothing to clean up.
-    }
+    func webView(_ webView: WKWebView, stop urlSchemeTask: any WKURLSchemeTask) {}
 }
