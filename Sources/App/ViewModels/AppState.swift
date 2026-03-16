@@ -577,30 +577,13 @@ final class AppState: ObservableObject {
     }
 
     private func signalFileProviderChanges(for site: MoodleSite) {
-        let domainID = NSFileProviderDomainIdentifier("es.amodrono.foodle.domain.\(site.id)")
-        let domain = NSFileProviderDomain(identifier: domainID, displayName: site.displayName)
-
-        guard let manager = NSFileProviderManager(for: domain) else {
-            logger.warning("No NSFileProviderManager for domain \(domainID.rawValue, privacy: .public) — domain may not be registered")
-            return
-        }
-        let identifiers: [NSFileProviderItemIdentifier] = [.workingSet, .rootContainer]
-        for identifier in identifiers {
-            Task {
-                do {
-                    try await manager.signalEnumerator(for: identifier)
-                } catch let error as NSError where error.domain == NSFileProviderErrorDomain && error.code == -2001 {
-                    logger.info("File Provider not ready yet, will retry signal in 3s")
-                    try? await Task.sleep(for: .seconds(3))
-                    do {
-                        try await manager.signalEnumerator(for: identifier)
-                    } catch {
-                        logger.warning("File Provider signal retry failed: \(error.localizedDescription, privacy: .public)")
-                    }
-                } catch {
-                    logger.error("Failed to signal File Provider: \(error.localizedDescription, privacy: .public)")
-                }
-            }
+        let domainID = "es.amodrono.foodle.domain.\(site.id)"
+        let displayName = site.displayName
+        let logger = self.logger
+        Task.detached {
+            await Self.performSignalEnumerators(
+                domainID: domainID, displayName: displayName, logger: logger
+            )
         }
     }
 
@@ -904,7 +887,49 @@ final class AppState: ObservableObject {
         return domains.map { (id: $0.identifier.rawValue, name: $0.displayName) }
     }
 
-    private static func signalResolvedFileProviderError(
+    // MARK: - File Provider Helpers (nonisolated)
+
+    // FileProvider delivers completion-handler callbacks on background queues
+    // (e.g. FPM-SignalUpdateQueue). If these helpers were @MainActor-isolated
+    // (the default for methods on this class), Swift 6's runtime would trap
+    // when the callback fires off the main thread.
+    //
+    // Marking them `nonisolated` ensures the continuation carries no actor
+    // expectation, so the callback queue is irrelevant.
+    //
+    // DO NOT remove `nonisolated` — doing so reintroduces a release-only crash.
+
+    private nonisolated static func performSignalEnumerators(
+        domainID: String,
+        displayName: String,
+        logger: Logger
+    ) async {
+        let fpDomainID = NSFileProviderDomainIdentifier(domainID)
+        let domain = NSFileProviderDomain(identifier: fpDomainID, displayName: displayName)
+
+        guard let manager = NSFileProviderManager(for: domain) else {
+            logger.warning("No NSFileProviderManager for domain \(domainID, privacy: .public) — domain may not be registered")
+            return
+        }
+
+        for identifier: NSFileProviderItemIdentifier in [.workingSet, .rootContainer] {
+            do {
+                try await manager.signalEnumerator(for: identifier)
+            } catch let error as NSError where error.domain == NSFileProviderErrorDomain && error.code == -2001 {
+                logger.info("File Provider not ready yet, will retry signal in 3s")
+                try? await Task.sleep(for: .seconds(3))
+                do {
+                    try await manager.signalEnumerator(for: identifier)
+                } catch {
+                    logger.warning("File Provider signal retry failed: \(error.localizedDescription, privacy: .public)")
+                }
+            } catch {
+                logger.error("Failed to signal File Provider: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    private nonisolated static func signalResolvedFileProviderError(
         using manager: NSFileProviderManager,
         authError: NSFileProviderError
     ) async -> Error? {
@@ -915,7 +940,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    private static func userVisibleFileProviderURL(
+    private nonisolated static func userVisibleFileProviderURL(
         using manager: NSFileProviderManager,
         for identifier: NSFileProviderItemIdentifier
     ) async -> (url: URL?, error: Error?) {
