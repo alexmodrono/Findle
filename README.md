@@ -43,6 +43,8 @@ https://github.com/user-attachments/assets/7257c605-1fb9-45e1-ae41-f9e7dade8365
 | :---: | :---: |
 | <img src=".github/screenshots/showcase2.jpg" alt="Course Management UI" width="400"/> | <img src=".github/screenshots/showcase3.jpg" alt="App Settings and Diagnostics" width="400"/> |
 | Findle seamlessly integrating with Finder's sidebar, behaving exactly like iCloud Drive or Dropbox. | Perform quick actions directly from the Finder app, no need to open any browser. |
+| <img src=".github/screenshots/onboarding1.png" alt="Onboarding Step 1" width="400"/> | <img src=".github/screenshots/onboarding2.png" alt="Onboarding Step 2" width="400"/> |
+| Simple and easy to follow onboarding steps to get started quickly. | Connect to your Moodle server and authenticate securely. |
 
 ## Features
 
