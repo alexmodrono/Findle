@@ -334,7 +334,8 @@ public final class Database: @unchecked Sendable {
         }
     }
 
-    func prepareStatement(_ sql: String) throws -> OpaquePointer {
+    /// Prepare a SQLite statement. Only call from within a `queue.sync` block.
+    private func prepareStatement(_ sql: String) throws -> OpaquePointer {
         var stmt: OpaquePointer?
         let status = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
         guard status == SQLITE_OK, let statement = stmt else {
@@ -477,8 +478,17 @@ extension Database {
     }
 
     public func deleteAccount(id: String) throws {
-        try execute("DELETE FROM accounts WHERE id = '\(id)'")
-        try execute("DELETE FROM items WHERE site_id IN (SELECT site_id FROM accounts WHERE id = '\(id)')")
+        try queue.sync {
+            let deleteItems = try prepareStatement("DELETE FROM items WHERE site_id IN (SELECT site_id FROM accounts WHERE id = ?)")
+            defer { sqlite3_finalize(deleteItems) }
+            sqlite3_bind_text(deleteItems, 1, (id as NSString).utf8String, -1, nil)
+            _ = sqlite3_step(deleteItems)
+
+            let deleteAccount = try prepareStatement("DELETE FROM accounts WHERE id = ?")
+            defer { sqlite3_finalize(deleteAccount) }
+            sqlite3_bind_text(deleteAccount, 1, (id as NSString).utf8String, -1, nil)
+            _ = sqlite3_step(deleteAccount)
+        }
     }
 }
 
@@ -590,7 +600,15 @@ extension Database {
     }
 
     public func updateCourseSubscription(courseID: Int, siteID: String, state: CourseSubscriptionState) throws {
-        try execute("UPDATE courses SET subscription_state = '\(state.rawValue)' WHERE id = \(courseID) AND site_id = '\(siteID)'")
+        let sql = "UPDATE courses SET subscription_state = ? WHERE id = ? AND site_id = ?"
+        try queue.sync {
+            let stmt = try prepareStatement(sql)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (state.rawValue as NSString).utf8String, -1, nil)
+            sqlite3_bind_int(stmt, 2, Int32(courseID))
+            sqlite3_bind_text(stmt, 3, (siteID as NSString).utf8String, -1, nil)
+            _ = sqlite3_step(stmt)
+        }
     }
 
     public func updateCourseCustomFolderName(courseID: Int, siteID: String, customName: String?) throws {
@@ -750,15 +768,14 @@ extension Database {
     }
 
     public func fetchItems(parentID: String?) throws -> [LocalItem] {
-        let sql: String
-        if let parentID = parentID {
-            sql = "SELECT * FROM items WHERE parent_id = '\(parentID)' ORDER BY is_directory DESC, filename"
-        } else {
-            sql = "SELECT * FROM items WHERE parent_id IS NULL ORDER BY is_directory DESC, filename"
-        }
-
         return try queue.sync {
-            let stmt = try prepareStatement(sql)
+            let stmt: OpaquePointer
+            if let parentID = parentID {
+                stmt = try prepareStatement("SELECT * FROM items WHERE parent_id = ? ORDER BY is_directory DESC, filename")
+                sqlite3_bind_text(stmt, 1, (parentID as NSString).utf8String, -1, nil)
+            } else {
+                stmt = try prepareStatement("SELECT * FROM items WHERE parent_id IS NULL ORDER BY is_directory DESC, filename")
+            }
             defer { sqlite3_finalize(stmt) }
             return try readItems(from: stmt)
         }
@@ -819,12 +836,24 @@ extension Database {
     }
 
     public func updateItemSyncState(id: String, state: ItemSyncState, localPath: String? = nil) throws {
-        var sql = "UPDATE items SET sync_state = '\(state.rawValue)'"
-        if let path = localPath {
-            sql += ", local_path = '\(path)'"
+        let sql: String
+        if localPath != nil {
+            sql = "UPDATE items SET sync_state = ?, local_path = ? WHERE id = ?"
+        } else {
+            sql = "UPDATE items SET sync_state = ? WHERE id = ?"
         }
-        sql += " WHERE id = '\(id)'"
-        try execute(sql)
+        try queue.sync {
+            let stmt = try prepareStatement(sql)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (state.rawValue as NSString).utf8String, -1, nil)
+            if let path = localPath {
+                sqlite3_bind_text(stmt, 2, (path as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, 3, (id as NSString).utf8String, -1, nil)
+            } else {
+                sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, nil)
+            }
+            _ = sqlite3_step(stmt)
+        }
     }
 
     public func updateItemPinned(id: String, isPinned: Bool) throws {
@@ -864,22 +893,33 @@ extension Database {
             // Clear stale pending deletions from previous cycles before recording new ones.
             try executeUnsafe("DELETE FROM pending_deletions")
             // Record IDs for the File Provider to report as deletions.
-            try executeUnsafe("""
-                INSERT INTO pending_deletions (item_id)
-                SELECT id FROM items WHERE course_id = \(courseID) AND site_id = '\(siteID)'
-            """)
-            try executeUnsafe("DELETE FROM items WHERE course_id = \(courseID) AND site_id = '\(siteID)'")
+            let insertStmt = try prepareStatement("INSERT INTO pending_deletions (item_id) SELECT id FROM items WHERE course_id = ? AND site_id = ?")
+            defer { sqlite3_finalize(insertStmt) }
+            sqlite3_bind_int(insertStmt, 1, Int32(courseID))
+            sqlite3_bind_text(insertStmt, 2, (siteID as NSString).utf8String, -1, nil)
+            _ = sqlite3_step(insertStmt)
+
+            let deleteStmt = try prepareStatement("DELETE FROM items WHERE course_id = ? AND site_id = ?")
+            defer { sqlite3_finalize(deleteStmt) }
+            sqlite3_bind_int(deleteStmt, 1, Int32(courseID))
+            sqlite3_bind_text(deleteStmt, 2, (siteID as NSString).utf8String, -1, nil)
+            _ = sqlite3_step(deleteStmt)
         }
     }
 
     public func deleteAllItems(siteID: String) throws {
         try queue.sync {
             try executeUnsafe("DELETE FROM pending_deletions")
-            try executeUnsafe("""
-                INSERT INTO pending_deletions (item_id)
-                SELECT id FROM items WHERE site_id = '\(siteID)'
-            """)
-            try executeUnsafe("DELETE FROM items WHERE site_id = '\(siteID)'")
+
+            let insertStmt = try prepareStatement("INSERT INTO pending_deletions (item_id) SELECT id FROM items WHERE site_id = ?")
+            defer { sqlite3_finalize(insertStmt) }
+            sqlite3_bind_text(insertStmt, 1, (siteID as NSString).utf8String, -1, nil)
+            _ = sqlite3_step(insertStmt)
+
+            let deleteStmt = try prepareStatement("DELETE FROM items WHERE site_id = ?")
+            defer { sqlite3_finalize(deleteStmt) }
+            sqlite3_bind_text(deleteStmt, 1, (siteID as NSString).utf8String, -1, nil)
+            _ = sqlite3_step(deleteStmt)
         }
     }
 
