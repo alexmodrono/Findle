@@ -20,8 +20,9 @@ public struct EmbeddedAuthResult: Sendable {
 /// The web view loads the SSO launch URL and intercepts the redirect to a
 /// non-HTTP(S) scheme containing the token callback.
 ///
-/// Each authentication attempt cleans up the shared/default website data store
-/// after completion or cancellation to avoid persisting SSO session state.
+/// Each authentication attempt uses a non-persistent (in-memory) website data
+/// store, so SSO session state is automatically discarded when the coordinator
+/// is released.
 @MainActor
 public final class EmbeddedAuthCoordinator: NSObject {
 
@@ -52,12 +53,19 @@ public final class EmbeddedAuthCoordinator: NSObject {
         logger.info("Starting embedded SSO for \(site.displayName, privacy: .public)")
         logger.info("Launch URL source: \(buildResult.source == .advertised ? "advertised" : "fallback", privacy: .public)")
 
-        // Use the shared/default store and process pool so cross-origin SSO
-        // redirects stay inside WebKit's normal process model. A non-persistent
-        // store paired with a fresh process pool causes extra sandboxed
-        // WebContent processes to spin up and emit launchservicesd/RunningBoard
-        // warnings on macOS during Microsoft/Google SSO hops.
+        // Use a non-persistent (in-memory) data store so that WebKit's
+        // Intelligent Tracking Prevention starts with a clean slate.  With the
+        // default persistent store, ITP can classify cross-site SSO redirects
+        // (e.g. Moodle → login.microsoftonline.com) as tracking navigations
+        // and silently block them in sandboxed, notarized release builds —
+        // even though they work fine under development signing.
+        //
+        // A non-persistent store may spin up extra WebContent processes and
+        // emit launchservicesd / RunningBoard console warnings during the
+        // cross-origin hops; those warnings are cosmetic and do not affect
+        // the SSO flow.
         let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
         // Register all known Moodle/Open LMS callback schemes with the web view.
@@ -186,6 +194,21 @@ extension EmbeddedAuthCoordinator: WKNavigationDelegate {
         }
 
         decisionHandler(.allow)
+    }
+
+    public func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        let host = webView.url?.host ?? "<unknown>"
+        logger.info("Navigation started: \(host, privacy: .public)")
+    }
+
+    public func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
+        let host = webView.url?.host ?? "<unknown>"
+        logger.info("Server redirect to: \(host, privacy: .public)")
+    }
+
+    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        let host = webView.url?.host ?? "<unknown>"
+        logger.info("Navigation finished: \(host, privacy: .public)")
     }
 
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

@@ -158,12 +158,11 @@ struct SignInStepView: View {
         onboardingState.errorMessage = nil
         navigator?.setContinueEnabled(false)
 
-        // Always use ASWebAuthenticationSession for SSO. The embedded WKWebView
-        // approach fails in sandboxed, notarized release builds — WebKit's process
-        // model blocks cross-origin SSO redirects (e.g. Moodle → Microsoft 365)
-        // under Developer ID signing. ASWebAuthenticationSession handles
-        // institutional SSO flows reliably in all signing configurations.
-        await signInWithBrowserSSO(site: site)
+        if site.capabilities.loginType == .embedded {
+            await signInWithEmbeddedSSO(site: site)
+        } else {
+            await signInWithBrowserSSO(site: site)
+        }
     }
 
     private func signInWithBrowserSSO(site: MoodleSite) async {
