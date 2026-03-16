@@ -1,0 +1,18 @@
+// Shared Release defaults for local and CI builds.
+//
+// CI may still append or override signing/distribution-specific values, but the
+// optimization and stripping settings below should remain stable across all
+// Release builds.
+
+SWIFT_COMPILATION_MODE = wholemodule
+SWIFT_OPTIMIZATION_LEVEL = -Osize
+GCC_OPTIMIZATION_LEVEL = s
+DEAD_CODE_STRIPPING = YES
+COPY_PHASE_STRIP = YES
+STRIP_INSTALLED_PRODUCT = YES
+STRIP_STYLE = debugging
+ENABLE_TESTABILITY = NO
+SWIFT_SERIALIZE_DEBUGGING_OPTIONS = NO
+DEBUG_INFORMATION_FORMAT = dwarf-with-dsym
+MTL_ENABLE_DEBUG_INFO = NO
+ASSETCATALOG_COMPILER_OPTIMIZATION = space

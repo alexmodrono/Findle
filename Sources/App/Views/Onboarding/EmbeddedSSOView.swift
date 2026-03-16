@@ -38,10 +38,19 @@ struct EmbeddedSSOView: View {
 
             Divider()
 
-            EmbeddedWebViewRepresentable(coordinator: coordinator)
-                .onAppear {
-                    coordinator.loadLaunchPage()
-                }
+            if coordinator.webView != nil {
+                EmbeddedWebViewRepresentable(coordinator: coordinator)
+                    .onAppear {
+                        coordinator.loadLaunchPage()
+                    }
+            } else {
+                ContentUnavailableView(
+                    "Embedded sign-in unavailable",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text("Findle could not prepare the embedded sign-in view. Close this sheet and try again.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .frame(minWidth: 760, minHeight: 580)
     }
@@ -52,7 +61,7 @@ private struct EmbeddedWebViewRepresentable: NSViewRepresentable {
     let coordinator: EmbeddedAuthCoordinator
 
     func makeNSView(context: Context) -> WKWebView {
-        coordinator.webView!
+        coordinator.webView
     }
 
     func updateNSView(_ nsView: WKWebView, context: Context) {}

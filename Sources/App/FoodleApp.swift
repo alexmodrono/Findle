@@ -6,6 +6,9 @@
 import SwiftUI
 import CoreSpotlight
 import Sparkle
+import OSLog
+
+private let logger = Logger(subsystem: "es.amodrono.foodle", category: "App")
 
 @main
 struct FoodleApp: App {
@@ -24,6 +27,14 @@ struct FoodleApp: App {
                 }
                 .onContinueUserActivity(CSSearchableItemActionType) { activity in
                     appState.handleSpotlightActivity(activity)
+                }
+                .onOpenURL { url in
+                    // Consume SSO callback URLs (findle://token=…) that arrive
+                    // after relaunch.  In-flight SSO sessions handle the callback
+                    // themselves; stale URLs delivered on a cold start can be
+                    // safely ignored.  Without this handler NSDocumentController
+                    // intercepts the URL and shows "No document could be created."
+                    logger.info("Ignoring stale URL on launch: \(url.scheme ?? "nil", privacy: .public)")
                 }
         }
         .windowStyle(.titleBar)

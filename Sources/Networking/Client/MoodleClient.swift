@@ -244,7 +244,9 @@ public final class MoodleClient: LMSProvider, Sendable {
     public func authenticate(site: MoodleSite, username: String, password: String) async throws -> AuthToken {
         logger.info("Authenticating user \(username, privacy: .private) at \(site.baseURL.host ?? "", privacy: .public)")
 
-        var components = URLComponents(url: site.tokenURL, resolvingAgainstBaseURL: false)!
+        guard var components = URLComponents(url: site.tokenURL, resolvingAgainstBaseURL: false) else {
+            throw FoodleError.internalError(detail: "Could not parse token URL.")
+        }
         components.queryItems = [
             URLQueryItem(name: "username", value: username),
             URLQueryItem(name: "password", value: password),
@@ -522,7 +524,9 @@ public final class MoodleClient: LMSProvider, Sendable {
         function: String,
         params: [String: String] = [:]
     ) async throws -> T {
-        var components = URLComponents(url: site.webServiceURL, resolvingAgainstBaseURL: false)!
+        guard var components = URLComponents(url: site.webServiceURL, resolvingAgainstBaseURL: false) else {
+            throw FoodleError.internalError(detail: "Could not construct web service URL.")
+        }
         var queryItems = [
             URLQueryItem(name: "wstoken", value: token.token),
             URLQueryItem(name: "wsfunction", value: function),

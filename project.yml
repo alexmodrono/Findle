@@ -19,6 +19,7 @@ settings:
 
 configs:
   Debug: debug
+  Staging: release
   Release: release
 
 schemes:
@@ -43,6 +44,27 @@ schemes:
       config: Debug
     archive:
       config: Release
+  Foodle-Staging:
+    build:
+      targets:
+        Foodle: all
+        FoodleFileProvider: all
+    run:
+      config: Staging
+    test:
+      config: Staging
+      targets:
+        - SharedDomainTests
+        - NetworkingTests
+        - FileProviderTests
+        - PersistenceTests
+        - SyncEngineTests
+    profile:
+      config: Staging
+    analyze:
+      config: Staging
+    archive:
+      config: Staging
 
 packages:
   Airlock:
@@ -57,6 +79,7 @@ targets:
     type: application
     platform: macOS
     configFiles:
+      Staging: Config/Staging-App.xcconfig
       Release: Config/Release-App.xcconfig
     attributes:
       SystemCapabilities:
@@ -95,6 +118,7 @@ targets:
     type: framework
     platform: macOS
     configFiles:
+      Staging: Config/Staging-Framework.xcconfig
       Release: Config/Release-Framework.xcconfig
     sources:
       - path: Sources/SharedDomain
@@ -108,6 +132,7 @@ targets:
     type: framework
     platform: macOS
     configFiles:
+      Staging: Config/Staging-Framework.xcconfig
       Release: Config/Release-Framework.xcconfig
     sources:
       - path: Sources/Networking
@@ -123,6 +148,7 @@ targets:
     type: framework
     platform: macOS
     configFiles:
+      Staging: Config/Staging-Framework.xcconfig
       Release: Config/Release-Framework.xcconfig
     sources:
       - path: Sources/Persistence
@@ -138,6 +164,7 @@ targets:
     type: framework
     platform: macOS
     configFiles:
+      Staging: Config/Staging-Framework.xcconfig
       Release: Config/Release-Framework.xcconfig
     sources:
       - path: Sources/SyncEngine
@@ -155,6 +182,7 @@ targets:
     type: app-extension
     platform: macOS
     configFiles:
+      Staging: Config/Staging-FileProvider.xcconfig
       Release: Config/Release-FileProvider.xcconfig
     attributes:
       SystemCapabilities:

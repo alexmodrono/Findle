@@ -339,12 +339,20 @@ final class AppState: ObservableObject {
         #else
         try KeychainManager.shared.storeToken(token.token, forAccount: account.id)
         #endif
-        try await setupFileProviderDomain(site: site)
-        if let sharedDatabase = try openSharedDatabase(siteID: site.id, seedFrom: db) {
-            database = sharedDatabase
+        // File Provider setup is best-effort: it may fail in unsigned builds,
+        // on first install before pluginkit discovers the extension, or if the
+        // provisioning profile lacks the File Provider capability.  Sign-in
+        // should still succeed so the user can access courses in the app.
+        do {
+            try await setupFileProviderDomain(site: site)
+            if let sharedDatabase = try openSharedDatabase(siteID: site.id, seedFrom: db) {
+                database = sharedDatabase
+            }
+            await resolveFileProviderAuthentication(for: site)
+            await pinToFinderSidebar(site: site)
+        } catch {
+            logger.warning("File Provider setup skipped: \(error.localizedDescription, privacy: .public)")
         }
-        await resolveFileProviderAuthentication(for: site)
-        await pinToFinderSidebar(site: site)
 
         // Store site/token for later activation without switching screens
         currentSite = site
@@ -396,7 +404,8 @@ final class AppState: ObservableObject {
             logger.info("File Provider domain already exists: \(site.displayName, privacy: .public)")
         } catch let error as NSError {
             logger.error("Failed to add File Provider domain: \(error.localizedDescription, privacy: .public) [\(error.domain, privacy: .public):\(error.code)]")
-            throw FoodleError.domainSetupFailed(detail: error.localizedDescription)
+            let detail = "\(error.localizedDescription) (\(error.domain):\(error.code))"
+            throw FoodleError.domainSetupFailed(detail: detail)
         }
     }
 
@@ -886,23 +895,16 @@ final class AppState: ObservableObject {
         return result.url
     }
 
-    // FileProvider completion handlers may arrive on XPC-managed background queues,
-    // so these bridges must not inherit AppState's main-actor isolation.
-    nonisolated private static func fileProviderDomainPairs() async throws -> [(id: String, name: String)] {
-        try await withCheckedThrowingContinuation { continuation in
-            NSFileProviderManager.getDomainsWithCompletionHandler { domains, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-
-                let pairs = domains.map { (id: $0.identifier.rawValue, name: $0.displayName) }
-                continuation.resume(returning: pairs)
-            }
-        }
+    // Use the async bridge of getDomainsWithCompletionHandler so the result
+    // is delivered back on MainActor.  The original completion-handler version
+    // accessed NSFileProviderDomain properties on the XPC callback queue,
+    // which crashes on macOS 26+ where those properties are MainActor-isolated.
+    private static func fileProviderDomainPairs() async throws -> [(id: String, name: String)] {
+        let domains = try await NSFileProviderManager.domains()
+        return domains.map { (id: $0.identifier.rawValue, name: $0.displayName) }
     }
 
-    nonisolated private static func signalResolvedFileProviderError(
+    private static func signalResolvedFileProviderError(
         using manager: NSFileProviderManager,
         authError: NSFileProviderError
     ) async -> Error? {
@@ -913,7 +915,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    nonisolated private static func userVisibleFileProviderURL(
+    private static func userVisibleFileProviderURL(
         using manager: NSFileProviderManager,
         for identifier: NSFileProviderItemIdentifier
     ) async -> (url: URL?, error: Error?) {
@@ -965,24 +967,29 @@ final class AppState: ObservableObject {
             return
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/sfltool")
-        process.arguments = [
-            "add-item",
-            "com.apple.LSSharedFileList.FavoriteItems",
-            rootURL.absoluteString
-        ]
+        // Run sfltool off the main actor to avoid blocking the UI.
+        let sidebarURL = rootURL.absoluteString
+        let log = logger
+        Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/sfltool")
+            process.arguments = [
+                "add-item",
+                "com.apple.LSSharedFileList.FavoriteItems",
+                sidebarURL
+            ]
 
-        do {
-            try process.run()
-            process.waitUntilExit()
-            if process.terminationStatus == 0 {
-                logger.info("Pinned Findle to Finder sidebar Favorites")
-            } else {
-                logger.warning("sfltool exited with status \(process.terminationStatus)")
+            do {
+                try process.run()
+                process.waitUntilExit()
+                if process.terminationStatus == 0 {
+                    log.info("Pinned Findle to Finder sidebar Favorites")
+                } else {
+                    log.warning("sfltool exited with status \(process.terminationStatus)")
+                }
+            } catch {
+                log.warning("Could not pin to Finder sidebar: \(error.localizedDescription, privacy: .public)")
             }
-        } catch {
-            logger.warning("Could not pin to Finder sidebar: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

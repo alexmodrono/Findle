@@ -14,7 +14,8 @@ import OSLog
 final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     let domain: NSFileProviderDomain
     let logger = Logger(subsystem: "es.amodrono.foodle.file-provider", category: "Extension")
-    var database: Database?
+    private let stateLock = NSLock()
+    private var _database: Database?
     private var databaseSecurityScopedURL: URL?
     private var rootContainerName: String {
         "Findle-\(FileNameSanitizer.sanitize(domain.displayName))"
@@ -28,30 +29,80 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         return String(raw.dropFirst(prefix.count))
     }
 
+    /// Lazily resolve the database, retrying until the main app has finished seeding it.
+    ///
+    /// File Provider requests can arrive concurrently, so the resolution path is
+    /// serialized to avoid racing on the cached database and security-scoped URL.
+    var database: Database? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        if let _database { return _database }
+        return resolveDatabaseLocked()
+    }
+
     required init(domain: NSFileProviderDomain) {
         self.domain = domain
         super.init()
 
-        do {
-            let stateDirectoryURL = try Self.stateDirectoryURL(for: domain)
-            _ = stateDirectoryURL.startAccessingSecurityScopedResource()
-            self.databaseSecurityScopedURL = stateDirectoryURL
-            let databaseURL = Self.databaseURL(in: stateDirectoryURL)
-            try FileManager.default.createDirectory(
-                at: databaseURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            self.database = try Database(path: databaseURL.path)
-        } catch {
-            logger.error("Failed to initialize database: \(error.localizedDescription, privacy: .public)")
-        }
-
         logger.info("File Provider extension initialized for domain: \(domain.identifier.rawValue, privacy: .public)")
     }
 
+    private func resolveDatabaseLocked() -> Database? {
+        do {
+            let stateDirectoryURL = try Self.stateDirectoryURL(for: domain)
+            let databaseURL = Self.databaseURL(in: stateDirectoryURL)
+
+            guard FileManager.default.fileExists(atPath: databaseURL.path) else {
+                return nil
+            }
+
+            let didStart = stateDirectoryURL.startAccessingSecurityScopedResource()
+            var adoptedScope = false
+            defer {
+                if didStart && !adoptedScope {
+                    stateDirectoryURL.stopAccessingSecurityScopedResource()
+                }
+            }
+
+            let db = try Database(path: databaseURL.path)
+            guard try databaseIsReady(db) else {
+                logger.info("Database exists but is not seeded yet for domain: \(self.domain.identifier.rawValue, privacy: .public)")
+                return nil
+            }
+
+            // Adopt security-scoped access, releasing any previous scope
+            databaseSecurityScopedURL?.stopAccessingSecurityScopedResource()
+            databaseSecurityScopedURL = didStart ? stateDirectoryURL : nil
+            adoptedScope = true
+            _database = db
+            logger.info("Database resolved for domain: \(self.domain.identifier.rawValue, privacy: .public)")
+            return db
+        } catch {
+            logger.warning("Database resolution failed: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
+
+    private func databaseIsReady(_ database: Database) throws -> Bool {
+        if let siteID, try database.fetchSite(id: siteID) == nil {
+            return false
+        }
+
+        if let siteID {
+            return try database.fetchAccounts().contains {
+                $0.siteID == siteID && $0.state.isConnected
+            }
+        }
+
+        return true
+    }
+
     func invalidate() {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         databaseSecurityScopedURL?.stopAccessingSecurityScopedResource()
         databaseSecurityScopedURL = nil
+        _database = nil
         logger.info("File Provider extension invalidated")
     }
 

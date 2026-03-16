@@ -101,6 +101,32 @@ brew install --cask findle
 
 > **Note:** The Xcode project and scheme are named `Foodle` for historical reasons, but the built app is called **Findle**.
 
+### Staging Validation
+
+Before shipping, use the Release-like `Foodle-Staging` scheme. It keeps optimization and hardened runtime behavior close to Release while still allowing tests to run.
+
+```bash
+xcodegen generate
+./scripts/staging-smoke-test.sh
+```
+
+That script builds an unsigned optimized app in `Staging` and runs the test suite against it. It is the fast validation pass for optimized code paths, but it is not suitable for File Provider registration or end-to-end SSO/Finder checks because the extension is not code signed in that flow.
+
+For real pre-ship runtime validation, build a signed Staging app:
+
+```bash
+xcodegen generate
+./scripts/staging-signed-build.sh
+```
+
+If your project does not already have a team selected in Xcode, provide one from the shell:
+
+```bash
+DEVELOPMENT_TEAM=ABCDE12345 ./scripts/staging-signed-build.sh
+```
+
+Use the signed Staging app for the manual checklist: SSO completion, Finder integration, restart/session restore, sync, and file materialization.
+
 ## Architecture
 
 Findle is split into a modular set of frameworks and targets. This keeps the separation of concerns clean and makes it easier to work on isolated features.
