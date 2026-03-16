@@ -39,6 +39,9 @@ struct EmbeddedSSOView: View {
             Divider()
 
             EmbeddedWebViewRepresentable(coordinator: coordinator)
+                .onAppear {
+                    coordinator.loadLaunchPage()
+                }
         }
         .frame(minWidth: 760, minHeight: 580)
     }

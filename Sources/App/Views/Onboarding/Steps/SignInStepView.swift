@@ -188,17 +188,23 @@ struct SignInStepView: View {
 
     private func signInWithEmbeddedSSO(site: MoodleSite) async {
         let coordinator = EmbeddedAuthCoordinator()
-        onboardingState.embeddedAuthCoordinator = coordinator
 
-        let authTask = Task { @MainActor in
-            try await coordinator.authenticate(site: site)
+        do {
+            try coordinator.configure(site: site)
+        } catch {
+            handleSSOError(error)
+            navigator?.setContinueEnabled(true)
+            return
         }
 
-        try? await Task.sleep(for: .milliseconds(50))
+        // Show the sheet first so the web view is in the window hierarchy before
+        // loading the URL. In sandboxed release builds, WebKit's networking process
+        // needs the view in a valid window for cross-origin SSO redirects to work.
+        onboardingState.embeddedAuthCoordinator = coordinator
         onboardingState.showEmbeddedSSO = true
 
         do {
-            let result = try await authTask.value
+            let result = try await coordinator.waitForResult()
             onboardingState.showEmbeddedSSO = false
             onboardingState.embeddedAuthCoordinator = nil
 

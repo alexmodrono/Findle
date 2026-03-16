@@ -33,13 +33,15 @@ public final class EmbeddedAuthCoordinator: NSObject {
     private var continuation: CheckedContinuation<EmbeddedAuthResult, Error>?
     private var passport: String = ""
     private var site: MoodleSite?
+    private var pendingRequest: URLRequest?
 
-    /// Configure the embedded web view and start loading the SSO entry page.
+    /// Configure the embedded web view for SSO authentication without loading the page.
     ///
-    /// Call `waitForResult()` after presenting `webView` to await the callback.
+    /// Call `loadLaunchPage()` after the web view is in the view hierarchy (e.g. from
+    /// `.onAppear`), then `waitForResult()` to await the callback.
     ///
     /// - Parameter site: The Moodle site to authenticate with.
-    public func prepareAuthentication(site: MoodleSite) throws {
+    public func configure(site: MoodleSite) throws {
         self.site = site
         self.passport = generatePassport()
 
@@ -74,18 +76,35 @@ public final class EmbeddedAuthCoordinator: NSObject {
         webView.uiDelegate = self
         self.webView = webView
 
-        let request = URLRequest(url: launchURL)
+        // Store the request; it will be loaded once the web view is in the view hierarchy.
+        self.pendingRequest = URLRequest(url: launchURL)
+    }
+
+    /// Load the SSO launch page in the web view.
+    ///
+    /// Call this after the web view is in the view hierarchy (e.g. from `.onAppear`).
+    /// In sandboxed, notarized release builds, WebKit's networking process requires
+    /// the web view to be in a valid window hierarchy before cross-origin SSO
+    /// redirects (e.g. Moodle → Microsoft 365) work reliably.
+    public func loadLaunchPage() {
+        guard let webView, let request = pendingRequest else { return }
+        pendingRequest = nil
         webView.load(request)
     }
 
     /// Start the embedded SSO flow and return the resulting auth token.
+    ///
+    /// This is a convenience that configures the web view, loads the page immediately,
+    /// and waits for the result. Prefer the two-step `configure(site:)` +
+    /// `loadLaunchPage()` flow when the web view must be in the view hierarchy first.
     ///
     /// - Parameters:
     ///   - site: The Moodle site to authenticate with.
     /// - Returns: The authentication result containing the token and passport.
     /// - Throws: `FoodleError` on failure or cancellation.
     public func authenticate(site: MoodleSite) async throws -> EmbeddedAuthResult {
-        try prepareAuthentication(site: site)
+        try configure(site: site)
+        loadLaunchPage()
         return try await waitForResult()
     }
 
