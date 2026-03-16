@@ -39,7 +39,7 @@ https://github.com/user-attachments/assets/7257c605-1fb9-45e1-ae41-f9e7dade8365
 
 <br/>
 
-| App Dashboard & Course Management | Settings & Diagnostics |
+| Direct Finder integration | Quick Actions without Leaving Finder |
 | :---: | :---: |
 | <img src=".github/screenshots/showcase2.jpg" alt="Course Management UI" width="400"/> | <img src=".github/screenshots/showcase3.jpg" alt="App Settings and Diagnostics" width="400"/> |
 | Findle seamlessly integrating with Finder's sidebar, behaving exactly like iCloud Drive or Dropbox. | Perform quick actions directly from the Finder app, no need to open any browser. |
