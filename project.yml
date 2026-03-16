@@ -102,16 +102,6 @@ targets:
       - package: Sparkle
         product: Sparkle
       - sdk: CoreSpotlight.framework
-    postBuildScripts:
-      - script: |
-          SPARKLE_FRAMEWORK="${BUILT_PRODUCTS_DIR}/Sparkle.framework"
-          if [ -d "$SPARKLE_FRAMEWORK" ]; then
-            XPC_DEST="${TARGET_BUILD_DIR}/${WRAPPER_NAME}/Contents/XPCServices"
-            mkdir -p "$XPC_DEST"
-            cp -R "$SPARKLE_FRAMEWORK/Versions/B/XPCServices/Installer.xpc" "$XPC_DEST/"
-            cp -R "$SPARKLE_FRAMEWORK/Versions/B/XPCServices/Downloader.xpc" "$XPC_DEST/"
-          fi
-        name: Copy Sparkle XPC Services
     settings:
       base:
         PRODUCT_NAME: Findle

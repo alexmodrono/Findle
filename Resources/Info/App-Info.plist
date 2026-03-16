@@ -28,6 +28,8 @@
     <false/>
     <key>SUFeedURL</key>
     <string>https://github.com/alexmodrono/Findle/releases/latest/download/appcast.xml</string>
+    <key>SUEnableInstallerLauncherService</key>
+    <true/>
     <key>SUPublicEDKey</key>
     <string>0J4Dy2ctl0ueMVmU3Cf+/n1Dz2EO6MmwtyfqiwUnQa0=</string>
     <key>CFBundleURLTypes</key>
