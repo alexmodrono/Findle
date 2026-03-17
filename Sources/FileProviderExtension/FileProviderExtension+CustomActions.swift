@@ -11,11 +11,11 @@ import OSLog
 
 extension FileProviderExtension: NSFileProviderCustomAction {
 
-    private static let openInMoodleIdentifier = "es.amodrono.foodle.action.open-in-moodle"
-    private static let copyMoodleLinkIdentifier = "es.amodrono.foodle.action.copy-moodle-link"
-    private static let openCoursePageIdentifier = "es.amodrono.foodle.action.open-course-page"
-    private static let keepDownloadedIdentifier = "es.amodrono.foodle.action.keep-downloaded"
-    private static let removeDownloadIdentifier = "es.amodrono.foodle.action.remove-download"
+    private static let openInMoodleIdentifier = BundleIdentifiers.actionOpenInMoodle
+    private static let copyMoodleLinkIdentifier = BundleIdentifiers.actionCopyMoodleLink
+    private static let openCoursePageIdentifier = BundleIdentifiers.actionOpenCoursePage
+    private static let keepDownloadedIdentifier = BundleIdentifiers.actionKeepDownloaded
+    private static let removeDownloadIdentifier = BundleIdentifiers.actionRemoveDownload
 
     func performAction(
         identifier actionIdentifier: NSFileProviderExtensionActionIdentifier,

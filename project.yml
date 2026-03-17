@@ -16,10 +16,16 @@ settings:
     CODE_SIGN_STYLE: Automatic
     CODE_SIGN_IDENTITY: "Apple Development"
     SWIFT_STRICT_CONCURRENCY: complete
+    FOODLE_BUNDLE_PREFIX: es.amodrono.foodle
+    APP_GROUP_IDENTIFIER: group.es.amodrono.foodle
+  configs:
+    Nightly:
+      FOODLE_BUNDLE_PREFIX: es.amodrono.foodle.nightly
+      APP_GROUP_IDENTIFIER: group.es.amodrono.foodle.nightly
 
 configs:
   Debug: debug
-  Staging: release
+  Nightly: release
   Release: release
 
 schemes:
@@ -44,15 +50,15 @@ schemes:
       config: Debug
     archive:
       config: Release
-  Foodle-Staging:
+  Foodle-Nightly:
     build:
       targets:
         Foodle: all
         FoodleFileProvider: all
     run:
-      config: Staging
+      config: Nightly
     test:
-      config: Staging
+      config: Nightly
       targets:
         - SharedDomainTests
         - NetworkingTests
@@ -60,11 +66,11 @@ schemes:
         - PersistenceTests
         - SyncEngineTests
     profile:
-      config: Staging
+      config: Nightly
     analyze:
-      config: Staging
+      config: Nightly
     archive:
-      config: Staging
+      config: Nightly
 
 packages:
   Airlock:
@@ -79,7 +85,7 @@ targets:
     type: application
     platform: macOS
     configFiles:
-      Staging: Config/Staging-App.xcconfig
+      Nightly: Config/Nightly-App.xcconfig
       Release: Config/Release-App.xcconfig
     attributes:
       SystemCapabilities:
@@ -113,12 +119,16 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         LD_RUNPATH_SEARCH_PATHS:
           - "@executable_path/../Frameworks"
+      configs:
+        Nightly:
+          PRODUCT_NAME: Findle Nightly
+          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.nightly
 
   SharedDomain:
     type: framework
     platform: macOS
     configFiles:
-      Staging: Config/Staging-Framework.xcconfig
+      Nightly: Config/Nightly-Framework.xcconfig
       Release: Config/Release-Framework.xcconfig
     sources:
       - path: Sources/SharedDomain
@@ -132,7 +142,7 @@ targets:
     type: framework
     platform: macOS
     configFiles:
-      Staging: Config/Staging-Framework.xcconfig
+      Nightly: Config/Nightly-Framework.xcconfig
       Release: Config/Release-Framework.xcconfig
     sources:
       - path: Sources/Networking
@@ -148,7 +158,7 @@ targets:
     type: framework
     platform: macOS
     configFiles:
-      Staging: Config/Staging-Framework.xcconfig
+      Nightly: Config/Nightly-Framework.xcconfig
       Release: Config/Release-Framework.xcconfig
     sources:
       - path: Sources/Persistence
@@ -164,7 +174,7 @@ targets:
     type: framework
     platform: macOS
     configFiles:
-      Staging: Config/Staging-Framework.xcconfig
+      Nightly: Config/Nightly-Framework.xcconfig
       Release: Config/Release-Framework.xcconfig
     sources:
       - path: Sources/SyncEngine
@@ -182,7 +192,7 @@ targets:
     type: app-extension
     platform: macOS
     configFiles:
-      Staging: Config/Staging-FileProvider.xcconfig
+      Nightly: Config/Nightly-FileProvider.xcconfig
       Release: Config/Release-FileProvider.xcconfig
     attributes:
       SystemCapabilities:
@@ -204,6 +214,9 @@ targets:
         LD_RUNPATH_SEARCH_PATHS:
           - "@executable_path/../Frameworks"
           - "@executable_path/../../../../Frameworks"
+      configs:
+        Nightly:
+          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.nightly.file-provider
     info:
       path: Resources/Info/FileProvider-Info.plist
       properties:
@@ -213,22 +226,22 @@ targets:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.fileprovider-nonui
           NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).FileProviderExtension"
-          NSExtensionFileProviderDocumentGroup: "group.es.amodrono.foodle"
+          NSExtensionFileProviderDocumentGroup: "$(APP_GROUP_IDENTIFIER)"
           NSExtensionFileProviderSupportsEnumeration: true
           NSExtensionFileProviderActions:
-            - NSExtensionFileProviderActionIdentifier: es.amodrono.foodle.action.open-in-moodle
+            - NSExtensionFileProviderActionIdentifier: $(FOODLE_BUNDLE_PREFIX).action.open-in-moodle
               NSExtensionFileProviderActionName: Open in Moodle
               NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
-            - NSExtensionFileProviderActionIdentifier: es.amodrono.foodle.action.copy-moodle-link
+            - NSExtensionFileProviderActionIdentifier: $(FOODLE_BUNDLE_PREFIX).action.copy-moodle-link
               NSExtensionFileProviderActionName: Copy Moodle Link
               NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
-            - NSExtensionFileProviderActionIdentifier: es.amodrono.foodle.action.open-course-page
+            - NSExtensionFileProviderActionIdentifier: $(FOODLE_BUNDLE_PREFIX).action.open-course-page
               NSExtensionFileProviderActionName: Open Course Page
               NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
-            - NSExtensionFileProviderActionIdentifier: es.amodrono.foodle.action.keep-downloaded
+            - NSExtensionFileProviderActionIdentifier: $(FOODLE_BUNDLE_PREFIX).action.keep-downloaded
               NSExtensionFileProviderActionName: Keep Downloaded
               NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
-            - NSExtensionFileProviderActionIdentifier: es.amodrono.foodle.action.remove-download
+            - NSExtensionFileProviderActionIdentifier: $(FOODLE_BUNDLE_PREFIX).action.remove-download
               NSExtensionFileProviderActionName: Remove Download
               NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
 

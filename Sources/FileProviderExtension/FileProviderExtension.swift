@@ -21,12 +21,12 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         "Findle-\(FileNameSanitizer.sanitize(domain.displayName))"
     }
 
-    /// Extract the site ID from the domain identifier (format: es.amodrono.foodle.domain.<siteID>).
+    /// Extract the site ID from the domain identifier (format: `<prefix>.domain.<siteID>`).
     var siteID: String? {
-        let prefix = "es.amodrono.foodle.domain."
+        let domainPrefix = BundleIdentifiers.prefix + ".domain."
         let raw = domain.identifier.rawValue
-        guard raw.hasPrefix(prefix) else { return nil }
-        return String(raw.dropFirst(prefix.count))
+        guard raw.hasPrefix(domainPrefix) else { return nil }
+        return String(raw.dropFirst(domainPrefix.count))
     }
 
     /// Lazily resolve the database, retrying until the main app has finished seeding it.

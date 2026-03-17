@@ -6,6 +6,14 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleSymbolName</key>
+			<string>graduationcap</string>
+		</dict>
+	</dict>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -18,14 +26,6 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
-	<key>CFBundleIcons</key>
-	<dict>
-		<key>CFBundlePrimaryIcon</key>
-		<dict>
-			<key>CFBundleSymbolName</key>
-			<string>graduationcap</string>
-		</dict>
-	</dict>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionFileProviderActions</key>
@@ -34,7 +34,7 @@
 				<key>NSExtensionFileProviderActionActivationRule</key>
 				<string>TRUEPREDICATE</string>
 				<key>NSExtensionFileProviderActionIdentifier</key>
-				<string>es.amodrono.foodle.action.open-in-moodle</string>
+				<string>$(FOODLE_BUNDLE_PREFIX).action.open-in-moodle</string>
 				<key>NSExtensionFileProviderActionName</key>
 				<string>Open in Moodle</string>
 			</dict>
@@ -42,7 +42,7 @@
 				<key>NSExtensionFileProviderActionActivationRule</key>
 				<string>TRUEPREDICATE</string>
 				<key>NSExtensionFileProviderActionIdentifier</key>
-				<string>es.amodrono.foodle.action.copy-moodle-link</string>
+				<string>$(FOODLE_BUNDLE_PREFIX).action.copy-moodle-link</string>
 				<key>NSExtensionFileProviderActionName</key>
 				<string>Copy Moodle Link</string>
 			</dict>
@@ -50,7 +50,7 @@
 				<key>NSExtensionFileProviderActionActivationRule</key>
 				<string>TRUEPREDICATE</string>
 				<key>NSExtensionFileProviderActionIdentifier</key>
-				<string>es.amodrono.foodle.action.open-course-page</string>
+				<string>$(FOODLE_BUNDLE_PREFIX).action.open-course-page</string>
 				<key>NSExtensionFileProviderActionName</key>
 				<string>Open Course Page</string>
 			</dict>
@@ -58,7 +58,7 @@
 				<key>NSExtensionFileProviderActionActivationRule</key>
 				<string>TRUEPREDICATE</string>
 				<key>NSExtensionFileProviderActionIdentifier</key>
-				<string>es.amodrono.foodle.action.keep-downloaded</string>
+				<string>$(FOODLE_BUNDLE_PREFIX).action.keep-downloaded</string>
 				<key>NSExtensionFileProviderActionName</key>
 				<string>Keep Downloaded</string>
 			</dict>
@@ -66,13 +66,13 @@
 				<key>NSExtensionFileProviderActionActivationRule</key>
 				<string>TRUEPREDICATE</string>
 				<key>NSExtensionFileProviderActionIdentifier</key>
-				<string>es.amodrono.foodle.action.remove-download</string>
+				<string>$(FOODLE_BUNDLE_PREFIX).action.remove-download</string>
 				<key>NSExtensionFileProviderActionName</key>
 				<string>Remove Download</string>
 			</dict>
 		</array>
 		<key>NSExtensionFileProviderDocumentGroup</key>
-		<string>group.es.amodrono.foodle</string>
+		<string>$(APP_GROUP_IDENTIFIER)</string>
 		<key>NSExtensionFileProviderSupportsEnumeration</key>
 		<true/>
 		<key>NSExtensionPointIdentifier</key>

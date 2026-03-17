@@ -6,13 +6,14 @@
 import Foundation
 import Security
 import OSLog
+import SharedDomain
 
 /// Manages secure credential storage in the macOS Keychain.
 public final class KeychainManager: Sendable {
     public static let shared = KeychainManager()
 
     private let logger = Logger(subsystem: "es.amodrono.foodle.networking", category: "Keychain")
-    private let service = "es.amodrono.foodle"
+    private let service = BundleIdentifiers.keychainService
 
     private init() {}
 
