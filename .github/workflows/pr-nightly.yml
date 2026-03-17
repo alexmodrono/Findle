@@ -4,6 +4,11 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  pull-requests: write
+  actions: read
+
 env:
   APP_NAME: Findle Nightly
   SCHEME: Foodle-Nightly
@@ -42,8 +47,23 @@ jobs:
           ditto -c -k --keepParent "$APP_PATH" "$RUNNER_TEMP/$APP_NAME.zip"
 
       - name: Upload artifact
+        id: upload
         uses: actions/upload-artifact@v4
         with:
           name: Findle-Nightly
           path: ${{ runner.temp }}/Findle Nightly.zip
           retention-days: 14
+
+      - name: Comment download link on PR
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: nightly-build
+          message: |
+            ### Nightly Build
+
+            **[Download Findle Nightly](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts/${{ steps.upload.outputs.artifact-id }})** (unsigned)
+
+            Built from ${{ github.event.pull_request.head.sha }}.
+
+            > [!NOTE]
+            > Right-click → Open the first time to bypass Gatekeeper. The File Provider extension requires code signing and won't work in this build.
