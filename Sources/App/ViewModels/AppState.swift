@@ -121,7 +121,7 @@ final class AppState: ObservableObject {
     }
 
     private func sharedDatabaseLocation(siteID: String) throws -> SharedDatabaseLocation? {
-        let domainID = NSFileProviderDomainIdentifier("es.amodrono.foodle.domain.\(siteID)")
+        let domainID = NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: siteID))
         let domain = NSFileProviderDomain(identifier: domainID, displayName: siteID)
         guard let manager = NSFileProviderManager(for: domain) else { return nil }
 
@@ -393,7 +393,7 @@ final class AppState: ObservableObject {
     }
 
     private func addFileProviderDomain(site: MoodleSite) async throws {
-        let domainID = NSFileProviderDomainIdentifier("es.amodrono.foodle.domain.\(site.id)")
+        let domainID = NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: site.id))
         let domain = NSFileProviderDomain(identifier: domainID, displayName: site.displayName)
         domain.isHidden = false
 
@@ -577,7 +577,7 @@ final class AppState: ObservableObject {
     }
 
     private func signalFileProviderChanges(for site: MoodleSite) {
-        let domainID = "es.amodrono.foodle.domain.\(site.id)"
+        let domainID = BundleIdentifiers.fileProviderDomainID(siteID: site.id)
         let displayName = site.displayName
         let logger = self.logger
         Task.detached {
@@ -600,7 +600,7 @@ final class AppState: ObservableObject {
     }
 
     private func resolveFileProviderAuthentication(for site: MoodleSite, maxAttempts: Int = 5) async {
-        let domainID = NSFileProviderDomainIdentifier("es.amodrono.foodle.domain.\(site.id)")
+        let domainID = NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: site.id))
         let domain = NSFileProviderDomain(identifier: domainID, displayName: site.displayName)
 
         for attempt in 1...maxAttempts {
@@ -648,7 +648,7 @@ final class AppState: ObservableObject {
 
         // Remove File Provider domain
         if let site = currentSite {
-            let domainID = NSFileProviderDomainIdentifier("es.amodrono.foodle.domain.\(site.id)")
+            let domainID = NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: site.id))
             let domain = NSFileProviderDomain(identifier: domainID, displayName: site.displayName)
             try? await NSFileProviderManager.remove(domain)
         }
@@ -716,7 +716,7 @@ final class AppState: ObservableObject {
             try? snapshotCurrentDataToBootstrap(from: sourceDatabase, siteID: site.id)
         }
 
-        let domainID = NSFileProviderDomainIdentifier("es.amodrono.foodle.domain.\(site.id)")
+        let domainID = NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: site.id))
         let domain = NSFileProviderDomain(identifier: domainID, displayName: site.displayName)
         try? await NSFileProviderManager.remove(domain)
         try? await setupFileProviderDomain(site: site)
@@ -867,7 +867,7 @@ final class AppState: ObservableObject {
     }
 
     private func fileProviderRootURL(for site: MoodleSite) async -> URL? {
-        let domainID = NSFileProviderDomainIdentifier("es.amodrono.foodle.domain.\(site.id)")
+        let domainID = NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: site.id))
         let domain = NSFileProviderDomain(identifier: domainID, displayName: site.displayName)
         guard let manager = NSFileProviderManager(for: domain) else { return nil }
 
@@ -955,10 +955,9 @@ final class AppState: ObservableObject {
 
     func handleSpotlightActivity(_ activity: NSUserActivity) {
         guard let identifier = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String else { return }
-        let prefix = "es.amodrono.foodle."
+        let prefix = BundleIdentifiers.spotlightPrefix + "."
 
         if identifier.hasPrefix("\(prefix)course.") {
-            // Extract course ID from "es.amodrono.foodle.course.<siteID>.<courseID>"
             let components = identifier.dropFirst("\(prefix)course.".count).split(separator: ".")
             if let courseIDStr = components.last,
                let courseID = Int(courseIDStr),
@@ -966,7 +965,6 @@ final class AppState: ObservableObject {
                 Task { await openFileProviderInFinder(selecting: course) }
             }
         } else if identifier.hasPrefix("\(prefix)item.") {
-            // Item identifier is "es.amodrono.foodle.item.<itemID>"
             let itemID = String(identifier.dropFirst("\(prefix)item.".count))
             if let db = database, let item = try? db.fetchItem(id: itemID),
                let course = courses.first(where: { $0.id == item.courseID }) {
