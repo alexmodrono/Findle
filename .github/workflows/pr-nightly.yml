@@ -65,5 +65,8 @@ jobs:
 
             Built from ${{ github.event.pull_request.head.sha }}.
 
-            > [!NOTE]
-            > Right-click → Open the first time to bypass Gatekeeper. The File Provider extension requires code signing and won't work in this build.
+            > [!IMPORTANT]
+            > This build is unsigned. macOS will block it on first launch. To open it:
+            > 1. Try to open the app normally — macOS will show a warning and refuse.
+            > 2. Go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**.
+            > 3. The File Provider extension requires code signing and won't work in this build.
