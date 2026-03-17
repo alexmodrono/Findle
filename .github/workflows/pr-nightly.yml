@@ -1,0 +1,49 @@
+name: PR Nightly Build
+
+on:
+  pull_request:
+    branches: [main]
+
+env:
+  APP_NAME: Findle Nightly
+  SCHEME: Foodle-Nightly
+  CONFIGURATION: Nightly
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build
+        run: |
+          xcodebuild build \
+            -project Foodle.xcodeproj \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package app
+        run: |
+          APP_PATH=$(find "$RUNNER_TEMP/DerivedData" -name "$APP_NAME.app" -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Error: $APP_NAME.app not found"
+            exit 1
+          fi
+          ditto -c -k --keepParent "$APP_PATH" "$RUNNER_TEMP/$APP_NAME.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Findle-Nightly
+          path: ${{ runner.temp }}/Findle Nightly.zip
+          retention-days: 14
