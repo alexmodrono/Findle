@@ -10,7 +10,7 @@ import SharedDomain
 
 /// SQLite database manager for Foodle's local persistence.
 public final class Database: @unchecked Sendable {
-    private static let appGroupIdentifier = "group.es.amodrono.foodle"
+    private static let appGroupIdentifier = BundleIdentifiers.appGroup
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "es.amodrono.foodle.persistence.db", qos: .userInitiated)
     private let logger = Logger(subsystem: "es.amodrono.foodle.persistence", category: "Database")

@@ -11,7 +11,7 @@ import OSLog
 
 /// Indexes Moodle courses and files into CoreSpotlight for system-wide search.
 final class SpotlightIndexer: @unchecked Sendable {
-    private static let domainPrefix = "es.amodrono.foodle"
+    private static let domainPrefix = BundleIdentifiers.spotlightPrefix
     private let logger = Logger(subsystem: "es.amodrono.foodle", category: "SpotlightIndexer")
 
     static let shared = SpotlightIndexer()
