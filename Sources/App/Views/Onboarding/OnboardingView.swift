@@ -30,7 +30,8 @@ struct OnboardingView: View {
                     DispatchQueue.main.async {
                         NSApplication.shared.terminate(nil)
                     }
-                }
+                },
+                immersiveIntroOnly: true
             )
         )
         .environmentObject(onboardingState)
