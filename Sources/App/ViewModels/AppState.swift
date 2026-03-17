@@ -706,7 +706,7 @@ final class AppState: ObservableObject {
             targetURL = rootURL
         }
 
-        NSWorkspace.shared.activateFileViewerSelecting([targetURL])
+        NSWorkspace.shared.open(targetURL)
     }
 
     func resetProvider() async {

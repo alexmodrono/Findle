@@ -8,6 +8,7 @@ import SharedDomain
 
 struct MenuBarView: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.openWindow) private var openWindow
     @State private var isSyncing = false
 
     var body: some View {
@@ -80,8 +81,7 @@ struct MenuBarView: View {
         if let window = NSApp.windows.first(where: { $0.canBecomeMain && $0.isVisible }) {
             window.makeKeyAndOrderFront(nil)
         } else {
-            // Window was closed — tell the WindowGroup to open a new one.
-            NSApp.sendAction(#selector(NSDocumentController.newDocument(_:)), to: nil, from: nil)
+            openWindow(id: "main")
         }
 
         NSApp.activate()

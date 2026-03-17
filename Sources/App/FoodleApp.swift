@@ -18,9 +18,10 @@ struct FoodleApp: App {
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: "main") {
             ContentView()
                 .environmentObject(appState)
+                .environmentObject(updateController)
                 .frame(minWidth: 980, minHeight: 680)
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                     appState.resolveFileProviderAuthIfNeeded()
