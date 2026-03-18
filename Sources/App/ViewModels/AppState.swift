@@ -397,6 +397,10 @@ final class AppState: ObservableObject {
     /// Lightweight domain registration used on app relaunch: adds the domain if missing,
     /// without removing existing domains (avoids racing with fileproviderd).
     private func ensureFileProviderDomain(site: MoodleSite) async {
+        // Always re-enable — the extension may have been disabled by macOS after
+        // a Sparkle update or other bundle change.
+        reenableFileProviderExtension()
+
         do {
             try await addFileProviderDomain(site: site)
         } catch {
@@ -415,31 +419,104 @@ final class AppState: ObservableObject {
         return lastVersion != currentVersion
     }
 
-    /// After an app update the embedded File Provider extension binary changes but
-    /// `fileproviderd` may keep using a stale reference.  Removing and re-adding
-    /// the domain forces macOS to reload the extension.  The shared database is
-    /// preserved by snapshotting to the bootstrap database first.
+    /// After an app update (e.g. via Sparkle) the embedded File Provider extension
+    /// binary changes.  macOS disables the extension via `pluginkit` and
+    /// `NSFileProviderManager.add` does NOT re-enable it.  The only reliable fix
+    /// is to call `pluginkit -e use` to re-enable the extension, then re-seed the
+    /// shared database so the extension has up-to-date state.
     private func reregisterFileProviderDomain(site: MoodleSite) async {
-        logger.info("App version changed — re-registering File Provider domain")
+        logger.info("App version changed — re-registering File Provider domain for \(site.displayName, privacy: .public)")
 
-        // Snapshot current data so re-seeding restores everything.
+        // Re-enable the extension — macOS disables it when Sparkle replaces the bundle.
+        reenableFileProviderExtension()
+
+        // 1. Snapshot current data so re-seeding restores everything.
         if let sourceDatabase = database {
-            try? snapshotCurrentDataToBootstrap(from: sourceDatabase, siteID: site.id)
+            do {
+                try snapshotCurrentDataToBootstrap(from: sourceDatabase, siteID: site.id)
+            } catch {
+                logger.error("Snapshot before re-registration failed: \(error.localizedDescription, privacy: .public)")
+            }
         }
 
+        // 2. Re-store the keychain token under the current signing context.
+        //    This ensures the File Provider extension (which may have a refreshed
+        //    code signature after Sparkle replaced the bundle) can read the token.
+        if let token = currentToken,
+           let account = accounts.first(where: { $0.state.isConnected }) {
+            do {
+                try KeychainManager.shared.storeToken(token.token, forAccount: account.id)
+                logger.info("Re-stored keychain token for post-update access")
+            } catch {
+                logger.error("Failed to re-store keychain token: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        // 3. Remove and re-add the domain to force macOS to reload the extension.
         let domainID = NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: site.id))
         let domain = NSFileProviderDomain(identifier: domainID, displayName: site.displayName)
-        try? await NSFileProviderManager.remove(domain)
-        try? await addFileProviderDomain(site: site)
 
-        // Give fileproviderd time to initialize the new extension instance.
-        try? await Task.sleep(for: .seconds(2))
+        do {
+            try await NSFileProviderManager.remove(domain)
+            logger.info("Removed File Provider domain for re-registration")
+        } catch {
+            logger.error("Failed to remove domain during re-registration: \(error.localizedDescription, privacy: .public)")
+        }
 
-        // Re-seed the shared database from the bootstrap snapshot.
-        if let bootstrapDatabase = try? Database(),
-           let sharedDatabase = try? openSharedDatabase(siteID: site.id, seedFrom: bootstrapDatabase) {
-            self.database = sharedDatabase
-            syncEngine = SyncEngine(provider: moodleClient, database: sharedDatabase)
+        do {
+            try await addFileProviderDomain(site: site)
+        } catch {
+            logger.error("Failed to re-add domain during re-registration: \(error.localizedDescription, privacy: .public)")
+        }
+
+        // 4. Retry seeding the shared database with backoff — fileproviderd may
+        //    need time to initialize the new extension and state directory.
+        var seeded = false
+        for attempt in 1...5 {
+            try? await Task.sleep(for: .seconds(TimeInterval(attempt)))
+
+            do {
+                let bootstrapDatabase = try Database()
+                if let sharedDatabase = try openSharedDatabase(siteID: site.id, seedFrom: bootstrapDatabase) {
+                    self.database = sharedDatabase
+                    syncEngine = SyncEngine(provider: moodleClient, database: sharedDatabase)
+                    seeded = true
+                    logger.info("Re-seeded shared database on attempt \(attempt)")
+                    break
+                } else {
+                    logger.info("Shared database not ready on attempt \(attempt)")
+                }
+            } catch {
+                logger.warning("Shared database seeding attempt \(attempt) failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        if !seeded {
+            logger.error("Failed to re-seed shared database after 5 attempts")
+        }
+    }
+
+    /// Re-enable the File Provider extension via `pluginkit`.
+    ///
+    /// macOS disables the extension when Sparkle replaces the app bundle.
+    /// `NSFileProviderManager.add(domain)` does NOT re-enable it — only
+    /// `pluginkit -e use` does.
+    private func reenableFileProviderExtension() {
+        let extensionBundleID = BundleIdentifiers.prefix + ".file-provider"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/pluginkit")
+        process.arguments = ["-e", "use", "-i", extensionBundleID]
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            if process.terminationStatus == 0 {
+                logger.info("Re-enabled File Provider extension via pluginkit")
+            } else {
+                logger.warning("pluginkit exited with status \(process.terminationStatus)")
+            }
+        } catch {
+            logger.error("Failed to run pluginkit: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -757,42 +834,82 @@ final class AppState: ObservableObject {
             targetURL = rootURL
         }
 
-        NSWorkspace.shared.open(targetURL)
+        // Use selectFile/activateFileViewerSelecting instead of open() — the
+        // sandbox blocks NSWorkspace.open() on File Provider URLs, but revealing
+        // in Finder works because it asks Finder to navigate rather than the app
+        // to open the path.
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: targetURL.path)
     }
 
     func resetProvider() async {
         guard let site = currentSite else { return }
 
+        reenableFileProviderExtension()
+
         if let sourceDatabase = database {
-            try? snapshotCurrentDataToBootstrap(from: sourceDatabase, siteID: site.id)
+            do {
+                try snapshotCurrentDataToBootstrap(from: sourceDatabase, siteID: site.id)
+            } catch {
+                logger.error("Snapshot before reset failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        // Re-store the keychain token to guarantee accessibility after reset.
+        if let token = currentToken,
+           let account = accounts.first(where: { $0.state.isConnected }) {
+            do {
+                try KeychainManager.shared.storeToken(token.token, forAccount: account.id)
+            } catch {
+                logger.error("Failed to re-store keychain token during reset: \(error.localizedDescription, privacy: .public)")
+            }
         }
 
         let domainID = NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: site.id))
         let domain = NSFileProviderDomain(identifier: domainID, displayName: site.displayName)
-        try? await NSFileProviderManager.remove(domain)
-        try? await setupFileProviderDomain(site: site)
 
-        // Allow fileproviderd time to initialize the new extension instance
-        // before attempting to access the state directory or signal auth.
-        try? await Task.sleep(for: .seconds(2))
+        do {
+            try await NSFileProviderManager.remove(domain)
+        } catch {
+            logger.error("Failed to remove domain during reset: \(error.localizedDescription, privacy: .public)")
+        }
 
-        let bootstrapDatabase = try? Database()
-        if let bootstrapDatabase,
-           let sharedDatabase = try? openSharedDatabase(siteID: site.id, seedFrom: bootstrapDatabase) {
-            database = sharedDatabase
-            if let token = currentToken {
-                currentSite = site
-                currentToken = token
-                sites = [site]
-                syncEngine = SyncEngine(provider: moodleClient, database: sharedDatabase)
+        do {
+            try await setupFileProviderDomain(site: site)
+        } catch {
+            logger.error("Failed to re-add domain during reset: \(error.localizedDescription, privacy: .public)")
+        }
 
-                do {
-                    courses = try sharedDatabase.fetchCourses(siteID: site.id)
-                    reloadCourseTags()
-                } catch {
-                    logger.error("Failed to load cached courses after reset: \(error.localizedDescription, privacy: .public)")
+        // Retry seeding with backoff — fileproviderd needs time to initialize.
+        var seeded = false
+        for attempt in 1...5 {
+            try? await Task.sleep(for: .seconds(TimeInterval(attempt)))
+
+            do {
+                let bootstrapDatabase = try Database()
+                if let sharedDatabase = try openSharedDatabase(siteID: site.id, seedFrom: bootstrapDatabase) {
+                    database = sharedDatabase
+                    if let token = currentToken {
+                        currentSite = site
+                        currentToken = token
+                        sites = [site]
+                        syncEngine = SyncEngine(provider: moodleClient, database: sharedDatabase)
+
+                        courses = try sharedDatabase.fetchCourses(siteID: site.id)
+                        reloadCourseTags()
+                    }
+                    seeded = true
+                    logger.info("Re-seeded shared database after reset on attempt \(attempt)")
+                    break
+                } else {
+                    logger.info("Shared database not ready after reset on attempt \(attempt)")
                 }
+            } catch {
+                logger.warning("Reset seeding attempt \(attempt) failed: \(error.localizedDescription, privacy: .public)")
             }
+        }
+
+        if !seeded {
+            logger.error("Failed to re-seed shared database after reset (5 attempts)")
         }
 
         await resolveFileProviderAuthentication(for: site)
