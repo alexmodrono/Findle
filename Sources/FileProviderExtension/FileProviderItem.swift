@@ -27,8 +27,19 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
     }
 
     var capabilities: NSFileProviderItemCapabilities {
+        if localItem.isLocal {
+            var caps: NSFileProviderItemCapabilities = [
+                .allowsReading, .allowsWriting, .allowsRenaming,
+                .allowsReparenting, .allowsDeleting
+            ]
+            if localItem.isDirectory {
+                caps.insert(.allowsContentEnumerating)
+                caps.insert(.allowsAddingSubItems)
+            }
+            return caps
+        }
         if localItem.isDirectory {
-            return [.allowsReading, .allowsContentEnumerating]
+            return [.allowsReading, .allowsContentEnumerating, .allowsAddingSubItems]
         }
         return [.allowsReading]
     }
@@ -77,11 +88,15 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
     }
 
     var isUploaded: Bool {
-        true // read-only content is always "uploaded"
+        true // Local items are never uploaded; remote items are always "uploaded"
     }
 
     var isUploading: Bool {
         false
+    }
+
+    var isMostRecentVersionDownloaded: Bool {
+        localItem.syncState == .materialized
     }
 
     var tagData: Data? {
@@ -111,7 +126,7 @@ final class RootContainerItem: NSObject, NSFileProviderItem {
     var parentItemIdentifier: NSFileProviderItemIdentifier { .rootContainer }
     var filename: String { rootName }
     var contentType: UTType { .folder }
-    var capabilities: NSFileProviderItemCapabilities { [.allowsReading, .allowsContentEnumerating] }
+    var capabilities: NSFileProviderItemCapabilities { [.allowsReading, .allowsContentEnumerating, .allowsAddingSubItems] }
     var itemVersion: NSFileProviderItemVersion {
         let versionData = Data(rootName.utf8)
         return NSFileProviderItemVersion(contentVersion: versionData, metadataVersion: versionData)
