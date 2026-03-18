@@ -17,7 +17,7 @@ public final class Database: @unchecked Sendable {
     private let path: String
     public var filePath: String { path }
 
-    public static let schemaVersion = 7
+    public static let schemaVersion = 8
 
     public init(path: String? = nil) throws {
         if let path = path {
@@ -296,6 +296,14 @@ public final class Database: @unchecked Sendable {
                 try execute("ALTER TABLE courses ADD COLUMN custom_icon_name TEXT")
             }
             logger.info("Migrated database schema to version 7 (custom course icons)")
+        }
+
+        if currentVersion < 8 {
+            let itemColumns = try existingColumns(table: "items")
+            if !itemColumns.contains("is_local") {
+                try execute("ALTER TABLE items ADD COLUMN is_local INTEGER NOT NULL DEFAULT 0")
+            }
+            logger.info("Migrated database schema to version 8 (local items)")
         }
 
         try execute("PRAGMA user_version = \(Self.schemaVersion)")
@@ -730,8 +738,8 @@ extension Database {
         let sql = """
             INSERT OR REPLACE INTO items (id, parent_id, site_id, course_id, remote_id,
                 filename, is_directory, content_type, file_size, creation_date,
-                modification_date, sync_state, is_pinned, local_path, remote_url, content_version, tag_data)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                modification_date, sync_state, is_pinned, local_path, remote_url, content_version, tag_data, is_local)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         try queue.sync {
             try executeUnsafe("BEGIN TRANSACTION")
@@ -760,6 +768,7 @@ extension Database {
                 } else {
                     sqlite3_bind_null(stmt, 17)
                 }
+                sqlite3_bind_int(stmt, 18, item.isLocal ? 1 : 0)
 
                 _ = sqlite3_step(stmt)
             }
@@ -892,14 +901,14 @@ extension Database {
         try queue.sync {
             // Clear stale pending deletions from previous cycles before recording new ones.
             try executeUnsafe("DELETE FROM pending_deletions")
-            // Record IDs for the File Provider to report as deletions.
-            let insertStmt = try prepareStatement("INSERT INTO pending_deletions (item_id) SELECT id FROM items WHERE course_id = ? AND site_id = ?")
+            // Record IDs for the File Provider to report as deletions (skip local items).
+            let insertStmt = try prepareStatement("INSERT INTO pending_deletions (item_id) SELECT id FROM items WHERE course_id = ? AND site_id = ? AND is_local = 0")
             defer { sqlite3_finalize(insertStmt) }
             sqlite3_bind_int(insertStmt, 1, Int32(courseID))
             sqlite3_bind_text(insertStmt, 2, (siteID as NSString).utf8String, -1, nil)
             _ = sqlite3_step(insertStmt)
 
-            let deleteStmt = try prepareStatement("DELETE FROM items WHERE course_id = ? AND site_id = ?")
+            let deleteStmt = try prepareStatement("DELETE FROM items WHERE course_id = ? AND site_id = ? AND is_local = 0")
             defer { sqlite3_finalize(deleteStmt) }
             sqlite3_bind_int(deleteStmt, 1, Int32(courseID))
             sqlite3_bind_text(deleteStmt, 2, (siteID as NSString).utf8String, -1, nil)
@@ -911,15 +920,47 @@ extension Database {
         try queue.sync {
             try executeUnsafe("DELETE FROM pending_deletions")
 
-            let insertStmt = try prepareStatement("INSERT INTO pending_deletions (item_id) SELECT id FROM items WHERE site_id = ?")
+            let insertStmt = try prepareStatement("INSERT INTO pending_deletions (item_id) SELECT id FROM items WHERE site_id = ? AND is_local = 0")
             defer { sqlite3_finalize(insertStmt) }
             sqlite3_bind_text(insertStmt, 1, (siteID as NSString).utf8String, -1, nil)
             _ = sqlite3_step(insertStmt)
 
-            let deleteStmt = try prepareStatement("DELETE FROM items WHERE site_id = ?")
+            let deleteStmt = try prepareStatement("DELETE FROM items WHERE site_id = ? AND is_local = 0")
             defer { sqlite3_finalize(deleteStmt) }
             sqlite3_bind_text(deleteStmt, 1, (siteID as NSString).utf8String, -1, nil)
             _ = sqlite3_step(deleteStmt)
+        }
+    }
+
+    /// Delete a single item and all its children by ID.
+    public func deleteItemAndChildren(id: String) throws {
+        try queue.sync {
+            // Delete children first (recursive via parent_id chain).
+            // For simplicity, collect all descendant IDs then delete them.
+            var idsToDelete = [id]
+            var frontier = [id]
+
+            while !frontier.isEmpty {
+                var nextFrontier: [String] = []
+                for parentID in frontier {
+                    let stmt = try prepareStatement("SELECT id FROM items WHERE parent_id = ?")
+                    defer { sqlite3_finalize(stmt) }
+                    sqlite3_bind_text(stmt, 1, (parentID as NSString).utf8String, -1, nil)
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        let childID = String(cString: sqlite3_column_text(stmt, 0))
+                        idsToDelete.append(childID)
+                        nextFrontier.append(childID)
+                    }
+                }
+                frontier = nextFrontier
+            }
+
+            for itemID in idsToDelete {
+                let stmt = try prepareStatement("DELETE FROM items WHERE id = ?")
+                defer { sqlite3_finalize(stmt) }
+                sqlite3_bind_text(stmt, 1, (itemID as NSString).utf8String, -1, nil)
+                _ = sqlite3_step(stmt)
+            }
         }
     }
 
@@ -949,14 +990,17 @@ extension Database {
     }
 
     private func readItem(from stmt: OpaquePointer) -> LocalItem {
+        let colCount = sqlite3_column_count(stmt)
+
         let tagData: Data? = {
-            let colCount = sqlite3_column_count(stmt)
             guard colCount > 16, sqlite3_column_type(stmt, 16) != SQLITE_NULL else { return nil }
             let bytes = sqlite3_column_blob(stmt, 16)
             let length = sqlite3_column_bytes(stmt, 16)
             guard let bytes, length > 0 else { return nil }
             return Data(bytes: bytes, count: Int(length))
         }()
+
+        let isLocal = colCount > 17 ? sqlite3_column_int(stmt, 17) == 1 : false
 
         return LocalItem(
             id: String(cString: sqlite3_column_text(stmt, 0)),
@@ -975,7 +1019,8 @@ extension Database {
             localPath: sqlite3_column_text(stmt, 13).map { String(cString: $0) },
             remoteURL: sqlite3_column_text(stmt, 14).flatMap { URL(string: String(cString: $0)) },
             contentVersion: sqlite3_column_text(stmt, 15).map { String(cString: $0) },
-            tagData: tagData
+            tagData: tagData,
+            isLocal: isLocal
         )
     }
 }

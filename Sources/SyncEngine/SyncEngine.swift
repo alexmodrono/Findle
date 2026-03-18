@@ -133,7 +133,7 @@ public actor SyncEngine {
         syncProgress[course.id]?.totalItems = allItems.count
 
         // Diff against existing items
-        let existingItems = try database.fetchAllItems(siteID: site.id).filter { $0.courseID == course.id }
+        let existingItems = try database.fetchAllItems(siteID: site.id).filter { $0.courseID == course.id && !$0.isLocal }
 
         let changes = diffItems(existing: existingItems, incoming: allItems)
 

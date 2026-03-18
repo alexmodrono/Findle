@@ -211,6 +211,12 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             }
         }
 
+        // Local items have no remote — if their content is missing, report an error.
+        if localItem.isLocal {
+            completionHandler(nil, nil, NSFileProviderError(.noSuchItem))
+            return progress
+        }
+
         do {
             try FileDownloader.startDownload(
                 item: localItem,
@@ -227,7 +233,24 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
     // Download logic moved to FileDownloader for Sendable compliance.
 
-    // MARK: - Modification (Read-Only for now)
+    // MARK: - Local Content Storage
+
+    /// Directory for storing user-created local file content.
+    private func localContentDirectory() throws -> URL {
+        let stateDir = try Self.stateDirectoryURL(for: domain)
+        let dir = stateDir
+            .appendingPathComponent(".FoodleState", isDirectory: true)
+            .appendingPathComponent("LocalContent", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Returns the on-disk URL for a local item's content.
+    private func localContentURL(itemID: String) throws -> URL {
+        try localContentDirectory().appendingPathComponent(itemID)
+    }
+
+    // MARK: - Modification
 
     func createItem(
         basedOn itemTemplate: NSFileProviderItem,
@@ -237,8 +260,62 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         request: NSFileProviderRequest,
         completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, Error?) -> Void
     ) -> Progress {
-        // Moodle content is read-only for now
-        completionHandler(nil, [], false, NSError(domain: NSCocoaErrorDomain, code: NSFeatureUnsupportedError))
+        guard let db = database, let siteID else {
+            completionHandler(nil, [], false, NSFileProviderError(.notAuthenticated))
+            return Progress()
+        }
+
+        // Determine the parent.  Items at the root have parentID = nil.
+        let parentID: String?
+        if itemTemplate.parentItemIdentifier == .rootContainer {
+            parentID = nil
+        } else {
+            parentID = itemTemplate.parentItemIdentifier.rawValue
+        }
+
+        // Infer courseID from parent item (local items inherit their parent's course).
+        let courseID: Int
+        if let parentID, let parentItem = try? db.fetchItem(id: parentID) {
+            courseID = parentItem.courseID
+        } else {
+            courseID = 0 // Root-level local item
+        }
+
+        let itemID = "local-\(UUID().uuidString)"
+        let now = Date()
+        let isDirectory = itemTemplate.contentType == .folder
+
+        var localItem = LocalItem(
+            id: itemID,
+            parentID: parentID,
+            siteID: siteID,
+            courseID: courseID,
+            remoteID: 0,
+            filename: itemTemplate.filename,
+            isDirectory: isDirectory,
+            contentType: isDirectory ? nil : itemTemplate.contentType?.preferredMIMEType,
+            fileSize: (itemTemplate.documentSize ?? nil)?.int64Value ?? 0,
+            creationDate: now,
+            modificationDate: now,
+            syncState: .materialized,
+            isLocal: true
+        )
+
+        do {
+            // Persist file content for non-directory items.
+            if !isDirectory, let contentURL = url {
+                let dest = try localContentURL(itemID: itemID)
+                try FileManager.default.copyItem(at: contentURL, to: dest)
+                localItem.localPath = dest.path
+            }
+
+            try db.saveItems([localItem])
+            completionHandler(FileProviderItem(localItem: localItem), [], false, nil)
+        } catch {
+            logger.error("createItem failed: \(error.localizedDescription, privacy: .public)")
+            completionHandler(nil, [], false, error)
+        }
+
         return Progress()
     }
 
@@ -251,7 +328,75 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         request: NSFileProviderRequest,
         completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, Error?) -> Void
     ) -> Progress {
-        completionHandler(nil, [], false, NSError(domain: NSCocoaErrorDomain, code: NSFeatureUnsupportedError))
+        guard let db = database else {
+            completionHandler(nil, [], false, NSFileProviderError(.notAuthenticated))
+            return Progress()
+        }
+
+        guard var localItem = try? db.fetchItem(id: item.itemIdentifier.rawValue) else {
+            completionHandler(nil, [], false, NSFileProviderError(.noSuchItem))
+            return Progress()
+        }
+
+        // Only allow modifications to local items.
+        guard localItem.isLocal else {
+            completionHandler(nil, [], false, NSError(domain: NSCocoaErrorDomain, code: NSFeatureUnsupportedError))
+            return Progress()
+        }
+
+        do {
+            var newFilename = localItem.filename
+            var newParentID = localItem.parentID
+            var newLocalPath = localItem.localPath
+            var newFileSize = localItem.fileSize
+            var newTagData = localItem.tagData
+
+            if changedFields.contains(.filename) {
+                newFilename = item.filename
+            }
+            if changedFields.contains(.parentItemIdentifier) {
+                newParentID = item.parentItemIdentifier == .rootContainer ? nil : item.parentItemIdentifier.rawValue
+            }
+            if changedFields.contains(.contents), let newContents {
+                let dest = try localContentURL(itemID: localItem.id)
+                try? FileManager.default.removeItem(at: dest)
+                try FileManager.default.copyItem(at: newContents, to: dest)
+                newLocalPath = dest.path
+                let attrs = try? FileManager.default.attributesOfItem(atPath: dest.path)
+                newFileSize = (attrs?[.size] as? Int64) ?? 0
+            }
+            if changedFields.contains(.tagData) {
+                newTagData = item.tagData ?? nil
+            }
+
+            let updated = LocalItem(
+                id: localItem.id,
+                parentID: newParentID,
+                siteID: localItem.siteID,
+                courseID: localItem.courseID,
+                remoteID: localItem.remoteID,
+                filename: newFilename,
+                isDirectory: localItem.isDirectory,
+                contentType: localItem.contentType,
+                fileSize: newFileSize,
+                creationDate: localItem.creationDate,
+                modificationDate: Date(),
+                syncState: localItem.syncState,
+                isPinned: localItem.isPinned,
+                localPath: newLocalPath,
+                remoteURL: localItem.remoteURL,
+                contentVersion: "\(Date().timeIntervalSince1970)",
+                tagData: newTagData,
+                isLocal: true
+            )
+
+            try db.saveItems([updated])
+            completionHandler(FileProviderItem(localItem: updated), [], false, nil)
+        } catch {
+            logger.error("modifyItem failed: \(error.localizedDescription, privacy: .public)")
+            completionHandler(nil, [], false, error)
+        }
+
         return Progress()
     }
 
@@ -262,7 +407,34 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         request: NSFileProviderRequest,
         completionHandler: @escaping (Error?) -> Void
     ) -> Progress {
-        completionHandler(NSError(domain: NSCocoaErrorDomain, code: NSFeatureUnsupportedError))
+        guard let db = database else {
+            completionHandler(NSFileProviderError(.notAuthenticated))
+            return Progress()
+        }
+
+        guard let localItem = try? db.fetchItem(id: identifier.rawValue) else {
+            completionHandler(NSFileProviderError(.noSuchItem))
+            return Progress()
+        }
+
+        // Only allow deletion of local items.
+        guard localItem.isLocal else {
+            completionHandler(NSError(domain: NSCocoaErrorDomain, code: NSFeatureUnsupportedError))
+            return Progress()
+        }
+
+        do {
+            // Remove stored content.
+            if let path = localItem.localPath {
+                try? FileManager.default.removeItem(atPath: path)
+            }
+            try db.deleteItemAndChildren(id: localItem.id)
+            completionHandler(nil)
+        } catch {
+            logger.error("deleteItem failed: \(error.localizedDescription, privacy: .public)")
+            completionHandler(error)
+        }
+
         return Progress()
     }
 }

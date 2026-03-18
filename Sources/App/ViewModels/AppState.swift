@@ -88,9 +88,20 @@ final class AppState: ObservableObject {
     }
 
     private func configureInitialDatabase() throws {
-        if let siteID = userDefaults.string(forKey: Self.currentSiteIDKey),
-           let sharedDatabase = try openSharedDatabase(siteID: siteID, seedFrom: nil) {
-            database = sharedDatabase
+        if let siteID = userDefaults.string(forKey: Self.currentSiteIDKey) {
+            // Try to open the shared database directly first.
+            if let sharedDatabase = try openSharedDatabase(siteID: siteID, seedFrom: nil) {
+                database = sharedDatabase
+                return
+            }
+            // Shared database needs seeding — bootstrap from the app group database
+            // so the File Provider picks up existing data on relaunch.
+            let bootstrapDatabase = try Database()
+            if let sharedDatabase = try openSharedDatabase(siteID: siteID, seedFrom: bootstrapDatabase) {
+                database = sharedDatabase
+            } else {
+                database = bootstrapDatabase
+            }
         } else {
             database = try Database()
         }

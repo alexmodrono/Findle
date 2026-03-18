@@ -4,6 +4,7 @@
 // You may obtain a copy of the License in the LICENSE file at the root of this repository.
 
 import SwiftUI
+import WhatsNewKit
 
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
@@ -15,6 +16,14 @@ struct ContentView: View {
                 OnboardingView()
             case .workspace:
                 WorkspaceView()
+                    .environment(
+                        \.whatsNew,
+                        WhatsNewEnvironment(
+                            versionStore: UserDefaultsWhatsNewVersionStore(),
+                            whatsNewCollection: WhatsNewProvider.collection
+                        )
+                    )
+                    .whatsNewSheet()
             }
         }
     }
