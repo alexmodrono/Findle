@@ -1,0 +1,72 @@
+name: PR Nightly Build
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: read
+
+env:
+  APP_NAME: Findle Nightly
+  SCHEME: Foodle-Nightly
+  CONFIGURATION: Nightly
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build
+        run: |
+          xcodebuild build \
+            -project Foodle.xcodeproj \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package app
+        run: |
+          APP_PATH=$(find "$RUNNER_TEMP/DerivedData" -name "$APP_NAME.app" -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Error: $APP_NAME.app not found"
+            exit 1
+          fi
+          ditto -c -k --keepParent "$APP_PATH" "$RUNNER_TEMP/$APP_NAME.zip"
+
+      - name: Upload artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: Findle-Nightly
+          path: ${{ runner.temp }}/Findle Nightly.zip
+          retention-days: 14
+
+      - name: Comment download link on PR
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: nightly-build
+          message: |
+            ### Nightly Build
+
+            **[Download Findle Nightly](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts/${{ steps.upload.outputs.artifact-id }})** (unsigned)
+
+            Built from ${{ github.event.pull_request.head.sha }}.
+
+            > [!IMPORTANT]
+            > This build is unsigned. macOS will block it on first launch. To open it:
+            > 1. Try to open the app normally — macOS will show a warning and refuse.
+            > 2. Go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**.
+            > 3. The File Provider extension requires code signing and won't work in this build.

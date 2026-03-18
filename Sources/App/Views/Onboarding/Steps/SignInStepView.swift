@@ -5,7 +5,6 @@
 
 import SwiftUI
 import Airlock
-import AuthenticationServices
 import SharedDomain
 import FoodleNetworking
 
@@ -158,32 +157,7 @@ struct SignInStepView: View {
         onboardingState.errorMessage = nil
         navigator?.setContinueEnabled(false)
 
-        if site.capabilities.loginType == .embedded {
-            await signInWithEmbeddedSSO(site: site)
-        } else {
-            await signInWithBrowserSSO(site: site)
-        }
-    }
-
-    private func signInWithBrowserSSO(site: MoodleSite) async {
-        do {
-            guard let window = NSApplication.shared.keyWindow else {
-                throw FoodleError.internalError(detail: "No window available for authentication.")
-            }
-
-            let context = WindowPresentationContext(window: window)
-            try await appState.signInWithBrowserSSOAndPersist(site: site, presentationContext: context)
-            signInCompleted = true
-            navigator?.resetButton()
-            navigator?.setContinueEnabled(true)
-        } catch is CancellationError {
-            navigator?.setContinueEnabled(true)
-        } catch let error as FoodleError where error.isCancelled {
-            navigator?.setContinueEnabled(true)
-        } catch {
-            handleSSOError(error)
-            navigator?.setContinueEnabled(true)
-        }
+        await signInWithEmbeddedSSO(site: site)
     }
 
     private func signInWithEmbeddedSSO(site: MoodleSite) async {

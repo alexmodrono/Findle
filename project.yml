@@ -75,7 +75,7 @@ schemes:
 packages:
   Airlock:
     url: https://github.com/alexmodrono/Airlock
-    from: 0.1.0
+    from: 0.1.1
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     from: 2.6.0
