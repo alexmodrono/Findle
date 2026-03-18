@@ -397,6 +397,10 @@ final class AppState: ObservableObject {
     /// Lightweight domain registration used on app relaunch: adds the domain if missing,
     /// without removing existing domains (avoids racing with fileproviderd).
     private func ensureFileProviderDomain(site: MoodleSite) async {
+        // Always re-enable — the extension may have been disabled by macOS after
+        // a Sparkle update or other bundle change.
+        reenableFileProviderExtension()
+
         do {
             try await addFileProviderDomain(site: site)
         } catch {
@@ -415,13 +419,16 @@ final class AppState: ObservableObject {
         return lastVersion != currentVersion
     }
 
-    /// After an app update the embedded File Provider extension binary changes but
-    /// `fileproviderd` may keep using a stale reference.  Removing and re-adding
-    /// the domain forces macOS to reload the extension.  The shared database is
-    /// preserved by snapshotting to the bootstrap database first, and the keychain
-    /// token is re-stored to guarantee accessibility from the new binary.
+    /// After an app update (e.g. via Sparkle) the embedded File Provider extension
+    /// binary changes.  macOS disables the extension via `pluginkit` and
+    /// `NSFileProviderManager.add` does NOT re-enable it.  The only reliable fix
+    /// is to call `pluginkit -e use` to re-enable the extension, then re-seed the
+    /// shared database so the extension has up-to-date state.
     private func reregisterFileProviderDomain(site: MoodleSite) async {
         logger.info("App version changed — re-registering File Provider domain for \(site.displayName, privacy: .public)")
+
+        // Re-enable the extension — macOS disables it when Sparkle replaces the bundle.
+        reenableFileProviderExtension()
 
         // 1. Snapshot current data so re-seeding restores everything.
         if let sourceDatabase = database {
@@ -486,6 +493,30 @@ final class AppState: ObservableObject {
 
         if !seeded {
             logger.error("Failed to re-seed shared database after 5 attempts")
+        }
+    }
+
+    /// Re-enable the File Provider extension via `pluginkit`.
+    ///
+    /// macOS disables the extension when Sparkle replaces the app bundle.
+    /// `NSFileProviderManager.add(domain)` does NOT re-enable it — only
+    /// `pluginkit -e use` does.
+    private func reenableFileProviderExtension() {
+        let extensionBundleID = BundleIdentifiers.prefix + ".file-provider"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/pluginkit")
+        process.arguments = ["-e", "use", "-i", extensionBundleID]
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            if process.terminationStatus == 0 {
+                logger.info("Re-enabled File Provider extension via pluginkit")
+            } else {
+                logger.warning("pluginkit exited with status \(process.terminationStatus)")
+            }
+        } catch {
+            logger.error("Failed to run pluginkit: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -808,6 +839,8 @@ final class AppState: ObservableObject {
 
     func resetProvider() async {
         guard let site = currentSite else { return }
+
+        reenableFileProviderExtension()
 
         if let sourceDatabase = database {
             do {
