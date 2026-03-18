@@ -834,7 +834,11 @@ final class AppState: ObservableObject {
             targetURL = rootURL
         }
 
-        NSWorkspace.shared.open(targetURL)
+        // Use selectFile/activateFileViewerSelecting instead of open() — the
+        // sandbox blocks NSWorkspace.open() on File Provider URLs, but revealing
+        // in Finder works because it asks Finder to navigate rather than the app
+        // to open the path.
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: targetURL.path)
     }
 
     func resetProvider() async {
