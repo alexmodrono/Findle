@@ -16,15 +16,15 @@ struct ContentView: View {
                 OnboardingView()
             case .workspace:
                 WorkspaceView()
+                    .environment(
+                        \.whatsNew,
+                        WhatsNewEnvironment(
+                            versionStore: UserDefaultsWhatsNewVersionStore(),
+                            whatsNewCollection: WhatsNewProvider.collection
+                        )
+                    )
+                    .whatsNewSheet()
             }
         }
-        .environment(
-            \.whatsNew,
-            WhatsNewEnvironment(
-                versionStore: UserDefaultsWhatsNewVersionStore(),
-                whatsNewCollection: WhatsNewProvider.collection
-            )
-        )
-        .whatsNewSheet()
     }
 }
