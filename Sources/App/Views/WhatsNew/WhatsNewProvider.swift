@@ -10,8 +10,8 @@ import WhatsNewKit
 enum WhatsNewProvider {
     nonisolated(unsafe) static let collection: WhatsNewCollection = [
         WhatsNew(
-            version: "1.0.0",
-            title: "Welcome to Findle",
+            version: "0.1.2",
+            title: "What's New in Findle",
             features: [
                 WhatsNew.Feature(
                     image: .init(

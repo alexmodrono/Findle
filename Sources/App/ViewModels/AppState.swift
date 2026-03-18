@@ -64,6 +64,7 @@ final class AppState: ObservableObject {
     private static let syncOnLaunchKey = "syncOnLaunch"
     private static let syncIntervalMinutesKey = "syncIntervalMinutes"
     private static let currentSiteIDKey = "currentSiteID"
+    private static let lastKnownAppVersionKey = "lastKnownAppVersion"
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
@@ -400,6 +401,45 @@ final class AppState: ObservableObject {
             try await addFileProviderDomain(site: site)
         } catch {
             logger.error("File Provider domain setup failed on relaunch: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Returns `true` when the running app version differs from the last recorded
+    /// launch, indicating that a Sparkle (or manual) update took place.
+    /// Also records the current version so subsequent launches return `false`.
+    private func appVersionChanged() -> Bool {
+        let currentVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
+        let lastVersion = userDefaults.string(forKey: Self.lastKnownAppVersionKey)
+        userDefaults.set(currentVersion, forKey: Self.lastKnownAppVersionKey)
+        guard let lastVersion else { return false } // first launch ever
+        return lastVersion != currentVersion
+    }
+
+    /// After an app update the embedded File Provider extension binary changes but
+    /// `fileproviderd` may keep using a stale reference.  Removing and re-adding
+    /// the domain forces macOS to reload the extension.  The shared database is
+    /// preserved by snapshotting to the bootstrap database first.
+    private func reregisterFileProviderDomain(site: MoodleSite) async {
+        logger.info("App version changed — re-registering File Provider domain")
+
+        // Snapshot current data so re-seeding restores everything.
+        if let sourceDatabase = database {
+            try? snapshotCurrentDataToBootstrap(from: sourceDatabase, siteID: site.id)
+        }
+
+        let domainID = NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: site.id))
+        let domain = NSFileProviderDomain(identifier: domainID, displayName: site.displayName)
+        try? await NSFileProviderManager.remove(domain)
+        try? await addFileProviderDomain(site: site)
+
+        // Give fileproviderd time to initialize the new extension instance.
+        try? await Task.sleep(for: .seconds(2))
+
+        // Re-seed the shared database from the bootstrap snapshot.
+        if let bootstrapDatabase = try? Database(),
+           let sharedDatabase = try? openSharedDatabase(siteID: site.id, seedFrom: bootstrapDatabase) {
+            self.database = sharedDatabase
+            syncEngine = SyncEngine(provider: moodleClient, database: sharedDatabase)
         }
     }
 
@@ -798,7 +838,13 @@ final class AppState: ObservableObject {
 
         sessionBootstrapTask = Task { [weak self] in
             guard let self else { return }
-            await self.ensureFileProviderDomain(site: site)
+
+            if self.appVersionChanged() {
+                await self.reregisterFileProviderDomain(site: site)
+            } else {
+                await self.ensureFileProviderDomain(site: site)
+            }
+
             try Task.checkCancellation()
             await self.resolveFileProviderAuthentication(for: site)
             try Task.checkCancellation()
