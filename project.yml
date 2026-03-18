@@ -79,6 +79,9 @@ packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     from: 2.6.0
+  WhatsNewKit:
+    url: https://github.com/SvenTiigi/WhatsNewKit
+    from: 2.2.1
 
 targets:
   Foodle:
@@ -107,6 +110,8 @@ targets:
         product: Airlock
       - package: Sparkle
         product: Sparkle
+      - package: WhatsNewKit
+        product: WhatsNewKit
       - sdk: CoreSpotlight.framework
     settings:
       base:
