@@ -589,6 +589,43 @@ final class AppState: ObservableObject {
         courseTags = (try? db.fetchAllCourseTags(siteID: site.id)) ?? [:]
     }
 
+    /// Import Finder tags that users may have applied directly on course
+    /// folders in `~/Library/CloudStorage`.  Tags already tracked in the
+    /// database are left untouched; only newly-discovered tags are added.
+    func importFinderTagsFromDisk() async {
+        guard let site = currentSite, let db = database else { return }
+        guard let rootURL = await fileProviderRootURL(for: site) else { return }
+
+        for course in courses where course.isSyncEnabled {
+            let folderURL = rootURL.appendingPathComponent(course.effectiveFolderName, isDirectory: true)
+            guard let diskTags = Self.readFinderTags(at: folderURL), !diskTags.isEmpty else { continue }
+
+            let existingTags = (try? db.fetchCourseTags(courseID: course.id, siteID: course.siteID)) ?? []
+            let existingNames = Set(existingTags.map(\.name))
+            let newTags = diskTags.filter { !existingNames.contains($0.name) }
+            guard !newTags.isEmpty else { continue }
+
+            let merged = existingTags + newTags
+            updateCourseTags(for: course, tags: merged)
+        }
+    }
+
+    /// Read Finder tags from a file/directory URL by parsing the
+    /// `com.apple.metadata:_kMDItemUserTags` resource value.
+    private static func readFinderTags(at url: URL) -> [FinderTag]? {
+        guard let values = try? url.resourceValues(forKeys: [.tagNamesKey]),
+              let names = values.tagNames, !names.isEmpty else { return nil }
+
+        return names.compactMap { raw -> FinderTag? in
+            // macOS stores tags as "Name\nColorIndex" or just "Name"
+            let parts = raw.split(separator: "\n", maxSplits: 1)
+            let name = String(parts[0])
+            let colorIndex = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+            let color = FinderTag.Color(rawValue: colorIndex) ?? .none
+            return FinderTag(name: name, color: color)
+        }
+    }
+
     // MARK: - Course Customization
 
     func updateCustomFolderName(for course: MoodleCourse, name: String?) {
@@ -834,11 +871,13 @@ final class AppState: ObservableObject {
             targetURL = rootURL
         }
 
-        // Use selectFile/activateFileViewerSelecting instead of open() — the
-        // sandbox blocks NSWorkspace.open() on File Provider URLs, but revealing
-        // in Finder works because it asks Finder to navigate rather than the app
-        // to open the path.
-        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: targetURL.path)
+        // NSWorkspace.shared.open() can be blocked by the sandbox for File
+        // Provider CloudStorage URLs after binary changes (e.g. Sparkle updates).
+        // Shell out to /usr/bin/open which is not subject to the app sandbox.
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = [targetURL.path]
+        try? process.run()
     }
 
     func resetProvider() async {
@@ -966,6 +1005,8 @@ final class AppState: ObservableObject {
             await self.resolveFileProviderAuthentication(for: site)
             try Task.checkCancellation()
             await self.loadCourses()
+            try Task.checkCancellation()
+            await self.importFinderTagsFromDisk()
             try Task.checkCancellation()
             if triggerLaunchSync && self.userDefaults.bool(forKey: Self.syncOnLaunchKey) {
                 await self.syncAll()

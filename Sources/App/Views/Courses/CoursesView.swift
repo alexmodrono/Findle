@@ -10,24 +10,31 @@ struct CourseRow: View {
     let course: MoodleCourse
     let tags: [FinderTag]
 
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: course.customIconName ?? "folder.fill")
-                .foregroundStyle(course.isSyncEnabled ? .secondary : .quaternary)
-                .imageScale(.large)
+    private var iconName: String {
+        course.customIconName ?? "folder.fill"
+    }
 
+    private var primaryText: String {
+        if let custom = course.customFolderName,
+           !custom.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return custom
+        }
+        return course.fullName
+    }
+
+    var body: some View {
+        Label {
             VStack(alignment: .leading, spacing: 2) {
-                if let custom = course.customFolderName,
-                   !custom.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(custom)
-                        .lineLimit(2)
+                Text(primaryText)
+                    .lineLimit(2)
+
+                if course.customFolderName != nil &&
+                   !(course.customFolderName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text(course.fullName)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 } else {
-                    Text(course.fullName)
-                        .lineLimit(2)
                     Text(course.shortName)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -43,6 +50,9 @@ struct CourseRow: View {
                     }
                 }
             }
+        } icon: {
+            Image(systemName: iconName)
+                .foregroundStyle(course.isSyncEnabled ? .secondary : .quaternary)
         }
         .opacity(course.isSyncEnabled ? 1.0 : 0.5)
         .padding(.vertical, 1)
