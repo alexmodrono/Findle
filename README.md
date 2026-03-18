@@ -101,31 +101,35 @@ brew install --cask findle
 
 > **Note:** The Xcode project and scheme are named `Foodle` for historical reasons, but the built app is called **Findle**.
 
-### Staging Validation
+### Nightly Validation
 
-Before shipping, use the Release-like `Foodle-Staging` scheme. It keeps optimization and hardened runtime behavior close to Release while still allowing tests to run.
-
-```bash
-xcodegen generate
-./scripts/staging-smoke-test.sh
-```
-
-That script builds an unsigned optimized app in `Staging` and runs the test suite against it. It is the fast validation pass for optimized code paths, but it is not suitable for File Provider registration or end-to-end SSO/Finder checks because the extension is not code signed in that flow.
-
-For real pre-ship runtime validation, build a signed Staging app:
+Before shipping, use the Release-like `Foodle-Nightly` scheme. It keeps optimization and hardened runtime behavior close to Release while still allowing tests to run, and produces a separate "Findle Nightly" app that can be installed side-by-side with the production build.
 
 ```bash
 xcodegen generate
-./scripts/staging-signed-build.sh
+xcodebuild build \
+  -project Foodle.xcodeproj \
+  -scheme Foodle-Nightly \
+  -configuration Nightly \
+  CODE_SIGN_IDENTITY="-" \
+  CODE_SIGNING_ALLOWED=NO
 ```
 
-If your project does not already have a team selected in Xcode, provide one from the shell:
+This builds an unsigned optimized app suitable for fast validation of optimized code paths. It is not suitable for File Provider registration or end-to-end SSO/Finder checks because the extension is not code signed.
+
+For real pre-ship runtime validation, build a signed Nightly app from Xcode by selecting the `Foodle-Nightly` scheme with your Development Team configured, or pass it from the command line:
 
 ```bash
-DEVELOPMENT_TEAM=ABCDE12345 ./scripts/staging-signed-build.sh
+xcodebuild build \
+  -project Foodle.xcodeproj \
+  -scheme Foodle-Nightly \
+  -configuration Nightly \
+  DEVELOPMENT_TEAM=ABCDE12345
 ```
 
-Use the signed Staging app for the manual checklist: SSO completion, Finder integration, restart/session restore, sync, and file materialization.
+Use the signed Nightly app for the manual checklist: SSO completion, Finder integration, restart/session restore, sync, and file materialization.
+
+> **Note:** Pull requests targeting `main` automatically build an unsigned Nightly artifact via GitHub Actions. A download link is posted as a comment on the PR.
 
 ## Architecture
 
