@@ -8,20 +8,17 @@ import SwiftUI
 /// Occasional prompt asking users to support the project.
 struct SupportPrompt: ViewModifier {
     private static let launchCountKey = "supportPromptLaunchCount"
-    private static let dismissedKey = "supportPromptDismissed"
     private static let minLaunches = 5
     private static let showProbability = 0.3
 
     @AppStorage(SupportPrompt.launchCountKey) private var launchCount = 0
-    @AppStorage(SupportPrompt.dismissedKey) private var dismissed = false
     @State private var showAlert = false
 
     func body(content: Content) -> some View {
         content
             .onAppear {
                 launchCount += 1
-                guard !dismissed,
-                      launchCount >= Self.minLaunches,
+                guard launchCount >= Self.minLaunches,
                       Double.random(in: 0...1) < Self.showProbability else { return }
                 showAlert = true
             }
