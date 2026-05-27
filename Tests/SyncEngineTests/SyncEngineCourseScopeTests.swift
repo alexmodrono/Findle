@@ -101,6 +101,95 @@ final class SyncEngineCourseScopeTests: XCTestCase {
         XCTAssertEqual(refreshedUntouchedRoot.syncState, .materialized)
         XCTAssertEqual(refreshedUntouchedItem.syncState, .materialized)
     }
+
+    func testSyncCoursePreservesItemTagDataWhenRemoteFileChanges() async throws {
+        let site = MoodleSite(
+            id: "site-1",
+            displayName: "Example",
+            baseURL: URL(string: "https://moodle.example.edu")!,
+            capabilities: SiteCapabilities(
+                supportsWebServices: true,
+                supportsMobileAPI: true,
+                supportsFileDownload: true
+            )
+        )
+        let token = AuthToken(token: "token")
+        let course = MoodleCourse(id: 101, shortName: "C101", fullName: "Course 101", siteID: site.id)
+        let tagData = FinderTag.tagData(from: [FinderTag(name: "Read later", color: .blue)])
+        let modifiedDate = Date(timeIntervalSince1970: 2_000)
+
+        try database.saveItems([
+            LocalItem(
+                id: "course-\(site.id)-\(course.id)",
+                parentID: nil,
+                siteID: site.id,
+                courseID: course.id,
+                remoteID: course.id,
+                filename: course.effectiveFolderName,
+                isDirectory: true,
+                syncState: .materialized
+            ),
+            LocalItem(
+                id: "section-\(site.id)-\(course.id)-11",
+                parentID: "course-\(site.id)-\(course.id)",
+                siteID: site.id,
+                courseID: course.id,
+                remoteID: 11,
+                filename: "Week 1",
+                isDirectory: true,
+                syncState: .materialized
+            ),
+            LocalItem(
+                id: "file-\(site.id)-\(course.id)-301-notes.pdf",
+                parentID: "section-\(site.id)-\(course.id)-11",
+                siteID: site.id,
+                courseID: course.id,
+                remoteID: 301,
+                filename: "notes.pdf",
+                isDirectory: false,
+                fileSize: 100,
+                syncState: .materialized,
+                contentVersion: "1000",
+                tagData: tagData
+            ),
+        ])
+
+        let provider = FakeLMSProvider(courseContents: [
+            course.id: [
+                MoodleSection(
+                    id: 11,
+                    courseID: course.id,
+                    name: "Week 1",
+                    sectionNumber: 1,
+                    modules: [
+                        MoodleModule(
+                            id: 301,
+                            name: "Notes",
+                            modName: ResourceType.file.rawValue,
+                            contents: [
+                                MoodleFileContent(
+                                    type: "file",
+                                    fileName: "notes.pdf",
+                                    fileSize: 200,
+                                    fileURL: URL(string: "https://moodle.example.edu/pluginfile.php/notes.pdf"),
+                                    timeModified: modifiedDate,
+                                    mimeType: "application/pdf"
+                                ),
+                            ]
+                        ),
+                    ]
+                ),
+            ],
+        ])
+        let engine = SyncEngine(provider: provider, database: database)
+
+        try await engine.syncCourse(site: site, token: token, course: course)
+
+        let refreshedItem = try XCTUnwrap(database.fetchItem(id: "file-\(site.id)-\(course.id)-301-notes.pdf"))
+        XCTAssertEqual(refreshedItem.fileSize, 200)
+        XCTAssertEqual(refreshedItem.contentVersion, String(Int(modifiedDate.timeIntervalSince1970)))
+        XCTAssertEqual(refreshedItem.tagData, tagData)
+    }
 }
 
 private struct FakeLMSProvider: LMSProvider {

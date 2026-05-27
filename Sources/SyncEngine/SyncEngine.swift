@@ -327,8 +327,9 @@ public actor SyncEngine {
 
         for (id, var item) in incomingByID {
             if let existing = existingByID[id] {
-                // Preserve user-set pin state across syncs
+                // Preserve user-set metadata across syncs
                 item.isPinned = existing.isPinned
+                item.tagData = existing.tagData
 
                 if existing.contentVersion != item.contentVersion ||
                    existing.fileSize != item.fileSize ||
