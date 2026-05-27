@@ -92,7 +92,10 @@ public final class WebAuthSession: NSObject {
         logger.info("Login type: \(String(describing: site.capabilities.loginType), privacy: .public)")
         logger.info("Discovered launchurl: \(site.capabilities.launchURL ?? "<none>", privacy: .public)")
         logger.info("Launch URL source: \(buildResult.source == .advertised ? "advertised" : "fallback", privacy: .public)")
-        logger.info("Final SSO launch URL: \(launchURL.absoluteString, privacy: .public)")
+        // The launch URL embeds the passport nonce used to sign the SSO
+        // callback — log only the host publicly, keep the full URL private.
+        logger.info("Final SSO launch URL host: \(launchURL.host ?? "<unknown>", privacy: .public)")
+        logger.debug("Final SSO launch URL: \(launchURL.absoluteString, privacy: .private)")
 
         let callbackURL: URL
         do {

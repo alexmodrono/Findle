@@ -9,6 +9,14 @@ import WhatsNewKit
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
 
+    // Build the environment once per ContentView instance instead of on every
+    // body re-evaluation. Avoids spinning up a fresh UserDefaultsWhatsNewVersionStore
+    // and re-constructing the collection on every state change.
+    @State private var whatsNewEnvironment = WhatsNewEnvironment(
+        versionStore: UserDefaultsWhatsNewVersionStore(),
+        whatsNewCollection: WhatsNewProvider.makeCollection()
+    )
+
     var body: some View {
         Group {
             switch appState.currentScreen {
@@ -16,13 +24,7 @@ struct ContentView: View {
                 OnboardingView()
             case .workspace:
                 WorkspaceView()
-                    .environment(
-                        \.whatsNew,
-                        WhatsNewEnvironment(
-                            versionStore: UserDefaultsWhatsNewVersionStore(),
-                            whatsNewCollection: WhatsNewProvider.collection
-                        )
-                    )
+                    .environment(\.whatsNew, whatsNewEnvironment)
                     .whatsNewSheet()
                     .supportPrompt()
             }

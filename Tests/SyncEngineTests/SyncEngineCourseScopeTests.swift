@@ -228,7 +228,7 @@ private struct FakeLMSProvider: LMSProvider {
 
     func downloadFile(url: URL, token: AuthToken, destination: URL) async throws {}
 
-    func authenticatedFileURL(fileURL: URL, token: AuthToken) -> URL {
-        fileURL
+    func authenticatedFileRequest(fileURL: URL, token: AuthToken) -> URLRequest {
+        URLRequest(url: fileURL)
     }
 }

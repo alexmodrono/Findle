@@ -8,7 +8,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var updateController: UpdateController
-    @AppStorage("launchAtLogin") private var launchAtLogin = false
+    @StateObject private var loginItem = LoginItemController()
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
     @AppStorage("notifyOnSyncComplete") private var notifyOnSyncComplete = false
     @AppStorage("syncIntervalMinutes") private var syncInterval: Double = 30
@@ -21,7 +21,22 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("General") {
-                Toggle("Launch Findle at login", isOn: $launchAtLogin)
+                Toggle(
+                    "Launch Findle at login",
+                    // Drive the toggle from SMAppService.mainApp.status so the
+                    // UI shows the actual registration state — the system can
+                    // disable login items behind our back, and a stale
+                    // UserDefaults bool would lie to the user.
+                    isOn: Binding(
+                        get: { loginItem.isEnabled },
+                        set: { loginItem.setEnabled($0) }
+                    )
+                )
+                if let error = loginItem.lastError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
                 Toggle("Show in menu bar", isOn: $showMenuBarIcon)
                 Toggle(
                     "Automatically check for updates",
@@ -143,5 +158,10 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .navigationTitle("Settings")
         .frame(minWidth: 480, idealWidth: 520)
+        .onAppear {
+            // System Settings > Login Items can flip our registration state
+            // without notifying us, so re-read it whenever Settings reopens.
+            loginItem.refresh()
+        }
     }
 }

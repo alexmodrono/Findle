@@ -244,19 +244,17 @@ public final class MoodleClient: LMSProvider, Sendable {
     public func authenticate(site: MoodleSite, username: String, password: String) async throws -> AuthToken {
         logger.info("Authenticating user \(username, privacy: .private) at \(site.baseURL.host ?? "", privacy: .public)")
 
-        guard var components = URLComponents(url: site.tokenURL, resolvingAgainstBaseURL: false) else {
-            throw FoodleError.internalError(detail: "Could not parse token URL.")
-        }
-        components.queryItems = [
-            URLQueryItem(name: "username", value: username),
-            URLQueryItem(name: "password", value: password),
-            URLQueryItem(name: "service", value: "moodle_mobile_app")
-        ]
-
+        // Build the body explicitly so '+' in a password isn't double-decoded
+        // as a space by Moodle. URLQueryItem's default escaping leaves '+'
+        // unescaped, which Moodle's form decoder then interprets as a space.
         var request = URLRequest(url: site.tokenURL)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
+        request.httpBody = Self.formEncode([
+            "username": username,
+            "password": password,
+            "service": "moodle_mobile_app"
+        ])
 
         let (data, _) = try await performRequest(request)
         let tokenResponse = try Self.makeDecoder().decode(TokenResponse.self, from: data)
@@ -486,8 +484,7 @@ public final class MoodleClient: LMSProvider, Sendable {
     // MARK: - File Download
 
     public func downloadFile(url: URL, token: AuthToken, destination: URL) async throws {
-        let authenticatedURL = authenticatedFileURL(fileURL: url, token: token)
-        let request = URLRequest(url: authenticatedURL)
+        let request = authenticatedFileRequest(fileURL: url, token: token)
 
         let (tempURL, response) = try await session.download(for: request)
 
@@ -506,14 +503,16 @@ public final class MoodleClient: LMSProvider, Sendable {
         try fileManager.moveItem(at: tempURL, to: destination)
     }
 
-    public func authenticatedFileURL(fileURL: URL, token: AuthToken) -> URL {
-        guard var components = URLComponents(url: fileURL, resolvingAgainstBaseURL: false) else {
-            return fileURL
-        }
-        var items = components.queryItems ?? []
-        items.append(URLQueryItem(name: "token", value: token.token))
-        components.queryItems = items
-        return components.url ?? fileURL
+    public func authenticatedFileRequest(fileURL: URL, token: AuthToken) -> URLRequest {
+        // Moodle's pluginfile.php accepts the token via either $_GET or $_POST.
+        // Send it via POST body so the token doesn't end up in URL logs, the
+        // Referer header on CDN redirects, or URLSession metrics. The URL
+        // itself stays clean.
+        var request = URLRequest(url: fileURL)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Self.formEncode(["token": token.token])
+        return request
     }
 
     // MARK: - Web Service Call
@@ -524,24 +523,23 @@ public final class MoodleClient: LMSProvider, Sendable {
         function: String,
         params: [String: String] = [:]
     ) async throws -> T {
-        guard var components = URLComponents(url: site.webServiceURL, resolvingAgainstBaseURL: false) else {
-            throw FoodleError.internalError(detail: "Could not construct web service URL.")
-        }
-        var queryItems = [
-            URLQueryItem(name: "wstoken", value: token.token),
-            URLQueryItem(name: "wsfunction", value: function),
-            URLQueryItem(name: "moodlewsrestformat", value: "json")
+        // POST the credentials and parameters in the body so wstoken never
+        // ends up in URL logs, proxy access logs, or crash reports. Moodle's
+        // webservice/rest/server.php accepts either GET or POST.
+        var body: [String: String] = [
+            "wstoken": token.token,
+            "wsfunction": function,
+            "moodlewsrestformat": "json"
         ]
         for (key, value) in params {
-            queryItems.append(URLQueryItem(name: key, value: value))
-        }
-        components.queryItems = queryItems
-
-        guard let url = components.url else {
-            throw FoodleError.internalError(detail: "Could not construct web service URL.")
+            body[key] = value
         }
 
-        let request = URLRequest(url: url)
+        var request = URLRequest(url: site.webServiceURL)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Self.formEncode(body)
+
         let (data, response) = try await performRequest(request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -673,6 +671,23 @@ public final class MoodleClient: LMSProvider, Sendable {
         default:
             return nil
         }
+    }
+
+    // MARK: - Form Encoding
+
+    /// Form-encode a dictionary into the body of an `application/x-www-form-urlencoded`
+    /// request. Uses an explicit allowed set that excludes `+`, `&`, `=`, `?`, and `#` so
+    /// special characters in passwords or other values can't be misinterpreted on the
+    /// receiving side.
+    static func formEncode(_ fields: [String: String]) -> Data? {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        let parts: [String] = fields.map { key, value in
+            let encodedKey = key.addingPercentEncoding(withAllowedCharacters: allowed) ?? key
+            let encodedValue = value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+            return "\(encodedKey)=\(encodedValue)"
+        }
+        return parts.joined(separator: "&").data(using: .utf8)
     }
 
     // MARK: - URL Normalization

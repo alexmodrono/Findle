@@ -321,4 +321,64 @@ final class DatabaseTests: XCTestCase {
         let fetched = try database.fetchCourses(siteID: "site-1")
         XCTAssertTrue(fetched.isEmpty)
     }
+
+    // MARK: - Change Counter / Sync Anchor
+
+    private func makeItem(id: String, parentID: String? = nil, courseID: Int = 1) -> LocalItem {
+        LocalItem(
+            id: id,
+            parentID: parentID,
+            siteID: "site-1",
+            courseID: courseID,
+            remoteID: 0,
+            filename: id,
+            isDirectory: false,
+            syncState: .placeholder
+        )
+    }
+
+    func testChangeCounterIncrementsOnItemInsert() throws {
+        let before = try database.currentChangeCounter()
+        try database.saveItems([makeItem(id: "item-1")])
+        let after = try database.currentChangeCounter()
+        XCTAssertGreaterThan(after, before)
+    }
+
+    func testChangeCounterIncrementsOnItemUpdate() throws {
+        try database.saveItems([makeItem(id: "item-1")])
+        let afterInsert = try database.currentChangeCounter()
+        try database.updateItemFilename(id: "item-1", filename: "renamed")
+        let afterUpdate = try database.currentChangeCounter()
+        XCTAssertGreaterThan(afterUpdate, afterInsert)
+    }
+
+    func testFetchItemsChangedSinceFiltersByAnchor() throws {
+        try database.saveItems([makeItem(id: "old-1")])
+        let anchor = try database.currentChangeCounter()
+        try database.saveItems([makeItem(id: "new-1"), makeItem(id: "new-2")])
+
+        // Whole-site lookup should return only the items inserted after the anchor.
+        let changed = try database.fetchItemsChangedSince(anchor: anchor, siteID: "site-1")
+        let changedIDs = Set(changed.map(\.id))
+        XCTAssertEqual(changedIDs, Set(["new-1", "new-2"]))
+    }
+
+    func testFetchPendingDeletionsSinceFiltersByAnchor() throws {
+        try database.saveItems([
+            makeItem(id: "to-keep"),
+            makeItem(id: "to-delete-1"),
+            makeItem(id: "to-delete-2"),
+        ])
+        let anchor = try database.currentChangeCounter()
+
+        try database.deleteItemsWithTombstone(ids: ["to-delete-1"])
+        try database.deleteItemsWithTombstone(ids: ["to-delete-2"])
+
+        let deletedSince = try database.fetchPendingDeletionsSince(anchor: anchor)
+        XCTAssertEqual(Set(deletedSince), Set(["to-delete-1", "to-delete-2"]))
+
+        // An anchor newer than both deletions should return nothing.
+        let nowAnchor = try database.currentChangeCounter()
+        XCTAssertTrue(try database.fetchPendingDeletionsSince(anchor: nowAnchor).isEmpty)
+    }
 }

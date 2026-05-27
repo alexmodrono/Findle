@@ -23,7 +23,7 @@ public final class Database: @unchecked Sendable {
     private let path: String
     public var filePath: String { path }
 
-    public static let schemaVersion = 10
+    public static let schemaVersion = 11
 
     public init(path: String? = nil) throws {
         if let path = path {
@@ -188,7 +188,8 @@ public final class Database: @unchecked Sendable {
                 local_path TEXT,
                 remote_url TEXT,
                 content_version TEXT,
-                tag_data BLOB
+                tag_data BLOB,
+                updated_at INTEGER NOT NULL DEFAULT 0
             )
         """)
 
@@ -216,8 +217,52 @@ public final class Database: @unchecked Sendable {
         try execute("""
             CREATE TABLE IF NOT EXISTS pending_deletions (
                 item_id TEXT PRIMARY KEY,
-                deleted_at REAL NOT NULL DEFAULT (strftime('%s', 'now'))
+                deleted_at REAL NOT NULL DEFAULT (strftime('%s', 'now')),
+                deleted_at_counter INTEGER NOT NULL DEFAULT 0
             )
+        """)
+
+        try execute("""
+            CREATE TABLE IF NOT EXISTS system_metadata (
+                key TEXT PRIMARY KEY,
+                value INTEGER NOT NULL
+            )
+        """)
+        try execute("INSERT OR IGNORE INTO system_metadata (key, value) VALUES ('change_counter', 0)")
+
+        try execute("CREATE INDEX IF NOT EXISTS idx_items_updated_at ON items(updated_at)")
+        try execute("CREATE INDEX IF NOT EXISTS idx_pending_deletions_counter ON pending_deletions(deleted_at_counter)")
+
+        // Triggers that stamp items.updated_at and pending_deletions.deleted_at_counter
+        // with a monotonic global counter on every write. The `WHEN NEW.<col> = 0`
+        // guard skips already-stamped rows (e.g., during migration where we set the
+        // value explicitly) so the trigger doesn't recurse and doesn't re-stamp.
+        try execute("""
+            CREATE TRIGGER IF NOT EXISTS items_bump_after_insert
+            AFTER INSERT ON items
+            WHEN NEW.updated_at = 0
+            BEGIN
+                UPDATE system_metadata SET value = value + 1 WHERE key = 'change_counter';
+                UPDATE items SET updated_at = (SELECT value FROM system_metadata WHERE key = 'change_counter') WHERE id = NEW.id;
+            END
+        """)
+        try execute("""
+            CREATE TRIGGER IF NOT EXISTS items_bump_after_update
+            AFTER UPDATE OF parent_id, filename, file_size, sync_state, is_pinned, local_path, remote_url, content_version, tag_data, is_local, modification_date
+            ON items
+            BEGIN
+                UPDATE system_metadata SET value = value + 1 WHERE key = 'change_counter';
+                UPDATE items SET updated_at = (SELECT value FROM system_metadata WHERE key = 'change_counter') WHERE id = NEW.id;
+            END
+        """)
+        try execute("""
+            CREATE TRIGGER IF NOT EXISTS pending_deletions_bump_after_insert
+            AFTER INSERT ON pending_deletions
+            WHEN NEW.deleted_at_counter = 0
+            BEGIN
+                UPDATE system_metadata SET value = value + 1 WHERE key = 'change_counter';
+                UPDATE pending_deletions SET deleted_at_counter = (SELECT value FROM system_metadata WHERE key = 'change_counter') WHERE item_id = NEW.item_id;
+            END
         """)
 
         try execute("""
@@ -339,6 +384,78 @@ public final class Database: @unchecked Sendable {
             try execute("DROP TABLE pending_deletions")
             try execute("ALTER TABLE pending_deletions_new RENAME TO pending_deletions")
             logger.info("Migrated database schema to version 10 (pending_deletions dedupe)")
+        }
+
+        if currentVersion < 11 {
+            // Add a monotonic change counter so the File Provider extension can
+            // do incremental change enumeration instead of re-emitting every
+            // item on every poll. The counter is bumped by triggers on writes
+            // to items and pending_deletions; the value at write time is
+            // stamped onto each row so enumerateChanges can filter.
+            let itemColumns = try existingColumns(table: "items")
+            if !itemColumns.contains("updated_at") {
+                try execute("ALTER TABLE items ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0")
+            }
+            let pendingColumns = try existingColumns(table: "pending_deletions")
+            if !pendingColumns.contains("deleted_at_counter") {
+                try execute("ALTER TABLE pending_deletions ADD COLUMN deleted_at_counter INTEGER NOT NULL DEFAULT 0")
+            }
+            try execute("""
+                CREATE TABLE IF NOT EXISTS system_metadata (
+                    key TEXT PRIMARY KEY,
+                    value INTEGER NOT NULL
+                )
+            """)
+            try execute("INSERT OR IGNORE INTO system_metadata (key, value) VALUES ('change_counter', 0)")
+
+            // Seed updated_at for existing items so they're treated as having
+            // changed once at migration time, and advance the counter past
+            // every existing row so future writes get unique values. Same for
+            // pre-existing pending_deletions rows.
+            try execute("UPDATE items SET updated_at = rowid WHERE updated_at = 0")
+            try execute("UPDATE pending_deletions SET deleted_at_counter = (SELECT COALESCE(MAX(updated_at), 0) FROM items) + rowid WHERE deleted_at_counter = 0")
+            try execute("""
+                UPDATE system_metadata
+                SET value = (
+                    SELECT MAX(c) FROM (
+                        SELECT COALESCE(MAX(updated_at), 0) AS c FROM items
+                        UNION ALL
+                        SELECT COALESCE(MAX(deleted_at_counter), 0) FROM pending_deletions
+                    )
+                )
+                WHERE key = 'change_counter'
+            """)
+
+            try execute("CREATE INDEX IF NOT EXISTS idx_items_updated_at ON items(updated_at)")
+            try execute("CREATE INDEX IF NOT EXISTS idx_pending_deletions_counter ON pending_deletions(deleted_at_counter)")
+            try execute("""
+                CREATE TRIGGER IF NOT EXISTS items_bump_after_insert
+                AFTER INSERT ON items
+                WHEN NEW.updated_at = 0
+                BEGIN
+                    UPDATE system_metadata SET value = value + 1 WHERE key = 'change_counter';
+                    UPDATE items SET updated_at = (SELECT value FROM system_metadata WHERE key = 'change_counter') WHERE id = NEW.id;
+                END
+            """)
+            try execute("""
+                CREATE TRIGGER IF NOT EXISTS items_bump_after_update
+                AFTER UPDATE OF parent_id, filename, file_size, sync_state, is_pinned, local_path, remote_url, content_version, tag_data, is_local, modification_date
+                ON items
+                BEGIN
+                    UPDATE system_metadata SET value = value + 1 WHERE key = 'change_counter';
+                    UPDATE items SET updated_at = (SELECT value FROM system_metadata WHERE key = 'change_counter') WHERE id = NEW.id;
+                END
+            """)
+            try execute("""
+                CREATE TRIGGER IF NOT EXISTS pending_deletions_bump_after_insert
+                AFTER INSERT ON pending_deletions
+                WHEN NEW.deleted_at_counter = 0
+                BEGIN
+                    UPDATE system_metadata SET value = value + 1 WHERE key = 'change_counter';
+                    UPDATE pending_deletions SET deleted_at_counter = (SELECT value FROM system_metadata WHERE key = 'change_counter') WHERE item_id = NEW.item_id;
+                END
+            """)
+            logger.info("Migrated database schema to version 11 (monotonic change counter)")
         }
 
         try execute("PRAGMA user_version = \(Self.schemaVersion)")
@@ -1144,6 +1261,69 @@ extension Database {
         return try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
+            var ids: [String] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                ids.append(String(cString: sqlite3_column_text(stmt, 0)))
+            }
+            return ids
+        }
+    }
+
+    /// Return the global monotonic change counter. The value is bumped by SQL
+    /// triggers on writes to `items` and `pending_deletions`, so it's safe to
+    /// use as a sync anchor handed to NSFileProviderChangeObserver.
+    public func currentChangeCounter() throws -> Int64 {
+        try queue.sync {
+            let stmt = try prepareStatement("SELECT value FROM system_metadata WHERE key = 'change_counter'")
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+            return sqlite3_column_int64(stmt, 0)
+        }
+    }
+
+    /// Return items in a container whose `updated_at` is strictly greater than `anchor`.
+    /// Pass `parentID == nil` for root items, or a parent ID for a single container.
+    public func fetchItemsChangedSince(anchor: Int64, parentID: String?) throws -> [LocalItem] {
+        let sql: String
+        if parentID == nil {
+            sql = "SELECT * FROM items WHERE parent_id IS NULL AND updated_at > ? ORDER BY updated_at"
+        } else {
+            sql = "SELECT * FROM items WHERE parent_id = ? AND updated_at > ? ORDER BY updated_at"
+        }
+        return try queue.sync {
+            let stmt = try prepareStatement(sql)
+            defer { sqlite3_finalize(stmt) }
+            if let parentID {
+                sqlite3_bind_text(stmt, 1, (parentID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_int64(stmt, 2, anchor)
+            } else {
+                sqlite3_bind_int64(stmt, 1, anchor)
+            }
+            return try readItems(from: stmt)
+        }
+    }
+
+    /// Return all items for a site whose `updated_at` is strictly greater than `anchor`.
+    public func fetchItemsChangedSince(anchor: Int64, siteID: String) throws -> [LocalItem] {
+        let sql = "SELECT * FROM items WHERE site_id = ? AND updated_at > ? ORDER BY updated_at"
+        return try queue.sync {
+            let stmt = try prepareStatement(sql)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_int64(stmt, 2, anchor)
+            return try readItems(from: stmt)
+        }
+    }
+
+    /// Pending-deletion IDs whose `deleted_at_counter` is strictly greater
+    /// than `anchor`. Returned in counter order so the enumerator can derive
+    /// the next anchor from the last entry.
+    public func fetchPendingDeletionsSince(anchor: Int64) throws -> [String] {
+        let sql = "SELECT item_id FROM pending_deletions WHERE deleted_at_counter > ? ORDER BY deleted_at_counter"
+        return try queue.sync {
+            let stmt = try prepareStatement(sql)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int64(stmt, 1, anchor)
             var ids: [String] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
                 ids.append(String(cString: sqlite3_column_text(stmt, 0)))

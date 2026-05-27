@@ -33,22 +33,18 @@ enum FileDownloader {
             throw FoodleError.authenticationRequired
         }
 
-        guard var components = URLComponents(url: remoteURL, resolvingAgainstBaseURL: false) else {
-            throw FoodleError.downloadFailed(itemID: item.id, reason: "Could not construct download URL")
-        }
-
-        var queryItems = components.queryItems ?? []
-        queryItems.append(URLQueryItem(name: "token", value: tokenString))
-        components.queryItems = queryItems
-
-        guard let authenticatedURL = components.url else {
-            throw FoodleError.downloadFailed(itemID: item.id, reason: "Could not construct download URL")
-        }
+        // Send the token in the POST body instead of the URL query so it
+        // doesn't leak into URLSession metrics, the Referer header on CDN
+        // redirects, or crash reports that include the in-flight URL.
+        var authenticatedRequest = URLRequest(url: remoteURL)
+        authenticatedRequest.httpMethod = "POST"
+        authenticatedRequest.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        authenticatedRequest.httpBody = formEncodeToken(tokenString)
 
         let destinationURL = makeTemporaryDestinationURL(for: item)
         try database.updateItemSyncState(id: item.id, state: .downloading)
 
-        let task = URLSession.shared.downloadTask(with: URLRequest(url: authenticatedURL)) { downloadedURL, response, error in
+        let task = URLSession.shared.downloadTask(with: authenticatedRequest) { downloadedURL, response, error in
             if let error {
                 try? database.updateItemSyncState(id: item.id, state: .placeholder)
                 completionBridge.fail(error)
@@ -91,6 +87,16 @@ enum FileDownloader {
             task.cancel()
         }
         task.resume()
+    }
+
+    /// Form-encode just the token value for the download body. Using a
+    /// restrictive allowed set avoids any chance that a token containing
+    /// `+`, `&`, or `=` confuses Moodle's POST parser on the receiving side.
+    private static func formEncodeToken(_ token: String) -> Data? {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        let encoded = token.addingPercentEncoding(withAllowedCharacters: allowed) ?? token
+        return "token=\(encoded)".data(using: .utf8)
     }
 
     private static func makeTemporaryDestinationURL(for item: LocalItem) -> URL {
