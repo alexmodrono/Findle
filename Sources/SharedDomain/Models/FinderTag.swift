@@ -47,11 +47,26 @@ public struct FinderTag: Sendable, Codable, Equatable, Hashable {
         "\(name)\n\(color.rawValue)"
     }
 
-    /// Serialize an array of tags into NSKeyedArchiver data suitable for
-    /// NSFileProviderItem.tagData.
+    /// Serialize an array of tags into binary plist data suitable for
+    /// NSFileProviderItem.tagData and com.apple.metadata:_kMDItemUserTags.
     public static func tagData(from tags: [FinderTag]) -> Data? {
         guard !tags.isEmpty else { return nil }
-        let strings = tags.map(\.serialized) as NSArray
-        return try? NSKeyedArchiver.archivedData(withRootObject: strings, requiringSecureCoding: true)
+        let strings = tags.map(\.serialized)
+        return try? PropertyListSerialization.data(fromPropertyList: strings, format: .binary, options: 0)
+    }
+
+    /// Parse tags from binary plist tagData (as produced by Finder / File Provider).
+    public static func parseTags(from data: Data) -> [FinderTag] {
+        guard let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+              let strings = plist as? [String] else {
+            return []
+        }
+        return strings.compactMap { string in
+            let parts = string.split(separator: "\n", maxSplits: 1)
+            guard let name = parts.first, !name.isEmpty else { return nil }
+            let colorIndex = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+            let color = Color(rawValue: colorIndex) ?? .none
+            return FinderTag(name: String(name), color: color)
+        }
     }
 }

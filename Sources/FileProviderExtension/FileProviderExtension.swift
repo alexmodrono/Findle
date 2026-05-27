@@ -333,70 +333,103 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             return Progress()
         }
 
-        guard var localItem = try? db.fetchItem(id: item.itemIdentifier.rawValue) else {
+        let itemID = item.itemIdentifier.rawValue
+
+        guard let localItem = try? db.fetchItem(id: itemID) else {
             completionHandler(nil, [], false, NSFileProviderError(.noSuchItem))
             return Progress()
         }
 
-        // Only allow modifications to local items.
-        guard localItem.isLocal else {
-            completionHandler(nil, [], false, NSError(domain: NSCocoaErrorDomain, code: NSFeatureUnsupportedError))
+        // Local items: full edits allowed (rename, move, content, tags).
+        if localItem.isLocal {
+            do {
+                var newFilename = localItem.filename
+                var newParentID = localItem.parentID
+                var newLocalPath = localItem.localPath
+                var newFileSize = localItem.fileSize
+                var newTagData = localItem.tagData
+
+                if changedFields.contains(.filename) {
+                    newFilename = item.filename
+                }
+                if changedFields.contains(.parentItemIdentifier) {
+                    newParentID = item.parentItemIdentifier == .rootContainer ? nil : item.parentItemIdentifier.rawValue
+                }
+                if changedFields.contains(.contents), let newContents {
+                    let dest = try localContentURL(itemID: localItem.id)
+                    try? FileManager.default.removeItem(at: dest)
+                    try FileManager.default.copyItem(at: newContents, to: dest)
+                    newLocalPath = dest.path
+                    let attrs = try? FileManager.default.attributesOfItem(atPath: dest.path)
+                    newFileSize = (attrs?[.size] as? Int64) ?? 0
+                }
+                if changedFields.contains(.tagData) {
+                    newTagData = item.tagData ?? nil
+                }
+
+                let updated = LocalItem(
+                    id: localItem.id,
+                    parentID: newParentID,
+                    siteID: localItem.siteID,
+                    courseID: localItem.courseID,
+                    remoteID: localItem.remoteID,
+                    filename: newFilename,
+                    isDirectory: localItem.isDirectory,
+                    contentType: localItem.contentType,
+                    fileSize: newFileSize,
+                    creationDate: localItem.creationDate,
+                    modificationDate: Date(),
+                    syncState: localItem.syncState,
+                    isPinned: localItem.isPinned,
+                    localPath: newLocalPath,
+                    remoteURL: localItem.remoteURL,
+                    contentVersion: "\(Date().timeIntervalSince1970)",
+                    tagData: newTagData,
+                    isLocal: true
+                )
+
+                try db.saveItems([updated])
+                completionHandler(FileProviderItem(localItem: updated), [], false, nil)
+            } catch {
+                logger.error("modifyItem failed: \(error.localizedDescription, privacy: .public)")
+                completionHandler(nil, [], false, error)
+            }
             return Progress()
         }
 
-        do {
-            var newFilename = localItem.filename
-            var newParentID = localItem.parentID
-            var newLocalPath = localItem.localPath
-            var newFileSize = localItem.fileSize
-            var newTagData = localItem.tagData
-
-            if changedFields.contains(.filename) {
-                newFilename = item.filename
+        // Non-local (synced) items: only tag edits from Finder are accepted.
+        if changedFields.contains(.tagData) {
+            let incomingTagData = item.tagData ?? nil
+            let parts = itemID.split(separator: "-")
+            if parts.first == "course", let courseID = parts.last.flatMap({ Int($0) }),
+               let siteID = self.siteID {
+                // Course root: keep course_tags table in sync so colors persist across re-syncs.
+                do {
+                    let newTags = incomingTagData.map { FinderTag.parseTags(from: $0) } ?? []
+                    try db.saveCourseTags(newTags, courseID: courseID, siteID: siteID)
+                    let tagData = FinderTag.tagData(from: newTags)
+                    try db.updateItemTagData(id: itemID, tagData: tagData)
+                    if let updatedItem = try db.fetchItem(id: itemID) {
+                        completionHandler(FileProviderItem(localItem: updatedItem), [], false, nil)
+                        return Progress()
+                    }
+                } catch {
+                    logger.error("Failed to update course tags from Finder: \(error.localizedDescription, privacy: .public)")
+                }
+            } else {
+                do {
+                    try db.updateItemTagData(id: itemID, tagData: incomingTagData)
+                    if let updatedItem = try db.fetchItem(id: itemID) {
+                        completionHandler(FileProviderItem(localItem: updatedItem), [], false, nil)
+                        return Progress()
+                    }
+                } catch {
+                    logger.error("Failed to update item tags: \(error.localizedDescription, privacy: .public)")
+                }
             }
-            if changedFields.contains(.parentItemIdentifier) {
-                newParentID = item.parentItemIdentifier == .rootContainer ? nil : item.parentItemIdentifier.rawValue
-            }
-            if changedFields.contains(.contents), let newContents {
-                let dest = try localContentURL(itemID: localItem.id)
-                try? FileManager.default.removeItem(at: dest)
-                try FileManager.default.copyItem(at: newContents, to: dest)
-                newLocalPath = dest.path
-                let attrs = try? FileManager.default.attributesOfItem(atPath: dest.path)
-                newFileSize = (attrs?[.size] as? Int64) ?? 0
-            }
-            if changedFields.contains(.tagData) {
-                newTagData = item.tagData ?? nil
-            }
-
-            let updated = LocalItem(
-                id: localItem.id,
-                parentID: newParentID,
-                siteID: localItem.siteID,
-                courseID: localItem.courseID,
-                remoteID: localItem.remoteID,
-                filename: newFilename,
-                isDirectory: localItem.isDirectory,
-                contentType: localItem.contentType,
-                fileSize: newFileSize,
-                creationDate: localItem.creationDate,
-                modificationDate: Date(),
-                syncState: localItem.syncState,
-                isPinned: localItem.isPinned,
-                localPath: newLocalPath,
-                remoteURL: localItem.remoteURL,
-                contentVersion: "\(Date().timeIntervalSince1970)",
-                tagData: newTagData,
-                isLocal: true
-            )
-
-            try db.saveItems([updated])
-            completionHandler(FileProviderItem(localItem: updated), [], false, nil)
-        } catch {
-            logger.error("modifyItem failed: \(error.localizedDescription, privacy: .public)")
-            completionHandler(nil, [], false, error)
         }
 
+        completionHandler(nil, [], false, NSError(domain: NSCocoaErrorDomain, code: NSFeatureUnsupportedError))
         return Progress()
     }
 

@@ -17,7 +17,7 @@ public final class Database: @unchecked Sendable {
     private let path: String
     public var filePath: String { path }
 
-    public static let schemaVersion = 8
+    public static let schemaVersion = 9
 
     public init(path: String? = nil) throws {
         if let path = path {
@@ -306,7 +306,61 @@ public final class Database: @unchecked Sendable {
             logger.info("Migrated database schema to version 8 (local items)")
         }
 
+        if currentVersion < 9 {
+            // Regenerate all tagData blobs: previously used NSKeyedArchiver encoding
+            // which Finder doesn't correctly interpret. Now uses PropertyListSerialization
+            // (binary plist) which matches the com.apple.metadata:_kMDItemUserTags format.
+            try regenerateAllTagData()
+            logger.info("Migrated database schema to version 9 (fixed tag data encoding)")
+        }
+
         try execute("PRAGMA user_version = \(Self.schemaVersion)")
+    }
+
+    /// Regenerate tag_data blobs for all course items from course_tags table.
+    private func regenerateAllTagData() throws {
+        try queue.sync {
+            // Find all distinct (course_id, site_id) pairs with tags
+            let keysStmt = try prepareStatement("SELECT DISTINCT course_id, site_id FROM course_tags")
+            defer { sqlite3_finalize(keysStmt) }
+
+            var courseKeys: [(courseID: Int, siteID: String)] = []
+            while sqlite3_step(keysStmt) == SQLITE_ROW {
+                let courseID = Int(sqlite3_column_int64(keysStmt, 0))
+                let siteID = String(cString: sqlite3_column_text(keysStmt, 1))
+                courseKeys.append((courseID, siteID))
+            }
+
+            for key in courseKeys {
+                let tagStmt = try prepareStatement(
+                    "SELECT tag_name, tag_color FROM course_tags WHERE course_id = ? AND site_id = ? ORDER BY tag_name"
+                )
+                defer { sqlite3_finalize(tagStmt) }
+                sqlite3_bind_int64(tagStmt, 1, Int64(key.courseID))
+                sqlite3_bind_text(tagStmt, 2, (key.siteID as NSString).utf8String, -1, nil)
+
+                var tags: [FinderTag] = []
+                while sqlite3_step(tagStmt) == SQLITE_ROW {
+                    let name = String(cString: sqlite3_column_text(tagStmt, 0))
+                    let colorRaw = Int(sqlite3_column_int(tagStmt, 1))
+                    let color = FinderTag.Color(rawValue: colorRaw) ?? .none
+                    tags.append(FinderTag(name: name, color: color))
+                }
+
+                let itemID = "course-\(key.siteID)-\(key.courseID)"
+                let tagData = FinderTag.tagData(from: tags)
+
+                let updateStmt = try prepareStatement("UPDATE items SET tag_data = ? WHERE id = ?")
+                defer { sqlite3_finalize(updateStmt) }
+                if let td = tagData {
+                    sqlite3_bind_blob(updateStmt, 1, (td as NSData).bytes, Int32(td.count), nil)
+                } else {
+                    sqlite3_bind_null(updateStmt, 1)
+                }
+                sqlite3_bind_text(updateStmt, 2, (itemID as NSString).utf8String, -1, nil)
+                _ = sqlite3_step(updateStmt)
+            }
+        }
     }
 
     private func existingColumns(table: String) throws -> Set<String> {
