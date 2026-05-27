@@ -21,12 +21,30 @@ public struct MoodleSite: Sendable, Codable, Equatable, Identifiable {
 
     /// The web services endpoint for this site.
     public var webServiceURL: URL {
-        baseURL.appendingPathComponent("webservice/rest/server.php")
+        Self.appending(path: "webservice/rest/server.php", to: baseURL)
     }
 
     /// The token endpoint for this site.
     public var tokenURL: URL {
-        baseURL.appendingPathComponent("login/token.php")
+        Self.appending(path: "login/token.php", to: baseURL)
+    }
+
+    /// Append a service-relative path to a Moodle base URL, going through
+    /// URLComponents so any existing path is preserved correctly and a
+    /// trailing-slash mismatch on `baseURL` doesn't collapse the suffix.
+    /// Falls back to the simple appendingPathComponent on the (unreachable)
+    /// path where URLComponents can't be constructed.
+    private static func appending(path suffix: String, to base: URL) -> URL {
+        guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+            return base.appendingPathComponent(suffix)
+        }
+        var basePath = components.path
+        if basePath.hasSuffix("/") {
+            basePath.removeLast()
+        }
+        let trimmedSuffix = suffix.hasPrefix("/") ? String(suffix.dropFirst()) : suffix
+        components.path = basePath.isEmpty ? "/\(trimmedSuffix)" : "\(basePath)/\(trimmedSuffix)"
+        return components.url ?? base.appendingPathComponent(suffix)
     }
 
     /// The custom URL scheme used for SSO callbacks.

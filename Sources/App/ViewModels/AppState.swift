@@ -37,6 +37,7 @@ final class AppState: ObservableObject {
     private var isLoadingCourses = false
     private var validatedSitesByURL: [String: MoodleSite] = [:]
     private var automaticSyncTask: Task<Void, Never>?
+    private var lastAppliedSyncInterval: Double = -1
     private var sessionBootstrapTask: Task<Void, Error>?
     private var syncSettingsObserver: NSObjectProtocol?
     private let logger = Logger(subsystem: "es.amodrono.foodle", category: "AppState")
@@ -1046,13 +1047,20 @@ final class AppState: ObservableObject {
     }
 
     private func observeSyncSettings() {
+        // UserDefaults.didChangeNotification fires on every defaults write
+        // across the app (launch counters, prompt state, etc.), so check
+        // whether the value we actually care about changed before tearing
+        // down and recreating the sync task.
         syncSettingsObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.refreshAutomaticSyncSchedule()
+                guard let self else { return }
+                let currentInterval = self.userDefaults.double(forKey: Self.syncIntervalMinutesKey)
+                guard currentInterval != self.lastAppliedSyncInterval else { return }
+                self.refreshAutomaticSyncSchedule()
             }
         }
     }
@@ -1061,9 +1069,16 @@ final class AppState: ObservableObject {
         automaticSyncTask?.cancel()
         automaticSyncTask = nil
 
-        guard currentSite != nil, currentToken != nil, syncEngine != nil else { return }
+        guard currentSite != nil, currentToken != nil, syncEngine != nil else {
+            lastAppliedSyncInterval = -1
+            return
+        }
 
-        let intervalMinutes = userDefaults.double(forKey: Self.syncIntervalMinutesKey)
+        let rawInterval = userDefaults.double(forKey: Self.syncIntervalMinutesKey)
+        // Clamp to a sane positive range so a corrupt or maliciously edited
+        // preference can't overflow UInt64 in the nanosecond conversion.
+        let intervalMinutes = max(0, min(rawInterval, 24 * 60))
+        lastAppliedSyncInterval = intervalMinutes
         guard intervalMinutes > 0 else { return }
 
         let intervalNanoseconds = UInt64(intervalMinutes * 60 * 1_000_000_000)

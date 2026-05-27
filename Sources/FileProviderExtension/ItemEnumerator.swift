@@ -73,6 +73,9 @@ final class ItemEnumerator: NSObject, NSFileProviderEnumerator {
             if !deletedIDs.isEmpty {
                 let identifiers = deletedIDs.map { NSFileProviderItemIdentifier($0) }
                 observer.didDeleteItems(withIdentifiers: identifiers)
+                // Drop the tombstones we just reported so the next change
+                // enumeration doesn't replay the same deletions forever.
+                try? database.clearPendingDeletions(ids: deletedIDs)
             }
 
             let newAnchor = NSFileProviderSyncAnchor(Data("\(Date().timeIntervalSince1970)".utf8))
@@ -150,6 +153,9 @@ final class WorkingSetEnumerator: NSObject, NSFileProviderEnumerator {
             if !deletedIDs.isEmpty {
                 let identifiers = deletedIDs.map { NSFileProviderItemIdentifier($0) }
                 observer.didDeleteItems(withIdentifiers: identifiers)
+                // Drop the tombstones we just reported so the next change
+                // enumeration doesn't replay the same deletions forever.
+                try? database.clearPendingDeletions(ids: deletedIDs)
             }
 
             let newAnchor = NSFileProviderSyncAnchor(Data("\(Date().timeIntervalSince1970)".utf8))

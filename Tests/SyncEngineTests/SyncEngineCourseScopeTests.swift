@@ -92,14 +92,21 @@ final class SyncEngineCourseScopeTests: XCTestCase {
         try await engine.syncCourse(site: site, token: token, course: syncedCourse)
 
         let refreshedSyncedRoot = try XCTUnwrap(database.fetchItem(id: syncedCourseRoot.id))
-        let refreshedStaleItem = try XCTUnwrap(database.fetchItem(id: staleCourseItem.id))
         let refreshedUntouchedRoot = try XCTUnwrap(database.fetchItem(id: untouchedCourseRoot.id))
         let refreshedUntouchedItem = try XCTUnwrap(database.fetchItem(id: untouchedCourseItem.id))
 
+        // Stale items in the synced course should be deleted (not downgraded
+        // to .placeholder) and recorded in pending_deletions so the File
+        // Provider extension can report the deletion to Finder.
+        XCTAssertNil(try database.fetchItem(id: staleCourseItem.id))
+        let pendingDeletions = try database.fetchPendingDeletions()
+        XCTAssertTrue(pendingDeletions.contains(staleCourseItem.id))
+
         XCTAssertEqual(refreshedSyncedRoot.syncState, .materialized)
-        XCTAssertEqual(refreshedStaleItem.syncState, .placeholder)
         XCTAssertEqual(refreshedUntouchedRoot.syncState, .materialized)
         XCTAssertEqual(refreshedUntouchedItem.syncState, .materialized)
+        // Items belonging to other courses must not be tombstoned by this sync.
+        XCTAssertFalse(pendingDeletions.contains(untouchedCourseItem.id))
     }
 
     func testSyncCoursePreservesItemTagDataWhenRemoteFileChanges() async throws {

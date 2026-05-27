@@ -108,8 +108,12 @@ public enum FoodleError: Error, Sendable, LocalizedError {
 
     public var isRetryable: Bool {
         switch self {
-        case .networkUnavailable, .timeout, .requestFailed:
+        case .networkUnavailable, .timeout:
             return true
+        case .requestFailed(let statusCode, _):
+            // Only retry transient HTTP failures. 4xx is a client error and
+            // retrying just hammers the server without fixing anything.
+            return statusCode == 408 || statusCode == 429 || (500...599).contains(statusCode)
         case .tokenExpired, .tokenRefreshFailed:
             return false
         default:

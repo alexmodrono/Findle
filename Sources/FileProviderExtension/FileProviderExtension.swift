@@ -283,7 +283,11 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
         let itemID = "local-\(UUID().uuidString)"
         let now = Date()
-        let isDirectory = itemTemplate.contentType == .folder
+        // Use `conforms(to:)` so app bundles (.app, .pkg) and other directory
+        // subtypes are treated as folders. Equality check on `.folder` misses
+        // these and they would be saved as flat files with the bundle's
+        // documentSize, losing the inner contents.
+        let isDirectory = itemTemplate.contentType?.conforms(to: .directory) == true
 
         var localItem = LocalItem(
             id: itemID,
@@ -301,17 +305,24 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             isLocal: true
         )
 
+        var stagedContentURL: URL?
         do {
             // Persist file content for non-directory items.
             if !isDirectory, let contentURL = url {
                 let dest = try localContentURL(itemID: itemID)
                 try FileManager.default.copyItem(at: contentURL, to: dest)
+                stagedContentURL = dest
                 localItem.localPath = dest.path
             }
 
             try db.saveItems([localItem])
             completionHandler(FileProviderItem(localItem: localItem), [], false, nil)
         } catch {
+            // Roll back the staged content file so we don't leave orphans in
+            // LocalContent/ when the DB write fails.
+            if let stagedContentURL {
+                try? FileManager.default.removeItem(at: stagedContentURL)
+            }
             logger.error("createItem failed: \(error.localizedDescription, privacy: .public)")
             completionHandler(nil, [], false, error)
         }
@@ -398,6 +409,20 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         }
 
         // Non-local (synced) items: only tag edits from Finder are accepted.
+        // Use NSFileProviderError so the OS reverts the user's local change
+        // gracefully instead of leaving Finder in an inconsistent state.
+        var unsupportedFields = changedFields
+        unsupportedFields.remove(.tagData)
+        guard changedFields.contains(.tagData), unsupportedFields.isEmpty else {
+            completionHandler(
+                nil,
+                changedFields,
+                false,
+                NSFileProviderError(.cannotSynchronize)
+            )
+            return Progress()
+        }
+
         if changedFields.contains(.tagData) {
             let incomingTagData = item.tagData ?? nil
             let parts = itemID.split(separator: "-")
@@ -411,25 +436,31 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                     try db.updateItemTagData(id: itemID, tagData: tagData)
                     if let updatedItem = try db.fetchItem(id: itemID) {
                         completionHandler(FileProviderItem(localItem: updatedItem), [], false, nil)
-                        return Progress()
+                    } else {
+                        completionHandler(nil, [], false, NSFileProviderError(.noSuchItem))
                     }
                 } catch {
                     logger.error("Failed to update course tags from Finder: \(error.localizedDescription, privacy: .public)")
+                    completionHandler(nil, [], false, error)
                 }
+                return Progress()
             } else {
                 do {
                     try db.updateItemTagData(id: itemID, tagData: incomingTagData)
                     if let updatedItem = try db.fetchItem(id: itemID) {
                         completionHandler(FileProviderItem(localItem: updatedItem), [], false, nil)
-                        return Progress()
+                    } else {
+                        completionHandler(nil, [], false, NSFileProviderError(.noSuchItem))
                     }
                 } catch {
                     logger.error("Failed to update item tags: \(error.localizedDescription, privacy: .public)")
+                    completionHandler(nil, [], false, error)
                 }
+                return Progress()
             }
         }
 
-        completionHandler(nil, [], false, NSError(domain: NSCocoaErrorDomain, code: NSFeatureUnsupportedError))
+        completionHandler(nil, [], false, NSFileProviderError(.cannotSynchronize))
         return Progress()
     }
 
@@ -450,9 +481,11 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             return Progress()
         }
 
-        // Only allow deletion of local items.
+        // Only allow deletion of local items. Synced items can't be deleted
+        // through Finder — surface the proper File Provider error so the OS
+        // restores the file rather than leaving the Finder UI inconsistent.
         guard localItem.isLocal else {
-            completionHandler(NSError(domain: NSCocoaErrorDomain, code: NSFeatureUnsupportedError))
+            completionHandler(NSFileProviderError(.cannotSynchronize))
             return Progress()
         }
 

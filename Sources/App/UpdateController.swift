@@ -7,17 +7,22 @@ import Sparkle
 
 @MainActor
 final class UpdateController: ObservableObject {
+    // SPUStandardUpdaterController owns the user driver that drives Sparkle's
+    // update UI. Discarding it (storing only `updater`) invalidates the driver
+    // and update prompts silently no-op, so retain it for the lifetime of the
+    // controller.
+    private let updaterController: SPUStandardUpdaterController
     let updater: SPUUpdater
 
     @Published var canCheckForUpdates = false
 
     init() {
-        let controller = SPUStandardUpdaterController(
+        self.updaterController = SPUStandardUpdaterController(
             startingUpdater: true,
             updaterDelegate: nil,
             userDriverDelegate: nil
         )
-        updater = controller.updater
+        self.updater = updaterController.updater
 
         updater.publisher(for: \.canCheckForUpdates)
             .assign(to: &$canCheckForUpdates)

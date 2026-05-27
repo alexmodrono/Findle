@@ -60,6 +60,8 @@ struct CourseDetailView: View {
                     TextField(course.sanitizedFolderName, text: $customFolderName)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { saveFolderName() }
+                        // Save when the user clicks away without pressing Return.
+                        .onChange(of: course.id) { _, _ in saveFolderName() }
 
                     if customFolderName.isEmpty {
                         Text("Defaults to \(course.sanitizedFolderName)")
@@ -102,7 +104,13 @@ struct CourseDetailView: View {
 
             Section("Sync") {
                 Toggle("Sync this course", isOn: $localSyncEnabled)
-                    .onChange(of: localSyncEnabled) { _, newValue in
+                    .onChange(of: localSyncEnabled) { oldValue, newValue in
+                        // Skip when the change comes from loadCustomization()
+                        // re-syncing the @State from the course model. Without
+                        // this guard, switching between courses re-applies the
+                        // same value and can trigger a redundant File Provider
+                        // signal that wipes recently-discovered items.
+                        guard oldValue != newValue, newValue != course.isSyncEnabled else { return }
                         appState.setCourseSyncEnabled(newValue, for: course)
                     }
 

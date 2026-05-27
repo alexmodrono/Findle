@@ -74,8 +74,12 @@ public actor SyncEngine {
             state: .syncing
         )
 
+        try Task.checkCancellation()
+
         // Fetch remote content tree
         let sections = try await provider.fetchCourseContents(site: site, token: token, courseID: course.id)
+
+        try Task.checkCancellation()
 
         // Look up Finder tags for this course
         let courseTags = try database.fetchCourseTags(courseID: course.id, siteID: site.id)
@@ -132,18 +136,26 @@ public actor SyncEngine {
 
         syncProgress[course.id]?.totalItems = allItems.count
 
+        try Task.checkCancellation()
+
         // Diff against existing items
         let existingItems = try database.fetchAllItems(siteID: site.id).filter { $0.courseID == course.id && !$0.isLocal }
 
         let changes = diffItems(existing: existingItems, incoming: allItems)
 
+        try Task.checkCancellation()
+
         // Apply changes
         if !changes.added.isEmpty || !changes.modified.isEmpty {
             try database.saveItems(changes.added + changes.modified)
         }
-        for removed in changes.removed {
-            try database.updateItemSyncState(id: removed.id, state: .placeholder)
+        // Removed items: actually delete them and record tombstones so the
+        // File Provider extension can report the deletions to Finder.
+        if !changes.removed.isEmpty {
+            try database.deleteItemsWithTombstone(ids: changes.removed.map(\.id))
         }
+
+        try Task.checkCancellation()
 
         // Update sync cursor
         let cursor = SyncCursor(
@@ -175,8 +187,13 @@ public actor SyncEngine {
 
             for item in pending {
                 guard item.remoteURL != nil else { continue }
+                // Use item.id as the temp filename to avoid collisions between
+                // different items that share a basename (e.g. "Slides.pdf").
+                let pathExtension = (item.filename as NSString).pathExtension
+                let baseName = item.id.replacingOccurrences(of: "/", with: "_")
+                let tempFilename = pathExtension.isEmpty ? baseName : "\(baseName).\(pathExtension)"
                 let destination = FileManager.default.temporaryDirectory
-                    .appendingPathComponent(item.filename)
+                    .appendingPathComponent(tempFilename)
                 do {
                     try await downloadItem(
                         itemID: item.id,
@@ -374,6 +391,8 @@ public actor SyncEngine {
             try database.updateItemSyncState(id: itemID, state: .materialized, localPath: destination.path)
             logger.info("Downloaded item \(itemID, privacy: .public)")
         } catch {
+            // Don't leave a half-written file behind for the next download to trip on.
+            try? FileManager.default.removeItem(at: destination)
             try database.updateItemSyncState(id: itemID, state: .error)
             throw error
         }

@@ -21,15 +21,30 @@ public final class KeychainManager: Sendable {
     public func storeToken(_ token: String, forAccount account: String) throws {
         let data = Data(token.utf8)
 
-        // Delete existing item first
-        let deleteQuery: [String: Any] = [
+        // Try update-in-place first so the credential isn't briefly absent
+        // between a delete and an add — if the process is killed mid-write
+        // the user would silently be logged out. SecItemUpdate is atomic
+        // and also normalises any accessibility-class mismatch from older
+        // builds (where the item may have been stored with WhenUnlocked).
+        let lookupQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        SecItemDelete(deleteQuery as CFDictionary)
+        let updateAttributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+        ]
+        let updateStatus = SecItemUpdate(lookupQuery as CFDictionary, updateAttributes as CFDictionary)
+        if updateStatus == errSecSuccess {
+            return
+        }
+        guard updateStatus == errSecItemNotFound else {
+            logger.error("Keychain update failed: \(updateStatus)")
+            throw KeychainError.storeFailed(status: updateStatus)
+        }
 
-        // Add new item
+        // Item doesn't exist yet — add it.
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -38,10 +53,10 @@ public final class KeychainManager: Sendable {
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
         ]
 
-        let status = SecItemAdd(addQuery as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            logger.error("Failed to store token: \(status)")
-            throw KeychainError.storeFailed(status: status)
+        let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+        guard addStatus == errSecSuccess else {
+            logger.error("Keychain add failed: \(addStatus)")
+            throw KeychainError.storeFailed(status: addStatus)
         }
     }
 
