@@ -38,7 +38,12 @@ struct FoodleApp: App {
                     logger.info("Ignoring stale URL on launch: \(url.scheme ?? "nil", privacy: .public)")
                 }
         }
-        .windowStyle(.titleBar)
+        // Airlock's onboarding makes the window transparent and hides the
+        // traffic-light buttons, but the title bar itself stays put unless the
+        // window has no titled chrome — otherwise the bar and app title float
+        // over the intro card. `.hiddenTitleBar` is the configuration Airlock
+        // documents; the workspace's toolbar still renders in the title area.
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1220, height: 820)
 
         Settings {
