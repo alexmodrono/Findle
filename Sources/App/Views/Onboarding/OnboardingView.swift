@@ -31,7 +31,7 @@ struct OnboardingView: View {
                         NSApplication.shared.terminate(nil)
                     }
                 },
-                immersiveIntroOnly: true
+                hidesOtherAppsDuringIntro: true
             )
         )
         .environmentObject(onboardingState)
