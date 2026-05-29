@@ -111,6 +111,61 @@ struct WorkspaceView: View {
                 await appState.loadCourses()
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            banners
+        }
+    }
+
+    // MARK: - Banners
+
+    @ViewBuilder
+    private var banners: some View {
+        VStack(spacing: 0) {
+            if appState.sessionExpired {
+                bannerBar(
+                    icon: "person.crop.circle.badge.exclamationmark",
+                    tint: .orange,
+                    message: "Your session has expired. Reconnect to keep syncing.",
+                    actionTitle: "Reconnect"
+                ) {
+                    Task { await appState.reconnect() }
+                }
+            } else if let error = appState.errorMessage {
+                bannerBar(
+                    icon: "exclamationmark.triangle.fill",
+                    tint: .red,
+                    message: error,
+                    actionTitle: "Dismiss"
+                ) {
+                    appState.dismissError()
+                }
+            }
+        }
+    }
+
+    private func bannerBar(
+        icon: String,
+        tint: Color,
+        message: String,
+        actionTitle: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .foregroundStyle(tint)
+            Text(message)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button(actionTitle, action: action)
+                .buttonStyle(.borderless)
+        }
+        .font(.callout)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(tint.opacity(0.12))
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
     }
 
     // MARK: - Sidebar
@@ -216,7 +271,11 @@ struct WorkspaceView: View {
             case .syncing:
                 ProgressView()
                     .controlSize(.small)
-                Text("Syncing…")
+                if let detail = appState.syncProgressDetail, detail.total > 0 {
+                    Text("Syncing \(min(detail.completed + 1, detail.total)) of \(detail.total)…")
+                } else {
+                    Text("Syncing…")
+                }
             case .completed:
                 if let date = appState.lastSyncDate {
                     Image(systemName: "checkmark.circle.fill")

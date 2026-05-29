@@ -1048,6 +1048,27 @@ extension Database {
         }
     }
 
+    /// Reset items stuck in the transient `.downloading` state back to
+    /// `.placeholder`. A download can't survive the process that started it, so
+    /// any `.downloading` row found at launch is stale and would otherwise show
+    /// a perpetual in-progress state. Returns the number of rows reset.
+    @discardableResult
+    public func resetStaleDownloads(siteID: String) throws -> Int {
+        try queue.sync {
+            let stmt = try prepareStatement(
+                "UPDATE items SET sync_state = ? WHERE site_id = ? AND sync_state = ?"
+            )
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (ItemSyncState.placeholder.rawValue as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 3, (ItemSyncState.downloading.rawValue as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw FoodleError.databaseError(detail: "Failed to reset stale downloads")
+            }
+            return Int(sqlite3_changes(db))
+        }
+    }
+
     public func updateItemPinned(id: String, isPinned: Bool) throws {
         let sql = "UPDATE items SET is_pinned = ? WHERE id = ?"
         try queue.sync {

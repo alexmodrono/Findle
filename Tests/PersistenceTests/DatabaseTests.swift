@@ -336,6 +336,22 @@ final class DatabaseTests: XCTestCase {
         XCTAssertGreaterThan(try database.currentChangeCounter(), 0)
     }
 
+    func testResetStaleDownloadsOnlyClearsDownloadingItems() throws {
+        try database.saveItems([
+            makeItem(id: "downloading-item"),
+            makeItem(id: "materialized-item"),
+        ])
+        try database.updateItemSyncState(id: "downloading-item", state: .downloading)
+        try database.updateItemSyncState(id: "materialized-item", state: .materialized)
+
+        let resetCount = try database.resetStaleDownloads(siteID: "site-1")
+
+        XCTAssertEqual(resetCount, 1)
+        XCTAssertEqual(try database.fetchItem(id: "downloading-item")?.syncState, .placeholder)
+        // Items in other states must be left untouched.
+        XCTAssertEqual(try database.fetchItem(id: "materialized-item")?.syncState, .materialized)
+    }
+
     private func makeItem(id: String, parentID: String? = nil, courseID: Int = 1) -> LocalItem {
         LocalItem(
             id: id,

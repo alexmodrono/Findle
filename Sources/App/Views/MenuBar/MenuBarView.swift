@@ -46,7 +46,14 @@ struct MenuBarView: View {
             case .syncing:
                 Text("Syncing…")
             case .error:
-                Text("Sync error")
+                if appState.sessionExpired {
+                    Text("Session expired — open Findle to reconnect")
+                } else if let message = appState.errorMessage {
+                    Text(message)
+                        .lineLimit(2)
+                } else {
+                    Text("Sync error")
+                }
             default:
                 if let date = appState.lastSyncDate {
                     Text("Last synced \(date, format: .relative(presentation: .named))")

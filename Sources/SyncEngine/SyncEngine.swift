@@ -38,8 +38,24 @@ public actor SyncEngine {
     // MARK: - Course Sync
 
     /// Sync all subscribed courses for a site.
-    public func syncAllCourses(site: MoodleSite, token: AuthToken, courses: [MoodleCourse]) async {
+    ///
+    /// Throws if a course fails with an authentication error (`tokenExpired`
+    /// etc.) — such failures affect every course, so we stop early and let the
+    /// caller prompt the user to reconnect. Per-course non-auth failures are
+    /// logged and the sync continues with the remaining courses.
+    public func syncAllCourses(site: MoodleSite, token: AuthToken, courses: [MoodleCourse]) async throws {
         logger.info("Starting sync for \(courses.count) courses on \(site.displayName, privacy: .public)")
+
+        // Reset progress up front so a re-sync doesn't briefly report the
+        // previous run's completion state to progress observers.
+        for course in courses {
+            syncProgress[course.id] = SyncProgress(
+                courseID: course.id,
+                totalItems: 0,
+                processedItems: 0,
+                state: .syncing
+            )
+        }
 
         for course in courses {
             guard activeTasks[course.id] == nil else {
@@ -55,8 +71,18 @@ public actor SyncEngine {
             do {
                 try await task.value
                 logger.info("Sync completed for course \(course.id, privacy: .public)")
+            } catch let error as FoodleError where error.requiresReauthentication {
+                logger.error("Authentication failed during sync of course \(course.id, privacy: .public) — aborting")
+                syncProgress[course.id]?.state = .stale
+                activeTasks[course.id] = nil
+                throw error
+            } catch is CancellationError {
+                activeTasks[course.id] = nil
+                throw CancellationError()
             } catch {
                 logger.error("Sync failed for course \(course.id): \(error.localizedDescription, privacy: .public)")
+                // Mark as no-longer-syncing so progress observers advance past it.
+                syncProgress[course.id]?.state = .stale
             }
 
             activeTasks[course.id] = nil

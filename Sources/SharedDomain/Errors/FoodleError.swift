@@ -125,4 +125,17 @@ public enum FoodleError: Error, Sendable, LocalizedError {
         if case .cancelled = self { return true }
         return false
     }
+
+    /// Whether recovering from this error requires the user to sign in again.
+    /// These failures affect every authenticated request, so callers should
+    /// stop retrying and prompt the user to reconnect rather than surfacing a
+    /// generic error.
+    public var requiresReauthentication: Bool {
+        switch self {
+        case .tokenExpired, .tokenRefreshFailed, .authenticationRequired:
+            return true
+        default:
+            return false
+        }
+    }
 }
