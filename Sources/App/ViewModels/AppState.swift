@@ -8,6 +8,7 @@ import SwiftUI
 import AuthenticationServices
 import AppKit
 import CoreSpotlight
+import UserNotifications
 import SharedDomain
 import FoodleNetworking
 import FoodlePersistence
@@ -26,6 +27,12 @@ final class AppState: ObservableObject {
     @Published var syncStatus: SyncStatus = .idle
     @Published var lastSyncDate: Date?
     @Published var errorMessage: String?
+    /// Set when a sync/load failed because the session is no longer valid.
+    /// The workspace surfaces a reconnect prompt rather than a generic error.
+    @Published var sessionExpired = false
+    /// Fine-grained progress for the in-flight "sync all" pass, shown in the
+    /// workspace. Only meaningful while `syncStatus` is `.syncing`.
+    @Published var syncProgressDetail: SyncProgressDetail?
 
     private let moodleClient = MoodleClient()
     private var database: Database?
@@ -37,6 +44,7 @@ final class AppState: ObservableObject {
     private var isLoadingCourses = false
     private var validatedSitesByURL: [String: MoodleSite] = [:]
     private var automaticSyncTask: Task<Void, Never>?
+    private var lastAppliedSyncInterval: Double = -1
     private var sessionBootstrapTask: Task<Void, Error>?
     private var syncSettingsObserver: NSObjectProtocol?
     private let logger = Logger(subsystem: "es.amodrono.foodle", category: "AppState")
@@ -59,6 +67,13 @@ final class AppState: ObservableObject {
         case syncing(progress: Double)
         case completed
         case error(String)
+    }
+
+    /// Per-course progress for a "sync all" pass.
+    struct SyncProgressDetail: Equatable {
+        var completed: Int
+        var total: Int
+        var courseName: String
     }
 
     private static let syncOnLaunchKey = "syncOnLaunch"
@@ -578,6 +593,9 @@ final class AppState: ObservableObject {
             courses = try database?.fetchCourses(siteID: site.id) ?? remoteCourses
             reloadCourseTags()
             logger.info("Loaded \(self.courses.count) courses")
+        } catch let error as FoodleError where error.requiresReauthentication {
+            logger.error("Failed to load courses: session expired")
+            handleSessionExpired()
         } catch {
             logger.error("Failed to load courses: \(error.localizedDescription, privacy: .public)")
             errorMessage = error.localizedDescription
@@ -705,24 +723,60 @@ final class AppState: ObservableObject {
     func syncAll() async {
         guard let site = currentSite, let token = currentToken, let engine = syncEngine else { return }
 
+        errorMessage = nil
         syncStatus = .syncing(progress: 0)
 
         let enabledCourses = courses.filter(\.isSyncEnabled)
-        await engine.syncAllCourses(site: site, token: token, courses: enabledCourses)
+        syncProgressDetail = enabledCourses.isEmpty
+            ? nil
+            : SyncProgressDetail(completed: 0, total: enabledCourses.count, courseName: enabledCourses[0].shortName)
 
-        syncStatus = .completed
-        lastSyncDate = Date()
+        // Poll the engine for per-course progress while the sync runs so the
+        // workspace can show "syncing X of Y".
+        let progressTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                let progress = await engine.allProgress()
+                let completed = enabledCourses.filter { (progress[$0.id]?.state ?? .syncing) != .syncing }.count
+                let current = enabledCourses.first { (progress[$0.id]?.state ?? .syncing) == .syncing }
+                self.syncProgressDetail = SyncProgressDetail(
+                    completed: completed,
+                    total: enabledCourses.count,
+                    courseName: current?.shortName ?? ""
+                )
+                self.syncStatus = .syncing(
+                    progress: enabledCourses.isEmpty ? 1 : Double(completed) / Double(enabledCourses.count)
+                )
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+        }
+        defer { syncProgressDetail = nil }
 
-        // Signal the File Provider to refresh
-        signalFileProviderChanges()
-
-        // Update Spotlight index
-        indexForSpotlight()
+        do {
+            try await engine.syncAllCourses(site: site, token: token, courses: enabledCourses)
+            progressTask.cancel()
+            syncStatus = .completed
+            lastSyncDate = Date()
+            signalFileProviderChanges()
+            indexForSpotlight()
+            notifySyncCompletedIfEnabled(courseCount: enabledCourses.count)
+        } catch let error as FoodleError where error.requiresReauthentication {
+            progressTask.cancel()
+            handleSessionExpired()
+        } catch is CancellationError {
+            progressTask.cancel()
+            syncStatus = .idle
+        } catch {
+            progressTask.cancel()
+            syncStatus = .error(error.localizedDescription)
+            errorMessage = error.localizedDescription
+        }
     }
 
     func syncCourse(_ course: MoodleCourse) async {
         guard let site = currentSite, let token = currentToken, let engine = syncEngine else { return }
 
+        errorMessage = nil
         syncStatus = .syncing(progress: 0)
 
         do {
@@ -730,9 +784,72 @@ final class AppState: ObservableObject {
             syncStatus = .completed
             lastSyncDate = Date()
             signalFileProviderChanges()
+        } catch let error as FoodleError where error.requiresReauthentication {
+            handleSessionExpired()
+        } catch is CancellationError {
+            syncStatus = .idle
         } catch {
             syncStatus = .error(error.localizedDescription)
             errorMessage = error.localizedDescription
+        }
+    }
+
+    // MARK: - Session Recovery
+
+    /// Called when a sync or load fails because the session is no longer valid.
+    /// Surfaces a reconnect prompt and stops the automatic sync loop so we don't
+    /// keep hammering the server with a dead token.
+    private func handleSessionExpired() {
+        logger.warning("Session expired — prompting user to reconnect")
+        sessionExpired = true
+        syncStatus = .error(FoodleError.tokenExpired.localizedDescription)
+        automaticSyncTask?.cancel()
+        automaticSyncTask = nil
+        lastAppliedSyncInterval = -1
+    }
+
+    /// Sign out and return to onboarding so the user can authenticate again.
+    func reconnect() async {
+        sessionExpired = false
+        await logout()
+    }
+
+    /// Clear a surfaced error banner.
+    func dismissError() {
+        errorMessage = nil
+        if case .error = syncStatus {
+            syncStatus = lastSyncDate == nil ? .idle : .completed
+        }
+    }
+
+    // MARK: - Notifications
+
+    private func notifySyncCompletedIfEnabled(courseCount: Int) {
+        guard userDefaults.bool(forKey: "notifyOnSyncComplete") else { return }
+
+        Task {
+            let center = UNUserNotificationCenter.current()
+            let settings = await center.notificationSettings()
+
+            var authorized = settings.authorizationStatus == .authorized
+            if settings.authorizationStatus == .notDetermined {
+                authorized = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+            }
+            guard authorized else { return }
+
+            let content = UNMutableNotificationContent()
+            content.title = "Sync complete"
+            content.body = courseCount == 1
+                ? "1 course is up to date."
+                : "\(courseCount) courses are up to date."
+            content.sound = .default
+
+            let request = UNNotificationRequest(
+                identifier: UUID().uuidString,
+                content: content,
+                trigger: nil
+            )
+            try? await center.add(request)
         }
     }
 
@@ -1001,6 +1118,10 @@ final class AppState: ObservableObject {
                 await self.ensureFileProviderDomain(site: site)
             }
 
+            // Clear any downloads left mid-flight by a previous run so they
+            // don't appear stuck in-progress.
+            try? self.database?.resetStaleDownloads(siteID: site.id)
+
             try Task.checkCancellation()
             await self.resolveFileProviderAuthentication(for: site)
             try Task.checkCancellation()
@@ -1046,13 +1167,20 @@ final class AppState: ObservableObject {
     }
 
     private func observeSyncSettings() {
+        // UserDefaults.didChangeNotification fires on every defaults write
+        // across the app (launch counters, prompt state, etc.), so check
+        // whether the value we actually care about changed before tearing
+        // down and recreating the sync task.
         syncSettingsObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.refreshAutomaticSyncSchedule()
+                guard let self else { return }
+                let currentInterval = self.userDefaults.double(forKey: Self.syncIntervalMinutesKey)
+                guard currentInterval != self.lastAppliedSyncInterval else { return }
+                self.refreshAutomaticSyncSchedule()
             }
         }
     }
@@ -1061,9 +1189,16 @@ final class AppState: ObservableObject {
         automaticSyncTask?.cancel()
         automaticSyncTask = nil
 
-        guard currentSite != nil, currentToken != nil, syncEngine != nil else { return }
+        guard currentSite != nil, currentToken != nil, syncEngine != nil else {
+            lastAppliedSyncInterval = -1
+            return
+        }
 
-        let intervalMinutes = userDefaults.double(forKey: Self.syncIntervalMinutesKey)
+        let rawInterval = userDefaults.double(forKey: Self.syncIntervalMinutesKey)
+        // Clamp to a sane positive range so a corrupt or maliciously edited
+        // preference can't overflow UInt64 in the nanosecond conversion.
+        let intervalMinutes = max(0, min(rawInterval, 24 * 60))
+        lastAppliedSyncInterval = intervalMinutes
         guard intervalMinutes > 0 else { return }
 
         let intervalNanoseconds = UInt64(intervalMinutes * 60 * 1_000_000_000)

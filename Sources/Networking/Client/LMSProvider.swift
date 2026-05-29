@@ -45,8 +45,13 @@ public protocol LMSProvider: Sendable {
     /// Download a file to a local path.
     func downloadFile(url: URL, token: AuthToken, destination: URL) async throws
 
-    /// Construct an authenticated download URL for a file.
-    func authenticatedFileURL(fileURL: URL, token: AuthToken) -> URL
+    /// Build the URLRequest that downloads `fileURL` with the given token.
+    ///
+    /// The token is sent in the POST body instead of the URL query so it
+    /// doesn't leak into URL access logs, URLSession metrics, the `Referer`
+    /// header on cross-host CDN redirects, or crash reports that include the
+    /// in-flight request URL.
+    func authenticatedFileRequest(fileURL: URL, token: AuthToken) -> URLRequest
 }
 
 /// Represents an authentication token for a Moodle session.

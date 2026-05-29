@@ -92,14 +92,110 @@ final class SyncEngineCourseScopeTests: XCTestCase {
         try await engine.syncCourse(site: site, token: token, course: syncedCourse)
 
         let refreshedSyncedRoot = try XCTUnwrap(database.fetchItem(id: syncedCourseRoot.id))
-        let refreshedStaleItem = try XCTUnwrap(database.fetchItem(id: staleCourseItem.id))
         let refreshedUntouchedRoot = try XCTUnwrap(database.fetchItem(id: untouchedCourseRoot.id))
         let refreshedUntouchedItem = try XCTUnwrap(database.fetchItem(id: untouchedCourseItem.id))
 
+        // Stale items in the synced course should be deleted (not downgraded
+        // to .placeholder) and recorded in pending_deletions so the File
+        // Provider extension can report the deletion to Finder.
+        XCTAssertNil(try database.fetchItem(id: staleCourseItem.id))
+        let pendingDeletions = try database.fetchPendingDeletions()
+        XCTAssertTrue(pendingDeletions.contains(staleCourseItem.id))
+
         XCTAssertEqual(refreshedSyncedRoot.syncState, .materialized)
-        XCTAssertEqual(refreshedStaleItem.syncState, .placeholder)
         XCTAssertEqual(refreshedUntouchedRoot.syncState, .materialized)
         XCTAssertEqual(refreshedUntouchedItem.syncState, .materialized)
+        // Items belonging to other courses must not be tombstoned by this sync.
+        XCTAssertFalse(pendingDeletions.contains(untouchedCourseItem.id))
+    }
+
+    func testSyncCoursePreservesItemTagDataWhenRemoteFileChanges() async throws {
+        let site = MoodleSite(
+            id: "site-1",
+            displayName: "Example",
+            baseURL: URL(string: "https://moodle.example.edu")!,
+            capabilities: SiteCapabilities(
+                supportsWebServices: true,
+                supportsMobileAPI: true,
+                supportsFileDownload: true
+            )
+        )
+        let token = AuthToken(token: "token")
+        let course = MoodleCourse(id: 101, shortName: "C101", fullName: "Course 101", siteID: site.id)
+        let tagData = FinderTag.tagData(from: [FinderTag(name: "Read later", color: .blue)])
+        let modifiedDate = Date(timeIntervalSince1970: 2_000)
+
+        try database.saveItems([
+            LocalItem(
+                id: "course-\(site.id)-\(course.id)",
+                parentID: nil,
+                siteID: site.id,
+                courseID: course.id,
+                remoteID: course.id,
+                filename: course.effectiveFolderName,
+                isDirectory: true,
+                syncState: .materialized
+            ),
+            LocalItem(
+                id: "section-\(site.id)-\(course.id)-11",
+                parentID: "course-\(site.id)-\(course.id)",
+                siteID: site.id,
+                courseID: course.id,
+                remoteID: 11,
+                filename: "Week 1",
+                isDirectory: true,
+                syncState: .materialized
+            ),
+            LocalItem(
+                id: "file-\(site.id)-\(course.id)-301-notes.pdf",
+                parentID: "section-\(site.id)-\(course.id)-11",
+                siteID: site.id,
+                courseID: course.id,
+                remoteID: 301,
+                filename: "notes.pdf",
+                isDirectory: false,
+                fileSize: 100,
+                syncState: .materialized,
+                contentVersion: "1000",
+                tagData: tagData
+            ),
+        ])
+
+        let provider = FakeLMSProvider(courseContents: [
+            course.id: [
+                MoodleSection(
+                    id: 11,
+                    courseID: course.id,
+                    name: "Week 1",
+                    sectionNumber: 1,
+                    modules: [
+                        MoodleModule(
+                            id: 301,
+                            name: "Notes",
+                            modName: ResourceType.file.rawValue,
+                            contents: [
+                                MoodleFileContent(
+                                    type: "file",
+                                    fileName: "notes.pdf",
+                                    fileSize: 200,
+                                    fileURL: URL(string: "https://moodle.example.edu/pluginfile.php/notes.pdf"),
+                                    timeModified: modifiedDate,
+                                    mimeType: "application/pdf"
+                                ),
+                            ]
+                        ),
+                    ]
+                ),
+            ],
+        ])
+        let engine = SyncEngine(provider: provider, database: database)
+
+        try await engine.syncCourse(site: site, token: token, course: course)
+
+        let refreshedItem = try XCTUnwrap(database.fetchItem(id: "file-\(site.id)-\(course.id)-301-notes.pdf"))
+        XCTAssertEqual(refreshedItem.fileSize, 200)
+        XCTAssertEqual(refreshedItem.contentVersion, String(Int(modifiedDate.timeIntervalSince1970)))
+        XCTAssertEqual(refreshedItem.tagData, tagData)
     }
 }
 
@@ -132,7 +228,7 @@ private struct FakeLMSProvider: LMSProvider {
 
     func downloadFile(url: URL, token: AuthToken, destination: URL) async throws {}
 
-    func authenticatedFileURL(fileURL: URL, token: AuthToken) -> URL {
-        fileURL
+    func authenticatedFileRequest(fileURL: URL, token: AuthToken) -> URLRequest {
+        URLRequest(url: fileURL)
     }
 }

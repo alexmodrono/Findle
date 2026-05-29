@@ -47,6 +47,10 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         logger.info("File Provider extension initialized for domain: \(domain.identifier.rawValue, privacy: .public)")
     }
 
+    /// Has the orphaned-content sweep run for this extension instance?
+    /// Guarded by `stateLock`.
+    private var hasReconciledOrphans = false
+
     private func resolveDatabaseLocked() -> Database? {
         do {
             let stateDirectoryURL = try Self.stateDirectoryURL(for: domain)
@@ -166,6 +170,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         }
 
         if containerItemIdentifier == .workingSet {
+            reconcileOrphanedLocalContentIfNeeded()
             return WorkingSetEnumerator(database: db, siteID: siteID)
         }
 
@@ -283,7 +288,11 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
         let itemID = "local-\(UUID().uuidString)"
         let now = Date()
-        let isDirectory = itemTemplate.contentType == .folder
+        // Use `conforms(to:)` so app bundles (.app, .pkg) and other directory
+        // subtypes are treated as folders. Equality check on `.folder` misses
+        // these and they would be saved as flat files with the bundle's
+        // documentSize, losing the inner contents.
+        let isDirectory = itemTemplate.contentType?.conforms(to: .directory) == true
 
         var localItem = LocalItem(
             id: itemID,
@@ -301,17 +310,24 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             isLocal: true
         )
 
+        var stagedContentURL: URL?
         do {
             // Persist file content for non-directory items.
             if !isDirectory, let contentURL = url {
                 let dest = try localContentURL(itemID: itemID)
                 try FileManager.default.copyItem(at: contentURL, to: dest)
+                stagedContentURL = dest
                 localItem.localPath = dest.path
             }
 
             try db.saveItems([localItem])
             completionHandler(FileProviderItem(localItem: localItem), [], false, nil)
         } catch {
+            // Roll back the staged content file so we don't leave orphans in
+            // LocalContent/ when the DB write fails.
+            if let stagedContentURL {
+                try? FileManager.default.removeItem(at: stagedContentURL)
+            }
             logger.error("createItem failed: \(error.localizedDescription, privacy: .public)")
             completionHandler(nil, [], false, error)
         }
@@ -333,71 +349,202 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             return Progress()
         }
 
-        guard var localItem = try? db.fetchItem(id: item.itemIdentifier.rawValue) else {
+        let itemID = item.itemIdentifier.rawValue
+
+        guard let localItem = try? db.fetchItem(id: itemID) else {
             completionHandler(nil, [], false, NSFileProviderError(.noSuchItem))
             return Progress()
         }
 
-        // Only allow modifications to local items.
-        guard localItem.isLocal else {
-            completionHandler(nil, [], false, NSError(domain: NSCocoaErrorDomain, code: NSFeatureUnsupportedError))
+        // Local items: full edits allowed (rename, move, content, tags).
+        if localItem.isLocal {
+            do {
+                var newFilename = localItem.filename
+                var newParentID = localItem.parentID
+                var newLocalPath = localItem.localPath
+                var newFileSize = localItem.fileSize
+                var newTagData = localItem.tagData
+
+                if changedFields.contains(.filename) {
+                    newFilename = item.filename
+                }
+                if changedFields.contains(.parentItemIdentifier) {
+                    let candidateParentID = item.parentItemIdentifier == .rootContainer
+                        ? nil
+                        : item.parentItemIdentifier.rawValue
+                    guard isReparentAllowed(itemID: localItem.id, newParentID: candidateParentID, db: db) else {
+                        logger.error("Rejected reparent of \(localItem.id, privacy: .public) to \(candidateParentID ?? "root", privacy: .public) — missing parent or cycle")
+                        completionHandler(nil, [], false, NSFileProviderError(.cannotSynchronize))
+                        return Progress()
+                    }
+                    newParentID = candidateParentID
+                }
+                if changedFields.contains(.contents), let newContents {
+                    let dest = try localContentURL(itemID: localItem.id)
+                    try? FileManager.default.removeItem(at: dest)
+                    try FileManager.default.copyItem(at: newContents, to: dest)
+                    newLocalPath = dest.path
+                    let attrs = try? FileManager.default.attributesOfItem(atPath: dest.path)
+                    newFileSize = (attrs?[.size] as? Int64) ?? 0
+                }
+                if changedFields.contains(.tagData) {
+                    newTagData = item.tagData ?? nil
+                }
+
+                let updated = LocalItem(
+                    id: localItem.id,
+                    parentID: newParentID,
+                    siteID: localItem.siteID,
+                    courseID: localItem.courseID,
+                    remoteID: localItem.remoteID,
+                    filename: newFilename,
+                    isDirectory: localItem.isDirectory,
+                    contentType: localItem.contentType,
+                    fileSize: newFileSize,
+                    creationDate: localItem.creationDate,
+                    modificationDate: Date(),
+                    syncState: localItem.syncState,
+                    isPinned: localItem.isPinned,
+                    localPath: newLocalPath,
+                    remoteURL: localItem.remoteURL,
+                    contentVersion: "\(Date().timeIntervalSince1970)",
+                    tagData: newTagData,
+                    isLocal: true
+                )
+
+                try db.saveItems([updated])
+                completionHandler(FileProviderItem(localItem: updated), [], false, nil)
+            } catch {
+                logger.error("modifyItem failed: \(error.localizedDescription, privacy: .public)")
+                completionHandler(nil, [], false, error)
+            }
             return Progress()
         }
 
-        do {
-            var newFilename = localItem.filename
-            var newParentID = localItem.parentID
-            var newLocalPath = localItem.localPath
-            var newFileSize = localItem.fileSize
-            var newTagData = localItem.tagData
-
-            if changedFields.contains(.filename) {
-                newFilename = item.filename
-            }
-            if changedFields.contains(.parentItemIdentifier) {
-                newParentID = item.parentItemIdentifier == .rootContainer ? nil : item.parentItemIdentifier.rawValue
-            }
-            if changedFields.contains(.contents), let newContents {
-                let dest = try localContentURL(itemID: localItem.id)
-                try? FileManager.default.removeItem(at: dest)
-                try FileManager.default.copyItem(at: newContents, to: dest)
-                newLocalPath = dest.path
-                let attrs = try? FileManager.default.attributesOfItem(atPath: dest.path)
-                newFileSize = (attrs?[.size] as? Int64) ?? 0
-            }
-            if changedFields.contains(.tagData) {
-                newTagData = item.tagData ?? nil
-            }
-
-            let updated = LocalItem(
-                id: localItem.id,
-                parentID: newParentID,
-                siteID: localItem.siteID,
-                courseID: localItem.courseID,
-                remoteID: localItem.remoteID,
-                filename: newFilename,
-                isDirectory: localItem.isDirectory,
-                contentType: localItem.contentType,
-                fileSize: newFileSize,
-                creationDate: localItem.creationDate,
-                modificationDate: Date(),
-                syncState: localItem.syncState,
-                isPinned: localItem.isPinned,
-                localPath: newLocalPath,
-                remoteURL: localItem.remoteURL,
-                contentVersion: "\(Date().timeIntervalSince1970)",
-                tagData: newTagData,
-                isLocal: true
+        // Non-local (synced) items: only tag edits from Finder are accepted.
+        // Use NSFileProviderError so the OS reverts the user's local change
+        // gracefully instead of leaving Finder in an inconsistent state.
+        var unsupportedFields = changedFields
+        unsupportedFields.remove(.tagData)
+        guard changedFields.contains(.tagData), unsupportedFields.isEmpty else {
+            completionHandler(
+                nil,
+                changedFields,
+                false,
+                NSFileProviderError(.cannotSynchronize)
             )
-
-            try db.saveItems([updated])
-            completionHandler(FileProviderItem(localItem: updated), [], false, nil)
-        } catch {
-            logger.error("modifyItem failed: \(error.localizedDescription, privacy: .public)")
-            completionHandler(nil, [], false, error)
+            return Progress()
         }
 
+        if changedFields.contains(.tagData) {
+            let incomingTagData = item.tagData ?? nil
+            let parts = itemID.split(separator: "-")
+            if parts.first == "course", let courseID = parts.last.flatMap({ Int($0) }),
+               let siteID = self.siteID {
+                // Course root: keep course_tags table in sync so colors persist across re-syncs.
+                do {
+                    let newTags = incomingTagData.map { FinderTag.parseTags(from: $0) } ?? []
+                    try db.saveCourseTags(newTags, courseID: courseID, siteID: siteID)
+                    let tagData = FinderTag.tagData(from: newTags)
+                    try db.updateItemTagData(id: itemID, tagData: tagData)
+                    if let updatedItem = try db.fetchItem(id: itemID) {
+                        completionHandler(FileProviderItem(localItem: updatedItem), [], false, nil)
+                    } else {
+                        completionHandler(nil, [], false, NSFileProviderError(.noSuchItem))
+                    }
+                } catch {
+                    logger.error("Failed to update course tags from Finder: \(error.localizedDescription, privacy: .public)")
+                    completionHandler(nil, [], false, error)
+                }
+                return Progress()
+            } else {
+                do {
+                    try db.updateItemTagData(id: itemID, tagData: incomingTagData)
+                    if let updatedItem = try db.fetchItem(id: itemID) {
+                        completionHandler(FileProviderItem(localItem: updatedItem), [], false, nil)
+                    } else {
+                        completionHandler(nil, [], false, NSFileProviderError(.noSuchItem))
+                    }
+                } catch {
+                    logger.error("Failed to update item tags: \(error.localizedDescription, privacy: .public)")
+                    completionHandler(nil, [], false, error)
+                }
+                return Progress()
+            }
+        }
+
+        completionHandler(nil, [], false, NSFileProviderError(.cannotSynchronize))
         return Progress()
+    }
+
+    /// Whether moving `itemID` under `newParentID` is structurally valid.
+    /// Rejects moves whose new parent is missing (would orphan the item) or
+    /// that would place the item inside itself or one of its descendants
+    /// (a cycle). Moving to the root (`nil`) is always allowed.
+    private func isReparentAllowed(itemID: String, newParentID: String?, db: Database) -> Bool {
+        guard let newParentID else { return true }
+        if newParentID == itemID { return false }
+
+        // Walk the ancestor chain of the proposed parent. If it leads back to
+        // the item being moved, the move would create a cycle. A missing
+        // ancestor means the chain is orphaned, so reject that too. `visited`
+        // guards against pre-existing corrupt loops in the data.
+        var cursor: String? = newParentID
+        var visited: Set<String> = []
+        while let current = cursor {
+            if current == itemID { return false }
+            guard visited.insert(current).inserted else { return false }
+            guard let parent = try? db.fetchItem(id: current) else { return false }
+            cursor = parent.parentID
+        }
+        return true
+    }
+
+    // MARK: - Maintenance
+
+    /// Sweep `LocalContent/` for files with no corresponding local item and
+    /// remove them. Partial failures during create/modify/delete can leave such
+    /// orphans behind, growing disk usage unbounded. Runs at most once per
+    /// extension instance, off the request thread.
+    private func reconcileOrphanedLocalContentIfNeeded() {
+        stateLock.lock()
+        let alreadyRan = hasReconciledOrphans
+        hasReconciledOrphans = true
+        stateLock.unlock()
+
+        guard !alreadyRan, let db = database else { return }
+        guard let directory = try? localContentDirectory() else { return }
+
+        let log = logger
+        DispatchQueue.global(qos: .utility).async {
+            Self.reconcileOrphanedLocalContent(directory: directory, database: db, logger: log)
+        }
+    }
+
+    private static func reconcileOrphanedLocalContent(directory: URL, database: Database, logger: Logger) {
+        let fileManager = FileManager.default
+        guard let entries = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ) else { return }
+
+        var removed = 0
+        for fileURL in entries {
+            // Local content is stored under the item's own identifier.
+            let itemID = fileURL.lastPathComponent
+            if let item = try? database.fetchItem(id: itemID), item.isLocal {
+                continue
+            }
+            do {
+                try fileManager.removeItem(at: fileURL)
+                removed += 1
+            } catch {
+                logger.warning("Failed to remove orphaned local content \(itemID, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        if removed > 0 {
+            logger.info("Reconciled \(removed) orphaned local content file(s)")
+        }
     }
 
     func deleteItem(
@@ -417,9 +564,11 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             return Progress()
         }
 
-        // Only allow deletion of local items.
+        // Only allow deletion of local items. Synced items can't be deleted
+        // through Finder — surface the proper File Provider error so the OS
+        // restores the file rather than leaving the Finder UI inconsistent.
         guard localItem.isLocal else {
-            completionHandler(NSError(domain: NSCocoaErrorDomain, code: NSFeatureUnsupportedError))
+            completionHandler(NSFileProviderError(.cannotSynchronize))
             return Progress()
         }
 

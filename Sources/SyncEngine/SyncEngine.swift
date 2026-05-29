@@ -38,8 +38,24 @@ public actor SyncEngine {
     // MARK: - Course Sync
 
     /// Sync all subscribed courses for a site.
-    public func syncAllCourses(site: MoodleSite, token: AuthToken, courses: [MoodleCourse]) async {
+    ///
+    /// Throws if a course fails with an authentication error (`tokenExpired`
+    /// etc.) — such failures affect every course, so we stop early and let the
+    /// caller prompt the user to reconnect. Per-course non-auth failures are
+    /// logged and the sync continues with the remaining courses.
+    public func syncAllCourses(site: MoodleSite, token: AuthToken, courses: [MoodleCourse]) async throws {
         logger.info("Starting sync for \(courses.count) courses on \(site.displayName, privacy: .public)")
+
+        // Reset progress up front so a re-sync doesn't briefly report the
+        // previous run's completion state to progress observers.
+        for course in courses {
+            syncProgress[course.id] = SyncProgress(
+                courseID: course.id,
+                totalItems: 0,
+                processedItems: 0,
+                state: .syncing
+            )
+        }
 
         for course in courses {
             guard activeTasks[course.id] == nil else {
@@ -55,8 +71,18 @@ public actor SyncEngine {
             do {
                 try await task.value
                 logger.info("Sync completed for course \(course.id, privacy: .public)")
+            } catch let error as FoodleError where error.requiresReauthentication {
+                logger.error("Authentication failed during sync of course \(course.id, privacy: .public) — aborting")
+                syncProgress[course.id]?.state = .stale
+                activeTasks[course.id] = nil
+                throw error
+            } catch is CancellationError {
+                activeTasks[course.id] = nil
+                throw CancellationError()
             } catch {
                 logger.error("Sync failed for course \(course.id): \(error.localizedDescription, privacy: .public)")
+                // Mark as no-longer-syncing so progress observers advance past it.
+                syncProgress[course.id]?.state = .stale
             }
 
             activeTasks[course.id] = nil
@@ -74,8 +100,12 @@ public actor SyncEngine {
             state: .syncing
         )
 
+        try Task.checkCancellation()
+
         // Fetch remote content tree
         let sections = try await provider.fetchCourseContents(site: site, token: token, courseID: course.id)
+
+        try Task.checkCancellation()
 
         // Look up Finder tags for this course
         let courseTags = try database.fetchCourseTags(courseID: course.id, siteID: site.id)
@@ -132,18 +162,26 @@ public actor SyncEngine {
 
         syncProgress[course.id]?.totalItems = allItems.count
 
+        try Task.checkCancellation()
+
         // Diff against existing items
         let existingItems = try database.fetchAllItems(siteID: site.id).filter { $0.courseID == course.id && !$0.isLocal }
 
         let changes = diffItems(existing: existingItems, incoming: allItems)
 
+        try Task.checkCancellation()
+
         // Apply changes
         if !changes.added.isEmpty || !changes.modified.isEmpty {
             try database.saveItems(changes.added + changes.modified)
         }
-        for removed in changes.removed {
-            try database.updateItemSyncState(id: removed.id, state: .placeholder)
+        // Removed items: actually delete them and record tombstones so the
+        // File Provider extension can report the deletions to Finder.
+        if !changes.removed.isEmpty {
+            try database.deleteItemsWithTombstone(ids: changes.removed.map(\.id))
         }
+
+        try Task.checkCancellation()
 
         // Update sync cursor
         let cursor = SyncCursor(
@@ -175,8 +213,13 @@ public actor SyncEngine {
 
             for item in pending {
                 guard item.remoteURL != nil else { continue }
+                // Use item.id as the temp filename to avoid collisions between
+                // different items that share a basename (e.g. "Slides.pdf").
+                let pathExtension = (item.filename as NSString).pathExtension
+                let baseName = item.id.replacingOccurrences(of: "/", with: "_")
+                let tempFilename = pathExtension.isEmpty ? baseName : "\(baseName).\(pathExtension)"
                 let destination = FileManager.default.temporaryDirectory
-                    .appendingPathComponent(item.filename)
+                    .appendingPathComponent(tempFilename)
                 do {
                     try await downloadItem(
                         itemID: item.id,
@@ -327,8 +370,9 @@ public actor SyncEngine {
 
         for (id, var item) in incomingByID {
             if let existing = existingByID[id] {
-                // Preserve user-set pin state across syncs
+                // Preserve user-set metadata across syncs
                 item.isPinned = existing.isPinned
+                item.tagData = existing.tagData
 
                 if existing.contentVersion != item.contentVersion ||
                    existing.fileSize != item.fileSize ||
@@ -373,6 +417,8 @@ public actor SyncEngine {
             try database.updateItemSyncState(id: itemID, state: .materialized, localPath: destination.path)
             logger.info("Downloaded item \(itemID, privacy: .public)")
         } catch {
+            // Don't leave a half-written file behind for the next download to trip on.
+            try? FileManager.default.removeItem(at: destination)
             try database.updateItemSyncState(id: itemID, state: .error)
             throw error
         }

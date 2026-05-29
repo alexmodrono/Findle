@@ -137,11 +137,22 @@ struct SignInStepView: View {
     private func signInWithPassword() async {
         guard let site else { return }
 
+        // Trim whitespace from username — auto-capitalising or copy/paste
+        // commonly leaves a leading space and Moodle returns an opaque
+        // "invalid credentials" error instead of a useful hint. Leave the
+        // password untouched: trailing whitespace there may be intentional.
+        let trimmedUsername = onboardingState.username.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedUsername.isEmpty else {
+            onboardingState.errorMessage = "Username is required."
+            updateCredentialsEnabled()
+            return
+        }
+
         onboardingState.errorMessage = nil
         navigator?.setContinueEnabled(false)
 
         do {
-            try await appState.signInAndPersist(site: site, username: onboardingState.username, password: onboardingState.password)
+            try await appState.signInAndPersist(site: site, username: trimmedUsername, password: onboardingState.password)
             signInCompleted = true
             navigator?.resetButton()
             navigator?.setContinueEnabled(true)

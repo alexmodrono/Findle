@@ -8,6 +8,12 @@ import SQLite3
 import OSLog
 import SharedDomain
 
+// Tells SQLite to make its own copy of the bound data during the bind call,
+// so the source buffer's lifetime doesn't have to outlive sqlite3_step. The
+// default (nil) is SQLITE_STATIC, which is unsafe when the source is an
+// autoreleased NSString.utf8String buffer or a transient Swift String.
+private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
 /// SQLite database manager for Foodle's local persistence.
 public final class Database: @unchecked Sendable {
     private static let appGroupIdentifier = BundleIdentifiers.appGroup
@@ -17,7 +23,7 @@ public final class Database: @unchecked Sendable {
     private let path: String
     public var filePath: String { path }
 
-    public static let schemaVersion = 8
+    public static let schemaVersion = 11
 
     public init(path: String? = nil) throws {
         if let path = path {
@@ -56,6 +62,11 @@ public final class Database: @unchecked Sendable {
             throw FoodleError.databaseError(detail: "Could not open database: \(message)")
         }
         self.db = pointer
+
+        // Wait up to 5s on SQLITE_BUSY before failing. With the File Provider
+        // extension reading concurrently under WAL, lock contention is normal
+        // and short retries inside SQLite are cheaper than surfacing errors.
+        sqlite3_busy_timeout(pointer, 5000)
 
         // Enable WAL mode for better concurrent performance
         try execute("PRAGMA journal_mode = WAL")
@@ -177,7 +188,8 @@ public final class Database: @unchecked Sendable {
                 local_path TEXT,
                 remote_url TEXT,
                 content_version TEXT,
-                tag_data BLOB
+                tag_data BLOB,
+                updated_at INTEGER NOT NULL DEFAULT 0
             )
         """)
 
@@ -204,10 +216,19 @@ public final class Database: @unchecked Sendable {
 
         try execute("""
             CREATE TABLE IF NOT EXISTS pending_deletions (
-                item_id TEXT NOT NULL,
-                deleted_at REAL NOT NULL DEFAULT (strftime('%s', 'now'))
+                item_id TEXT PRIMARY KEY,
+                deleted_at REAL NOT NULL DEFAULT (strftime('%s', 'now')),
+                deleted_at_counter INTEGER NOT NULL DEFAULT 0
             )
         """)
+
+        try execute("""
+            CREATE TABLE IF NOT EXISTS system_metadata (
+                key TEXT PRIMARY KEY,
+                value INTEGER NOT NULL
+            )
+        """)
+        try execute("INSERT OR IGNORE INTO system_metadata (key, value) VALUES ('change_counter', 0)")
 
         try execute("""
             CREATE INDEX IF NOT EXISTS idx_items_parent ON items(parent_id)
@@ -306,7 +327,149 @@ public final class Database: @unchecked Sendable {
             logger.info("Migrated database schema to version 8 (local items)")
         }
 
+        if currentVersion < 9 {
+            // Regenerate all tagData blobs: previously used NSKeyedArchiver encoding
+            // which Finder doesn't correctly interpret. Now uses PropertyListSerialization
+            // (binary plist) which matches the com.apple.metadata:_kMDItemUserTags format.
+            try regenerateAllTagData()
+            logger.info("Migrated database schema to version 9 (fixed tag data encoding)")
+        }
+
+        if currentVersion < 10 {
+            // pending_deletions originally allowed duplicate item_id rows, so INSERT OR
+            // IGNORE could not dedupe and the table grew unbounded on repeated syncs.
+            // Rebuild it with item_id as PRIMARY KEY.
+            try execute("""
+                CREATE TABLE pending_deletions_new (
+                    item_id TEXT PRIMARY KEY,
+                    deleted_at REAL NOT NULL DEFAULT (strftime('%s', 'now'))
+                )
+            """)
+            try execute("INSERT OR IGNORE INTO pending_deletions_new SELECT item_id, deleted_at FROM pending_deletions")
+            try execute("DROP TABLE pending_deletions")
+            try execute("ALTER TABLE pending_deletions_new RENAME TO pending_deletions")
+            logger.info("Migrated database schema to version 10 (pending_deletions dedupe)")
+        }
+
+        if currentVersion < 11 {
+            // Add a monotonic change counter so the File Provider extension can
+            // do incremental change enumeration instead of re-emitting every
+            // item on every poll. The counter is bumped by triggers on writes
+            // to items and pending_deletions; the value at write time is
+            // stamped onto each row so enumerateChanges can filter.
+            let itemColumns = try existingColumns(table: "items")
+            if !itemColumns.contains("updated_at") {
+                try execute("ALTER TABLE items ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0")
+            }
+            let pendingColumns = try existingColumns(table: "pending_deletions")
+            if !pendingColumns.contains("deleted_at_counter") {
+                try execute("ALTER TABLE pending_deletions ADD COLUMN deleted_at_counter INTEGER NOT NULL DEFAULT 0")
+            }
+            try execute("""
+                CREATE TABLE IF NOT EXISTS system_metadata (
+                    key TEXT PRIMARY KEY,
+                    value INTEGER NOT NULL
+                )
+            """)
+            try execute("INSERT OR IGNORE INTO system_metadata (key, value) VALUES ('change_counter', 0)")
+
+            // Seed updated_at for existing items so they're treated as having
+            // changed once at migration time, and advance the counter past
+            // every existing row so future writes get unique values. Same for
+            // pre-existing pending_deletions rows.
+            try execute("UPDATE items SET updated_at = rowid WHERE updated_at = 0")
+            try execute("UPDATE pending_deletions SET deleted_at_counter = (SELECT COALESCE(MAX(updated_at), 0) FROM items) + rowid WHERE deleted_at_counter = 0")
+            try execute("""
+                UPDATE system_metadata
+                SET value = (
+                    SELECT MAX(c) FROM (
+                        SELECT COALESCE(MAX(updated_at), 0) AS c FROM items
+                        UNION ALL
+                        SELECT COALESCE(MAX(deleted_at_counter), 0) FROM pending_deletions
+                    )
+                )
+                WHERE key = 'change_counter'
+            """)
+
+            try execute("CREATE INDEX IF NOT EXISTS idx_items_updated_at ON items(updated_at)")
+            try execute("CREATE INDEX IF NOT EXISTS idx_pending_deletions_counter ON pending_deletions(deleted_at_counter)")
+            try execute("""
+                CREATE TRIGGER IF NOT EXISTS items_bump_after_insert
+                AFTER INSERT ON items
+                WHEN NEW.updated_at = 0
+                BEGIN
+                    UPDATE system_metadata SET value = value + 1 WHERE key = 'change_counter';
+                    UPDATE items SET updated_at = (SELECT value FROM system_metadata WHERE key = 'change_counter') WHERE id = NEW.id;
+                END
+            """)
+            try execute("""
+                CREATE TRIGGER IF NOT EXISTS items_bump_after_update
+                AFTER UPDATE OF parent_id, filename, file_size, sync_state, is_pinned, local_path, remote_url, content_version, tag_data, is_local, modification_date
+                ON items
+                BEGIN
+                    UPDATE system_metadata SET value = value + 1 WHERE key = 'change_counter';
+                    UPDATE items SET updated_at = (SELECT value FROM system_metadata WHERE key = 'change_counter') WHERE id = NEW.id;
+                END
+            """)
+            try execute("""
+                CREATE TRIGGER IF NOT EXISTS pending_deletions_bump_after_insert
+                AFTER INSERT ON pending_deletions
+                WHEN NEW.deleted_at_counter = 0
+                BEGIN
+                    UPDATE system_metadata SET value = value + 1 WHERE key = 'change_counter';
+                    UPDATE pending_deletions SET deleted_at_counter = (SELECT value FROM system_metadata WHERE key = 'change_counter') WHERE item_id = NEW.item_id;
+                END
+            """)
+            logger.info("Migrated database schema to version 11 (monotonic change counter)")
+        }
+
         try execute("PRAGMA user_version = \(Self.schemaVersion)")
+    }
+
+    /// Regenerate tag_data blobs for all course items from course_tags table.
+    private func regenerateAllTagData() throws {
+        try queue.sync {
+            // Find all distinct (course_id, site_id) pairs with tags
+            let keysStmt = try prepareStatement("SELECT DISTINCT course_id, site_id FROM course_tags")
+            defer { sqlite3_finalize(keysStmt) }
+
+            var courseKeys: [(courseID: Int, siteID: String)] = []
+            while sqlite3_step(keysStmt) == SQLITE_ROW {
+                let courseID = Int(sqlite3_column_int64(keysStmt, 0))
+                let siteID = String(cString: sqlite3_column_text(keysStmt, 1))
+                courseKeys.append((courseID, siteID))
+            }
+
+            for key in courseKeys {
+                let tagStmt = try prepareStatement(
+                    "SELECT tag_name, tag_color FROM course_tags WHERE course_id = ? AND site_id = ? ORDER BY tag_name"
+                )
+                defer { sqlite3_finalize(tagStmt) }
+                sqlite3_bind_int64(tagStmt, 1, Int64(key.courseID))
+                sqlite3_bind_text(tagStmt, 2, (key.siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+
+                var tags: [FinderTag] = []
+                while sqlite3_step(tagStmt) == SQLITE_ROW {
+                    let name = String(cString: sqlite3_column_text(tagStmt, 0))
+                    let colorRaw = Int(sqlite3_column_int(tagStmt, 1))
+                    let color = FinderTag.Color(rawValue: colorRaw) ?? .none
+                    tags.append(FinderTag(name: name, color: color))
+                }
+
+                let itemID = "course-\(key.siteID)-\(key.courseID)"
+                let tagData = FinderTag.tagData(from: tags)
+
+                let updateStmt = try prepareStatement("UPDATE items SET tag_data = ? WHERE id = ?")
+                defer { sqlite3_finalize(updateStmt) }
+                if let td = tagData {
+                    sqlite3_bind_blob(updateStmt, 1, (td as NSData).bytes, Int32(td.count), SQLITE_TRANSIENT)
+                } else {
+                    sqlite3_bind_null(updateStmt, 1)
+                }
+                sqlite3_bind_text(updateStmt, 2, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                _ = sqlite3_step(updateStmt)
+            }
+        }
     }
 
     private func existingColumns(table: String) throws -> Set<String> {
@@ -368,19 +531,19 @@ extension Database {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
 
-            sqlite3_bind_text(stmt, 1, (site.id as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 2, (site.displayName as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 3, (site.baseURL.absoluteString as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 1, (site.id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, (site.displayName as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 3, (site.baseURL.absoluteString as NSString).utf8String, -1, SQLITE_TRANSIENT)
             sqlite3_bind_int(stmt, 4, site.capabilities.supportsWebServices ? 1 : 0)
             sqlite3_bind_int(stmt, 5, site.capabilities.supportsMobileAPI ? 1 : 0)
             sqlite3_bind_int(stmt, 6, site.capabilities.supportsFileDownload ? 1 : 0)
-            if let v = site.capabilities.moodleVersion { sqlite3_bind_text(stmt, 7, (v as NSString).utf8String, -1, nil) }
-            if let r = site.capabilities.moodleRelease { sqlite3_bind_text(stmt, 8, (r as NSString).utf8String, -1, nil) }
-            if let n = site.capabilities.siteName { sqlite3_bind_text(stmt, 9, (n as NSString).utf8String, -1, nil) }
+            if let v = site.capabilities.moodleVersion { sqlite3_bind_text(stmt, 7, (v as NSString).utf8String, -1, SQLITE_TRANSIENT) }
+            if let r = site.capabilities.moodleRelease { sqlite3_bind_text(stmt, 8, (r as NSString).utf8String, -1, SQLITE_TRANSIENT) }
+            if let n = site.capabilities.siteName { sqlite3_bind_text(stmt, 9, (n as NSString).utf8String, -1, SQLITE_TRANSIENT) }
             sqlite3_bind_int(stmt, 10, Int32(site.capabilities.loginType.rawValue))
-            if let l = site.capabilities.launchURL { sqlite3_bind_text(stmt, 11, (l as NSString).utf8String, -1, nil) }
-            if let w = site.capabilities.wwwroot { sqlite3_bind_text(stmt, 12, (w as NSString).utf8String, -1, nil) }
-            if let h = site.capabilities.httpswwwroot { sqlite3_bind_text(stmt, 13, (h as NSString).utf8String, -1, nil) }
+            if let l = site.capabilities.launchURL { sqlite3_bind_text(stmt, 11, (l as NSString).utf8String, -1, SQLITE_TRANSIENT) }
+            if let w = site.capabilities.wwwroot { sqlite3_bind_text(stmt, 12, (w as NSString).utf8String, -1, SQLITE_TRANSIENT) }
+            if let h = site.capabilities.httpswwwroot { sqlite3_bind_text(stmt, 13, (h as NSString).utf8String, -1, SQLITE_TRANSIENT) }
             sqlite3_bind_int(stmt, 14, site.capabilities.showLoginForm ? 1 : 0)
 
             let status = sqlite3_step(stmt)
@@ -400,7 +563,7 @@ extension Database {
         return try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
 
             guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
 
@@ -441,10 +604,10 @@ extension Database {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
 
-            sqlite3_bind_text(stmt, 1, (account.id as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 2, (account.siteID as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 1, (account.id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, (account.siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
             if let uid = account.userID { sqlite3_bind_int64(stmt, 3, Int64(uid)) }
-            sqlite3_bind_text(stmt, 4, (String(describing: account.state) as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 4, (String(describing: account.state) as NSString).utf8String, -1, SQLITE_TRANSIENT)
             if let sync = account.lastSyncDate { sqlite3_bind_double(stmt, 5, sync.timeIntervalSince1970) }
             sqlite3_bind_double(stmt, 6, account.createdAt.timeIntervalSince1970)
 
@@ -489,12 +652,12 @@ extension Database {
         try queue.sync {
             let deleteItems = try prepareStatement("DELETE FROM items WHERE site_id IN (SELECT site_id FROM accounts WHERE id = ?)")
             defer { sqlite3_finalize(deleteItems) }
-            sqlite3_bind_text(deleteItems, 1, (id as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(deleteItems, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
             _ = sqlite3_step(deleteItems)
 
             let deleteAccount = try prepareStatement("DELETE FROM accounts WHERE id = ?")
             defer { sqlite3_finalize(deleteAccount) }
-            sqlite3_bind_text(deleteAccount, 1, (id as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(deleteAccount, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
             _ = sqlite3_step(deleteAccount)
         }
     }
@@ -525,38 +688,45 @@ extension Database {
         """
         try queue.sync {
             try executeUnsafe("BEGIN TRANSACTION")
-            for course in courses {
-                let stmt = try prepareStatement(sql)
-                defer { sqlite3_finalize(stmt) }
+            do {
+                for course in courses {
+                    let stmt = try prepareStatement(sql)
+                    defer { sqlite3_finalize(stmt) }
 
-                sqlite3_bind_int64(stmt, 1, Int64(course.id))
-                sqlite3_bind_text(stmt, 2, (course.siteID as NSString).utf8String, -1, nil)
-                sqlite3_bind_text(stmt, 3, (course.shortName as NSString).utf8String, -1, nil)
-                sqlite3_bind_text(stmt, 4, (course.fullName as NSString).utf8String, -1, nil)
-                if let s = course.summary { sqlite3_bind_text(stmt, 5, (s as NSString).utf8String, -1, nil) }
-                if let c = course.categoryID { sqlite3_bind_int64(stmt, 6, Int64(c)) }
-                if let d = course.startDate { sqlite3_bind_double(stmt, 7, d.timeIntervalSince1970) }
-                if let d = course.endDate { sqlite3_bind_double(stmt, 8, d.timeIntervalSince1970) }
-                if let d = course.lastAccessed { sqlite3_bind_double(stmt, 9, d.timeIntervalSince1970) }
-                sqlite3_bind_int(stmt, 10, course.visible ? 1 : 0)
-                let subscriptionState = course.isSyncEnabled
-                    ? CourseSubscriptionState.discovered.rawValue
-                    : CourseSubscriptionState.unsubscribed.rawValue
-                sqlite3_bind_text(stmt, 11, (subscriptionState as NSString).utf8String, -1, nil)
-                if let cfn = course.customFolderName {
-                    sqlite3_bind_text(stmt, 12, (cfn as NSString).utf8String, -1, nil)
-                } else {
-                    sqlite3_bind_null(stmt, 12)
-                }
-                if let cin = course.customIconName {
-                    sqlite3_bind_text(stmt, 13, (cin as NSString).utf8String, -1, nil)
-                } else {
-                    sqlite3_bind_null(stmt, 13)
-                }
+                    sqlite3_bind_int64(stmt, 1, Int64(course.id))
+                    sqlite3_bind_text(stmt, 2, (course.siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(stmt, 3, (course.shortName as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(stmt, 4, (course.fullName as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    if let s = course.summary { sqlite3_bind_text(stmt, 5, (s as NSString).utf8String, -1, SQLITE_TRANSIENT) }
+                    if let c = course.categoryID { sqlite3_bind_int64(stmt, 6, Int64(c)) }
+                    if let d = course.startDate { sqlite3_bind_double(stmt, 7, d.timeIntervalSince1970) }
+                    if let d = course.endDate { sqlite3_bind_double(stmt, 8, d.timeIntervalSince1970) }
+                    if let d = course.lastAccessed { sqlite3_bind_double(stmt, 9, d.timeIntervalSince1970) }
+                    sqlite3_bind_int(stmt, 10, course.visible ? 1 : 0)
+                    let subscriptionState = course.isSyncEnabled
+                        ? CourseSubscriptionState.discovered.rawValue
+                        : CourseSubscriptionState.unsubscribed.rawValue
+                    sqlite3_bind_text(stmt, 11, (subscriptionState as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    if let cfn = course.customFolderName {
+                        sqlite3_bind_text(stmt, 12, (cfn as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    } else {
+                        sqlite3_bind_null(stmt, 12)
+                    }
+                    if let cin = course.customIconName {
+                        sqlite3_bind_text(stmt, 13, (cin as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    } else {
+                        sqlite3_bind_null(stmt, 13)
+                    }
 
-                _ = sqlite3_step(stmt)
+                    guard sqlite3_step(stmt) == SQLITE_DONE else {
+                        throw FoodleError.databaseError(detail: "saveCourses step failed: \(String(cString: sqlite3_errmsg(db)))")
+                    }
+                }
+                try executeUnsafe("COMMIT")
+            } catch {
+                try? executeUnsafe("ROLLBACK")
+                throw error
             }
-            try executeUnsafe("COMMIT")
         }
     }
 
@@ -565,7 +735,7 @@ extension Database {
         return try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
 
             var courses: [MoodleCourse] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -612,9 +782,9 @@ extension Database {
         try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, (state.rawValue as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 1, (state.rawValue as NSString).utf8String, -1, SQLITE_TRANSIENT)
             sqlite3_bind_int(stmt, 2, Int32(courseID))
-            sqlite3_bind_text(stmt, 3, (siteID as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 3, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
             _ = sqlite3_step(stmt)
         }
     }
@@ -626,12 +796,12 @@ extension Database {
             defer { sqlite3_finalize(stmt) }
 
             if let name = customName, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                sqlite3_bind_text(stmt, 1, (name as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, 1, (name as NSString).utf8String, -1, SQLITE_TRANSIENT)
             } else {
                 sqlite3_bind_null(stmt, 1)
             }
             sqlite3_bind_int64(stmt, 2, Int64(courseID))
-            sqlite3_bind_text(stmt, 3, (siteID as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 3, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
 
             let status = sqlite3_step(stmt)
             guard status == SQLITE_DONE else {
@@ -646,12 +816,12 @@ extension Database {
             defer { sqlite3_finalize(stmt) }
 
             if let name = iconName, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                sqlite3_bind_text(stmt, 1, (name as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, 1, (name as NSString).utf8String, -1, SQLITE_TRANSIENT)
             } else {
                 sqlite3_bind_null(stmt, 1)
             }
             sqlite3_bind_int64(stmt, 2, Int64(courseID))
-            sqlite3_bind_text(stmt, 3, (siteID as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 3, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
 
             let status = sqlite3_step(stmt)
             guard status == SQLITE_DONE else {
@@ -667,28 +837,34 @@ extension Database {
     public func saveCourseTags(_ tags: [FinderTag], courseID: Int, siteID: String) throws {
         try queue.sync {
             try executeUnsafe("BEGIN TRANSACTION")
+            do {
+                let deleteSQL = "DELETE FROM course_tags WHERE course_id = ? AND site_id = ?"
+                let deleteStmt = try prepareStatement(deleteSQL)
+                defer { sqlite3_finalize(deleteStmt) }
+                sqlite3_bind_int64(deleteStmt, 1, Int64(courseID))
+                sqlite3_bind_text(deleteStmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                guard sqlite3_step(deleteStmt) == SQLITE_DONE else {
+                    throw FoodleError.databaseError(detail: "saveCourseTags delete failed: \(String(cString: sqlite3_errmsg(db)))")
+                }
 
-            // Remove existing tags for this course
-            let deleteSQL = "DELETE FROM course_tags WHERE course_id = ? AND site_id = ?"
-            let deleteStmt = try prepareStatement(deleteSQL)
-            defer { sqlite3_finalize(deleteStmt) }
-            sqlite3_bind_int64(deleteStmt, 1, Int64(courseID))
-            sqlite3_bind_text(deleteStmt, 2, (siteID as NSString).utf8String, -1, nil)
-            _ = sqlite3_step(deleteStmt)
+                let insertSQL = "INSERT INTO course_tags (course_id, site_id, tag_name, tag_color) VALUES (?, ?, ?, ?)"
+                for tag in tags {
+                    let stmt = try prepareStatement(insertSQL)
+                    defer { sqlite3_finalize(stmt) }
+                    sqlite3_bind_int64(stmt, 1, Int64(courseID))
+                    sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(stmt, 3, (tag.name as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_int(stmt, 4, Int32(tag.color.rawValue))
+                    guard sqlite3_step(stmt) == SQLITE_DONE else {
+                        throw FoodleError.databaseError(detail: "saveCourseTags insert failed: \(String(cString: sqlite3_errmsg(db)))")
+                    }
+                }
 
-            // Insert new tags
-            let insertSQL = "INSERT INTO course_tags (course_id, site_id, tag_name, tag_color) VALUES (?, ?, ?, ?)"
-            for tag in tags {
-                let stmt = try prepareStatement(insertSQL)
-                defer { sqlite3_finalize(stmt) }
-                sqlite3_bind_int64(stmt, 1, Int64(courseID))
-                sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, nil)
-                sqlite3_bind_text(stmt, 3, (tag.name as NSString).utf8String, -1, nil)
-                sqlite3_bind_int(stmt, 4, Int32(tag.color.rawValue))
-                _ = sqlite3_step(stmt)
+                try executeUnsafe("COMMIT")
+            } catch {
+                try? executeUnsafe("ROLLBACK")
+                throw error
             }
-
-            try executeUnsafe("COMMIT")
         }
     }
 
@@ -698,7 +874,7 @@ extension Database {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_int64(stmt, 1, Int64(courseID))
-            sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
 
             var tags: [FinderTag] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -716,7 +892,7 @@ extension Database {
         return try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
 
             var result: [Int: [FinderTag]] = [:]
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -743,36 +919,43 @@ extension Database {
         """
         try queue.sync {
             try executeUnsafe("BEGIN TRANSACTION")
-            for item in items {
-                let stmt = try prepareStatement(sql)
-                defer { sqlite3_finalize(stmt) }
+            do {
+                for item in items {
+                    let stmt = try prepareStatement(sql)
+                    defer { sqlite3_finalize(stmt) }
 
-                sqlite3_bind_text(stmt, 1, (item.id as NSString).utf8String, -1, nil)
-                if let p = item.parentID { sqlite3_bind_text(stmt, 2, (p as NSString).utf8String, -1, nil) }
-                sqlite3_bind_text(stmt, 3, (item.siteID as NSString).utf8String, -1, nil)
-                sqlite3_bind_int64(stmt, 4, Int64(item.courseID))
-                sqlite3_bind_int64(stmt, 5, Int64(item.remoteID))
-                sqlite3_bind_text(stmt, 6, (item.filename as NSString).utf8String, -1, nil)
-                sqlite3_bind_int(stmt, 7, item.isDirectory ? 1 : 0)
-                if let ct = item.contentType { sqlite3_bind_text(stmt, 8, (ct as NSString).utf8String, -1, nil) }
-                sqlite3_bind_int64(stmt, 9, item.fileSize)
-                if let d = item.creationDate { sqlite3_bind_double(stmt, 10, d.timeIntervalSince1970) }
-                if let d = item.modificationDate { sqlite3_bind_double(stmt, 11, d.timeIntervalSince1970) }
-                sqlite3_bind_text(stmt, 12, (item.syncState.rawValue as NSString).utf8String, -1, nil)
-                sqlite3_bind_int(stmt, 13, item.isPinned ? 1 : 0)
-                if let lp = item.localPath { sqlite3_bind_text(stmt, 14, (lp as NSString).utf8String, -1, nil) }
-                if let ru = item.remoteURL { sqlite3_bind_text(stmt, 15, (ru.absoluteString as NSString).utf8String, -1, nil) }
-                if let cv = item.contentVersion { sqlite3_bind_text(stmt, 16, (cv as NSString).utf8String, -1, nil) }
-                if let td = item.tagData {
-                    sqlite3_bind_blob(stmt, 17, (td as NSData).bytes, Int32(td.count), nil)
-                } else {
-                    sqlite3_bind_null(stmt, 17)
+                    sqlite3_bind_text(stmt, 1, (item.id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    if let p = item.parentID { sqlite3_bind_text(stmt, 2, (p as NSString).utf8String, -1, SQLITE_TRANSIENT) }
+                    sqlite3_bind_text(stmt, 3, (item.siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_int64(stmt, 4, Int64(item.courseID))
+                    sqlite3_bind_int64(stmt, 5, Int64(item.remoteID))
+                    sqlite3_bind_text(stmt, 6, (item.filename as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_int(stmt, 7, item.isDirectory ? 1 : 0)
+                    if let ct = item.contentType { sqlite3_bind_text(stmt, 8, (ct as NSString).utf8String, -1, SQLITE_TRANSIENT) }
+                    sqlite3_bind_int64(stmt, 9, item.fileSize)
+                    if let d = item.creationDate { sqlite3_bind_double(stmt, 10, d.timeIntervalSince1970) }
+                    if let d = item.modificationDate { sqlite3_bind_double(stmt, 11, d.timeIntervalSince1970) }
+                    sqlite3_bind_text(stmt, 12, (item.syncState.rawValue as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_int(stmt, 13, item.isPinned ? 1 : 0)
+                    if let lp = item.localPath { sqlite3_bind_text(stmt, 14, (lp as NSString).utf8String, -1, SQLITE_TRANSIENT) }
+                    if let ru = item.remoteURL { sqlite3_bind_text(stmt, 15, (ru.absoluteString as NSString).utf8String, -1, SQLITE_TRANSIENT) }
+                    if let cv = item.contentVersion { sqlite3_bind_text(stmt, 16, (cv as NSString).utf8String, -1, SQLITE_TRANSIENT) }
+                    if let td = item.tagData {
+                        sqlite3_bind_blob(stmt, 17, (td as NSData).bytes, Int32(td.count), SQLITE_TRANSIENT)
+                    } else {
+                        sqlite3_bind_null(stmt, 17)
+                    }
+                    sqlite3_bind_int(stmt, 18, item.isLocal ? 1 : 0)
+
+                    guard sqlite3_step(stmt) == SQLITE_DONE else {
+                        throw FoodleError.databaseError(detail: "saveItems step failed: \(String(cString: sqlite3_errmsg(db)))")
+                    }
                 }
-                sqlite3_bind_int(stmt, 18, item.isLocal ? 1 : 0)
-
-                _ = sqlite3_step(stmt)
+                try executeUnsafe("COMMIT")
+            } catch {
+                try? executeUnsafe("ROLLBACK")
+                throw error
             }
-            try executeUnsafe("COMMIT")
         }
     }
 
@@ -781,7 +964,7 @@ extension Database {
             let stmt: OpaquePointer
             if let parentID = parentID {
                 stmt = try prepareStatement("SELECT * FROM items WHERE parent_id = ? ORDER BY is_directory DESC, filename")
-                sqlite3_bind_text(stmt, 1, (parentID as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, 1, (parentID as NSString).utf8String, -1, SQLITE_TRANSIENT)
             } else {
                 stmt = try prepareStatement("SELECT * FROM items WHERE parent_id IS NULL ORDER BY is_directory DESC, filename")
             }
@@ -795,7 +978,7 @@ extension Database {
         return try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
 
             guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
             return readItem(from: stmt)
@@ -807,7 +990,7 @@ extension Database {
         return try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
             return try readItems(from: stmt)
         }
     }
@@ -817,8 +1000,8 @@ extension Database {
         try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, (filename as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 1, (filename as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
             let status = sqlite3_step(stmt)
             guard status == SQLITE_DONE else {
                 throw FoodleError.databaseError(detail: "Failed to update item filename")
@@ -832,11 +1015,11 @@ extension Database {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
             if let td = tagData {
-                sqlite3_bind_blob(stmt, 1, (td as NSData).bytes, Int32(td.count), nil)
+                sqlite3_bind_blob(stmt, 1, (td as NSData).bytes, Int32(td.count), SQLITE_TRANSIENT)
             } else {
                 sqlite3_bind_null(stmt, 1)
             }
-            sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
             let status = sqlite3_step(stmt)
             guard status == SQLITE_DONE else {
                 throw FoodleError.databaseError(detail: "Failed to update item tag data")
@@ -854,14 +1037,35 @@ extension Database {
         try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, (state.rawValue as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 1, (state.rawValue as NSString).utf8String, -1, SQLITE_TRANSIENT)
             if let path = localPath {
-                sqlite3_bind_text(stmt, 2, (path as NSString).utf8String, -1, nil)
-                sqlite3_bind_text(stmt, 3, (id as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, 2, (path as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(stmt, 3, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
             } else {
-                sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
             }
             _ = sqlite3_step(stmt)
+        }
+    }
+
+    /// Reset items stuck in the transient `.downloading` state back to
+    /// `.placeholder`. A download can't survive the process that started it, so
+    /// any `.downloading` row found at launch is stale and would otherwise show
+    /// a perpetual in-progress state. Returns the number of rows reset.
+    @discardableResult
+    public func resetStaleDownloads(siteID: String) throws -> Int {
+        try queue.sync {
+            let stmt = try prepareStatement(
+                "UPDATE items SET sync_state = ? WHERE site_id = ? AND sync_state = ?"
+            )
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (ItemSyncState.placeholder.rawValue as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 3, (ItemSyncState.downloading.rawValue as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw FoodleError.databaseError(detail: "Failed to reset stale downloads")
+            }
+            return Int(sqlite3_changes(db))
         }
     }
 
@@ -871,7 +1075,7 @@ extension Database {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_int(stmt, 1, isPinned ? 1 : 0)
-            sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
             let status = sqlite3_step(stmt)
             guard status == SQLITE_DONE else {
                 throw FoodleError.databaseError(detail: "Failed to update item pinned state")
@@ -892,43 +1096,117 @@ extension Database {
         return try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
             return try readItems(from: stmt)
         }
     }
 
     public func deleteItems(courseID: Int, siteID: String) throws {
         try queue.sync {
-            // Clear stale pending deletions from previous cycles before recording new ones.
-            try executeUnsafe("DELETE FROM pending_deletions")
-            // Record IDs for the File Provider to report as deletions (skip local items).
-            let insertStmt = try prepareStatement("INSERT INTO pending_deletions (item_id) SELECT id FROM items WHERE course_id = ? AND site_id = ? AND is_local = 0")
-            defer { sqlite3_finalize(insertStmt) }
-            sqlite3_bind_int(insertStmt, 1, Int32(courseID))
-            sqlite3_bind_text(insertStmt, 2, (siteID as NSString).utf8String, -1, nil)
-            _ = sqlite3_step(insertStmt)
+            try executeUnsafe("BEGIN TRANSACTION")
+            do {
+                // Record IDs for the File Provider to report as deletions (skip local items).
+                // Append to any pending deletions from prior cycles that haven't drained yet —
+                // do NOT wipe the table blindly or earlier course deletions would be lost.
+                let insertStmt = try prepareStatement("INSERT OR IGNORE INTO pending_deletions (item_id) SELECT id FROM items WHERE course_id = ? AND site_id = ? AND is_local = 0")
+                defer { sqlite3_finalize(insertStmt) }
+                sqlite3_bind_int(insertStmt, 1, Int32(courseID))
+                sqlite3_bind_text(insertStmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                guard sqlite3_step(insertStmt) == SQLITE_DONE else {
+                    throw FoodleError.databaseError(detail: "deleteItems pending insert failed")
+                }
 
-            let deleteStmt = try prepareStatement("DELETE FROM items WHERE course_id = ? AND site_id = ? AND is_local = 0")
-            defer { sqlite3_finalize(deleteStmt) }
-            sqlite3_bind_int(deleteStmt, 1, Int32(courseID))
-            sqlite3_bind_text(deleteStmt, 2, (siteID as NSString).utf8String, -1, nil)
-            _ = sqlite3_step(deleteStmt)
+                let deleteStmt = try prepareStatement("DELETE FROM items WHERE course_id = ? AND site_id = ? AND is_local = 0")
+                defer { sqlite3_finalize(deleteStmt) }
+                sqlite3_bind_int(deleteStmt, 1, Int32(courseID))
+                sqlite3_bind_text(deleteStmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                guard sqlite3_step(deleteStmt) == SQLITE_DONE else {
+                    throw FoodleError.databaseError(detail: "deleteItems delete failed")
+                }
+                try executeUnsafe("COMMIT")
+            } catch {
+                try? executeUnsafe("ROLLBACK")
+                throw error
+            }
         }
     }
 
     public func deleteAllItems(siteID: String) throws {
         try queue.sync {
-            try executeUnsafe("DELETE FROM pending_deletions")
+            try executeUnsafe("BEGIN TRANSACTION")
+            do {
+                let insertStmt = try prepareStatement("INSERT OR IGNORE INTO pending_deletions (item_id) SELECT id FROM items WHERE site_id = ? AND is_local = 0")
+                defer { sqlite3_finalize(insertStmt) }
+                sqlite3_bind_text(insertStmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                guard sqlite3_step(insertStmt) == SQLITE_DONE else {
+                    throw FoodleError.databaseError(detail: "deleteAllItems pending insert failed")
+                }
 
-            let insertStmt = try prepareStatement("INSERT INTO pending_deletions (item_id) SELECT id FROM items WHERE site_id = ? AND is_local = 0")
-            defer { sqlite3_finalize(insertStmt) }
-            sqlite3_bind_text(insertStmt, 1, (siteID as NSString).utf8String, -1, nil)
-            _ = sqlite3_step(insertStmt)
+                let deleteStmt = try prepareStatement("DELETE FROM items WHERE site_id = ? AND is_local = 0")
+                defer { sqlite3_finalize(deleteStmt) }
+                sqlite3_bind_text(deleteStmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                guard sqlite3_step(deleteStmt) == SQLITE_DONE else {
+                    throw FoodleError.databaseError(detail: "deleteAllItems delete failed")
+                }
+                try executeUnsafe("COMMIT")
+            } catch {
+                try? executeUnsafe("ROLLBACK")
+                throw error
+            }
+        }
+    }
 
-            let deleteStmt = try prepareStatement("DELETE FROM items WHERE site_id = ? AND is_local = 0")
-            defer { sqlite3_finalize(deleteStmt) }
-            sqlite3_bind_text(deleteStmt, 1, (siteID as NSString).utf8String, -1, nil)
-            _ = sqlite3_step(deleteStmt)
+    /// Delete the given items (and their descendants) and record a tombstone
+    /// in `pending_deletions` so the File Provider extension can report the
+    /// deletion to Finder on the next change enumeration. All work happens in
+    /// a single transaction so partial failures don't leak rows.
+    public func deleteItemsWithTombstone(ids: [String]) throws {
+        guard !ids.isEmpty else { return }
+        try queue.sync {
+            try executeUnsafe("BEGIN TRANSACTION")
+            do {
+                var idsToDelete = Set(ids)
+                var frontier = Array(ids)
+
+                while !frontier.isEmpty {
+                    var nextFrontier: [String] = []
+                    let childStmt = try prepareStatement("SELECT id FROM items WHERE parent_id = ?")
+                    defer { sqlite3_finalize(childStmt) }
+                    for parentID in frontier {
+                        sqlite3_reset(childStmt)
+                        sqlite3_bind_text(childStmt, 1, (parentID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                        while sqlite3_step(childStmt) == SQLITE_ROW {
+                            let childID = String(cString: sqlite3_column_text(childStmt, 0))
+                            if idsToDelete.insert(childID).inserted {
+                                nextFrontier.append(childID)
+                            }
+                        }
+                    }
+                    frontier = nextFrontier
+                }
+
+                let tombstoneStmt = try prepareStatement("INSERT OR IGNORE INTO pending_deletions (item_id) VALUES (?)")
+                defer { sqlite3_finalize(tombstoneStmt) }
+                let deleteStmt = try prepareStatement("DELETE FROM items WHERE id = ?")
+                defer { sqlite3_finalize(deleteStmt) }
+
+                for itemID in idsToDelete {
+                    sqlite3_reset(tombstoneStmt)
+                    sqlite3_bind_text(tombstoneStmt, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    guard sqlite3_step(tombstoneStmt) == SQLITE_DONE else {
+                        throw FoodleError.databaseError(detail: "deleteItemsWithTombstone tombstone failed")
+                    }
+                    sqlite3_reset(deleteStmt)
+                    sqlite3_bind_text(deleteStmt, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    guard sqlite3_step(deleteStmt) == SQLITE_DONE else {
+                        throw FoodleError.databaseError(detail: "deleteItemsWithTombstone delete failed")
+                    }
+                }
+                try executeUnsafe("COMMIT")
+            } catch {
+                try? executeUnsafe("ROLLBACK")
+                throw error
+            }
         }
     }
 
@@ -945,7 +1223,7 @@ extension Database {
                 for parentID in frontier {
                     let stmt = try prepareStatement("SELECT id FROM items WHERE parent_id = ?")
                     defer { sqlite3_finalize(stmt) }
-                    sqlite3_bind_text(stmt, 1, (parentID as NSString).utf8String, -1, nil)
+                    sqlite3_bind_text(stmt, 1, (parentID as NSString).utf8String, -1, SQLITE_TRANSIENT)
                     while sqlite3_step(stmt) == SQLITE_ROW {
                         let childID = String(cString: sqlite3_column_text(stmt, 0))
                         idsToDelete.append(childID)
@@ -958,7 +1236,7 @@ extension Database {
             for itemID in idsToDelete {
                 let stmt = try prepareStatement("DELETE FROM items WHERE id = ?")
                 defer { sqlite3_finalize(stmt) }
-                sqlite3_bind_text(stmt, 1, (itemID as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
                 _ = sqlite3_step(stmt)
             }
         }
@@ -969,6 +1247,69 @@ extension Database {
         return try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
+            var ids: [String] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                ids.append(String(cString: sqlite3_column_text(stmt, 0)))
+            }
+            return ids
+        }
+    }
+
+    /// Return the global monotonic change counter. The value is bumped by SQL
+    /// triggers on writes to `items` and `pending_deletions`, so it's safe to
+    /// use as a sync anchor handed to NSFileProviderChangeObserver.
+    public func currentChangeCounter() throws -> Int64 {
+        try queue.sync {
+            let stmt = try prepareStatement("SELECT value FROM system_metadata WHERE key = 'change_counter'")
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+            return sqlite3_column_int64(stmt, 0)
+        }
+    }
+
+    /// Return items in a container whose `updated_at` is strictly greater than `anchor`.
+    /// Pass `parentID == nil` for root items, or a parent ID for a single container.
+    public func fetchItemsChangedSince(anchor: Int64, parentID: String?) throws -> [LocalItem] {
+        let sql: String
+        if parentID == nil {
+            sql = "SELECT * FROM items WHERE parent_id IS NULL AND updated_at > ? ORDER BY updated_at"
+        } else {
+            sql = "SELECT * FROM items WHERE parent_id = ? AND updated_at > ? ORDER BY updated_at"
+        }
+        return try queue.sync {
+            let stmt = try prepareStatement(sql)
+            defer { sqlite3_finalize(stmt) }
+            if let parentID {
+                sqlite3_bind_text(stmt, 1, (parentID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_int64(stmt, 2, anchor)
+            } else {
+                sqlite3_bind_int64(stmt, 1, anchor)
+            }
+            return try readItems(from: stmt)
+        }
+    }
+
+    /// Return all items for a site whose `updated_at` is strictly greater than `anchor`.
+    public func fetchItemsChangedSince(anchor: Int64, siteID: String) throws -> [LocalItem] {
+        let sql = "SELECT * FROM items WHERE site_id = ? AND updated_at > ? ORDER BY updated_at"
+        return try queue.sync {
+            let stmt = try prepareStatement(sql)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_int64(stmt, 2, anchor)
+            return try readItems(from: stmt)
+        }
+    }
+
+    /// Pending-deletion IDs whose `deleted_at_counter` is strictly greater
+    /// than `anchor`. Returned in counter order so the enumerator can derive
+    /// the next anchor from the last entry.
+    public func fetchPendingDeletionsSince(anchor: Int64) throws -> [String] {
+        let sql = "SELECT item_id FROM pending_deletions WHERE deleted_at_counter > ? ORDER BY deleted_at_counter"
+        return try queue.sync {
+            let stmt = try prepareStatement(sql)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int64(stmt, 1, anchor)
             var ids: [String] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
                 ids.append(String(cString: sqlite3_column_text(stmt, 0)))
@@ -1038,7 +1379,7 @@ extension Database {
             defer { sqlite3_finalize(stmt) }
 
             sqlite3_bind_int64(stmt, 1, Int64(cursor.courseID))
-            sqlite3_bind_text(stmt, 2, (cursor.siteID as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 2, (cursor.siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
             sqlite3_bind_double(stmt, 3, cursor.lastSyncDate.timeIntervalSince1970)
             if let lm = cursor.lastModified { sqlite3_bind_double(stmt, 4, lm.timeIntervalSince1970) }
             sqlite3_bind_int64(stmt, 5, Int64(cursor.itemCount))
@@ -1053,7 +1394,7 @@ extension Database {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_int64(stmt, 1, Int64(courseID))
-            sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
 
             guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
 
@@ -1072,7 +1413,7 @@ extension Database {
         return try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
 
             var cursors: [SyncCursor] = []
             while sqlite3_step(stmt) == SQLITE_ROW {

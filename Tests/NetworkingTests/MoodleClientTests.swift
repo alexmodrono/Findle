@@ -40,14 +40,31 @@ final class MoodleClientTests: XCTestCase {
         XCTAssertEqual(url2.absoluteString, "https://moodle.example.edu")
     }
 
-    func testAuthenticatedFileURL() {
+    func testAuthenticatedFileRequestKeepsTokenOutOfURL() {
         let client = MoodleClient()
         let token = AuthToken(token: "testtoken123")
         let fileURL = URL(string: "https://moodle.example.edu/pluginfile.php/123/mod_resource/content/1/file.pdf")!
 
-        let result = client.authenticatedFileURL(fileURL: fileURL, token: token)
+        let request = client.authenticatedFileRequest(fileURL: fileURL, token: token)
 
-        XCTAssertTrue(result.absoluteString.contains("token=testtoken123"))
+        // The URL must not contain the token in any form (query, fragment, path).
+        XCTAssertEqual(request.url, fileURL)
+        XCTAssertFalse(request.url?.absoluteString.contains("testtoken123") ?? true)
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/x-www-form-urlencoded")
+        let body = String(data: request.httpBody ?? Data(), encoding: .utf8)
+        XCTAssertEqual(body, "token=testtoken123")
+    }
+
+    func testAuthenticatedFileRequestEncodesSpecialTokenCharacters() {
+        let client = MoodleClient()
+        // Token contains characters that mustn't appear unescaped in a form body.
+        let token = AuthToken(token: "abc+def=&xyz")
+        let fileURL = URL(string: "https://moodle.example.edu/pluginfile.php/file.pdf")!
+
+        let request = client.authenticatedFileRequest(fileURL: fileURL, token: token)
+        let body = String(data: request.httpBody ?? Data(), encoding: .utf8)
+        XCTAssertEqual(body, "token=abc%2Bdef%3D%26xyz")
     }
 
     func testTokenResponseDecoding() throws {

@@ -108,8 +108,12 @@ public enum FoodleError: Error, Sendable, LocalizedError {
 
     public var isRetryable: Bool {
         switch self {
-        case .networkUnavailable, .timeout, .requestFailed:
+        case .networkUnavailable, .timeout:
             return true
+        case .requestFailed(let statusCode, _):
+            // Only retry transient HTTP failures. 4xx is a client error and
+            // retrying just hammers the server without fixing anything.
+            return statusCode == 408 || statusCode == 429 || (500...599).contains(statusCode)
         case .tokenExpired, .tokenRefreshFailed:
             return false
         default:
@@ -120,5 +124,18 @@ public enum FoodleError: Error, Sendable, LocalizedError {
     public var isCancelled: Bool {
         if case .cancelled = self { return true }
         return false
+    }
+
+    /// Whether recovering from this error requires the user to sign in again.
+    /// These failures affect every authenticated request, so callers should
+    /// stop retrying and prompt the user to reconnect rather than surfacing a
+    /// generic error.
+    public var requiresReauthentication: Bool {
+        switch self {
+        case .tokenExpired, .tokenRefreshFailed, .authenticationRequired:
+            return true
+        default:
+            return false
+        }
     }
 }

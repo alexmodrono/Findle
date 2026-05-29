@@ -96,4 +96,14 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(cursor.siteID, "test")
         XCTAssertEqual(cursor.itemCount, 0)
     }
+
+    func testRequiresReauthentication() {
+        XCTAssertTrue(FoodleError.tokenExpired.requiresReauthentication)
+        XCTAssertTrue(FoodleError.tokenRefreshFailed(underlying: "x").requiresReauthentication)
+        XCTAssertTrue(FoodleError.authenticationRequired.requiresReauthentication)
+
+        XCTAssertFalse(FoodleError.networkUnavailable.requiresReauthentication)
+        XCTAssertFalse(FoodleError.timeout.requiresReauthentication)
+        XCTAssertFalse(FoodleError.invalidCredentials.requiresReauthentication)
+    }
 }
