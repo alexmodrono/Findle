@@ -4,6 +4,7 @@
 // You may obtain a copy of the License in the LICENSE file at the root of this repository.
 
 import XCTest
+import SQLite3
 @testable import FoodlePersistence
 @testable import SharedDomain
 
@@ -324,6 +325,17 @@ final class DatabaseTests: XCTestCase {
 
     // MARK: - Change Counter / Sync Anchor
 
+    func testOpeningVersion10DatabaseMigratesChangeCounterColumns() throws {
+        database = nil
+        try? FileManager.default.removeItem(atPath: tempPath)
+        try createVersion10Database(at: tempPath)
+
+        database = try Database(path: tempPath)
+
+        try database.saveItems([makeItem(id: "migrated-item")])
+        XCTAssertGreaterThan(try database.currentChangeCounter(), 0)
+    }
+
     private func makeItem(id: String, parentID: String? = nil, courseID: Int = 1) -> LocalItem {
         LocalItem(
             id: id,
@@ -335,6 +347,120 @@ final class DatabaseTests: XCTestCase {
             isDirectory: false,
             syncState: .placeholder
         )
+    }
+
+    private func createVersion10Database(at path: String) throws {
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(path, &db), SQLITE_OK)
+        guard let db else {
+            throw NSError(
+                domain: "DatabaseTests",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Unable to open temporary SQLite database"]
+            )
+        }
+        defer { sqlite3_close(db) }
+
+        try executeRawSQL(db, """
+            CREATE TABLE sites (
+                id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                base_url TEXT NOT NULL,
+                supports_web_services INTEGER NOT NULL DEFAULT 0,
+                supports_mobile_api INTEGER NOT NULL DEFAULT 0,
+                supports_file_download INTEGER NOT NULL DEFAULT 0,
+                moodle_version TEXT,
+                moodle_release TEXT,
+                site_name TEXT,
+                created_at REAL NOT NULL DEFAULT (strftime('%s', 'now')),
+                login_type INTEGER NOT NULL DEFAULT 1,
+                launch_url TEXT,
+                wwwroot TEXT,
+                httpswwwroot TEXT,
+                show_login_form INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE TABLE accounts (
+                id TEXT PRIMARY KEY,
+                site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+                user_id INTEGER,
+                username TEXT,
+                full_name TEXT,
+                state TEXT NOT NULL DEFAULT 'disconnected',
+                last_sync_date REAL,
+                created_at REAL NOT NULL DEFAULT (strftime('%s', 'now'))
+            );
+            CREATE TABLE courses (
+                id INTEGER NOT NULL,
+                site_id TEXT NOT NULL,
+                short_name TEXT NOT NULL,
+                full_name TEXT NOT NULL,
+                summary TEXT,
+                category_id INTEGER,
+                start_date REAL,
+                end_date REAL,
+                last_accessed REAL,
+                visible INTEGER NOT NULL DEFAULT 1,
+                subscription_state TEXT NOT NULL DEFAULT 'discovered',
+                custom_folder_name TEXT,
+                custom_icon_name TEXT,
+                PRIMARY KEY (id, site_id)
+            );
+            CREATE TABLE items (
+                id TEXT PRIMARY KEY,
+                parent_id TEXT,
+                site_id TEXT NOT NULL,
+                course_id INTEGER NOT NULL,
+                remote_id INTEGER NOT NULL,
+                filename TEXT NOT NULL,
+                is_directory INTEGER NOT NULL DEFAULT 0,
+                content_type TEXT,
+                file_size INTEGER NOT NULL DEFAULT 0,
+                creation_date REAL,
+                modification_date REAL,
+                sync_state TEXT NOT NULL DEFAULT 'placeholder',
+                is_pinned INTEGER NOT NULL DEFAULT 0,
+                local_path TEXT,
+                remote_url TEXT,
+                content_version TEXT,
+                tag_data BLOB,
+                is_local INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE sync_cursors (
+                course_id INTEGER NOT NULL,
+                site_id TEXT NOT NULL,
+                last_sync_date REAL NOT NULL,
+                last_modified REAL,
+                item_count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (course_id, site_id)
+            );
+            CREATE TABLE course_tags (
+                course_id INTEGER NOT NULL,
+                site_id TEXT NOT NULL,
+                tag_name TEXT NOT NULL,
+                tag_color INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (course_id, site_id, tag_name)
+            );
+            CREATE TABLE pending_deletions (
+                item_id TEXT PRIMARY KEY,
+                deleted_at REAL NOT NULL DEFAULT (strftime('%s', 'now'))
+            );
+            PRAGMA user_version = 10;
+        """)
+    }
+
+    private func executeRawSQL(_ db: OpaquePointer, _ sql: String) throws {
+        var errorMessage: UnsafeMutablePointer<CChar>?
+        let status = sqlite3_exec(db, sql, nil, nil, &errorMessage)
+        if status != SQLITE_OK {
+            let message = errorMessage.map { String(cString: $0) } ?? "Unknown SQLite error"
+            sqlite3_free(errorMessage)
+            XCTFail(message)
+            throw NSError(
+                domain: "DatabaseTests",
+                code: Int(status),
+                userInfo: [NSLocalizedDescriptionKey: message]
+            )
+        }
     }
 
     func testChangeCounterIncrementsOnItemInsert() throws {

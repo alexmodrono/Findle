@@ -60,8 +60,6 @@ struct CourseDetailView: View {
                     TextField(course.sanitizedFolderName, text: $customFolderName)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { saveFolderName() }
-                        // Save when the user clicks away without pressing Return.
-                        .onChange(of: course.id) { _, _ in saveFolderName() }
 
                     if customFolderName.isEmpty {
                         Text("Defaults to \(course.sanitizedFolderName)")

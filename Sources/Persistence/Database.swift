@@ -230,41 +230,6 @@ public final class Database: @unchecked Sendable {
         """)
         try execute("INSERT OR IGNORE INTO system_metadata (key, value) VALUES ('change_counter', 0)")
 
-        try execute("CREATE INDEX IF NOT EXISTS idx_items_updated_at ON items(updated_at)")
-        try execute("CREATE INDEX IF NOT EXISTS idx_pending_deletions_counter ON pending_deletions(deleted_at_counter)")
-
-        // Triggers that stamp items.updated_at and pending_deletions.deleted_at_counter
-        // with a monotonic global counter on every write. The `WHEN NEW.<col> = 0`
-        // guard skips already-stamped rows (e.g., during migration where we set the
-        // value explicitly) so the trigger doesn't recurse and doesn't re-stamp.
-        try execute("""
-            CREATE TRIGGER IF NOT EXISTS items_bump_after_insert
-            AFTER INSERT ON items
-            WHEN NEW.updated_at = 0
-            BEGIN
-                UPDATE system_metadata SET value = value + 1 WHERE key = 'change_counter';
-                UPDATE items SET updated_at = (SELECT value FROM system_metadata WHERE key = 'change_counter') WHERE id = NEW.id;
-            END
-        """)
-        try execute("""
-            CREATE TRIGGER IF NOT EXISTS items_bump_after_update
-            AFTER UPDATE OF parent_id, filename, file_size, sync_state, is_pinned, local_path, remote_url, content_version, tag_data, is_local, modification_date
-            ON items
-            BEGIN
-                UPDATE system_metadata SET value = value + 1 WHERE key = 'change_counter';
-                UPDATE items SET updated_at = (SELECT value FROM system_metadata WHERE key = 'change_counter') WHERE id = NEW.id;
-            END
-        """)
-        try execute("""
-            CREATE TRIGGER IF NOT EXISTS pending_deletions_bump_after_insert
-            AFTER INSERT ON pending_deletions
-            WHEN NEW.deleted_at_counter = 0
-            BEGIN
-                UPDATE system_metadata SET value = value + 1 WHERE key = 'change_counter';
-                UPDATE pending_deletions SET deleted_at_counter = (SELECT value FROM system_metadata WHERE key = 'change_counter') WHERE item_id = NEW.item_id;
-            END
-        """)
-
         try execute("""
             CREATE INDEX IF NOT EXISTS idx_items_parent ON items(parent_id)
         """)
@@ -1334,31 +1299,6 @@ extension Database {
 
     public func clearPendingDeletions() throws {
         try execute("DELETE FROM pending_deletions")
-    }
-
-    /// Clear only the pending deletions whose IDs have been reported to the
-    /// File Provider observer. Removes them in a single transaction to avoid
-    /// re-reporting the same deletion on the next change enumeration.
-    public func clearPendingDeletions(ids: [String]) throws {
-        guard !ids.isEmpty else { return }
-        try queue.sync {
-            try executeUnsafe("BEGIN TRANSACTION")
-            do {
-                let stmt = try prepareStatement("DELETE FROM pending_deletions WHERE item_id = ?")
-                defer { sqlite3_finalize(stmt) }
-                for id in ids {
-                    sqlite3_reset(stmt)
-                    sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                    guard sqlite3_step(stmt) == SQLITE_DONE else {
-                        throw FoodleError.databaseError(detail: "clearPendingDeletions failed for \(id)")
-                    }
-                }
-                try executeUnsafe("COMMIT")
-            } catch {
-                try? executeUnsafe("ROLLBACK")
-                throw error
-            }
-        }
     }
 
     private func readItems(from stmt: OpaquePointer) throws -> [LocalItem] {

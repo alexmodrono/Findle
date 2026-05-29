@@ -95,10 +95,6 @@ final class ItemEnumerator: NSObject, NSFileProviderEnumerator {
             if !deletedIDs.isEmpty {
                 let identifiers = deletedIDs.map { NSFileProviderItemIdentifier($0) }
                 observer.didDeleteItems(withIdentifiers: identifiers)
-                // Drop the tombstones we just reported so the table doesn't
-                // grow unbounded — they're identified by their counter, which
-                // already protects against re-reporting on the next call.
-                try? database.clearPendingDeletions(ids: deletedIDs)
             }
 
             let newCounter = try database.currentChangeCounter()
@@ -177,7 +173,6 @@ final class WorkingSetEnumerator: NSObject, NSFileProviderEnumerator {
             if !deletedIDs.isEmpty {
                 let identifiers = deletedIDs.map { NSFileProviderItemIdentifier($0) }
                 observer.didDeleteItems(withIdentifiers: identifiers)
-                try? database.clearPendingDeletions(ids: deletedIDs)
             }
 
             let newCounter = try database.currentChangeCounter()
