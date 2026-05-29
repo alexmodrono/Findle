@@ -8,11 +8,24 @@ import FileProvider
 import SharedDomain
 import FoodleNetworking
 import FoodlePersistence
+import OSLog
 
 /// Handles file downloads for the File Provider extension.
 /// Uses URLSession's callback API so File Provider completion handlers stay in the
 /// framework's callback world instead of crossing Swift concurrency executors.
 enum FileDownloader {
+    private static let logger = Logger(subsystem: "es.amodrono.foodle.file-provider", category: "Download")
+
+    /// Reset an item to `.placeholder` after a failed download so the next
+    /// fetch retries cleanly. A failure here would otherwise strand the item in
+    /// `.downloading`, so log it instead of swallowing it silently.
+    private static func resetToPlaceholder(itemID: String, database: Database) {
+        do {
+            try database.updateItemSyncState(id: itemID, state: .placeholder)
+        } catch {
+            logger.error("Failed to reset \(itemID, privacy: .public) to placeholder after download failure: \(error.localizedDescription, privacy: .public)")
+        }
+    }
     static func startDownload(
         item: LocalItem,
         database: Database,
@@ -46,7 +59,7 @@ enum FileDownloader {
 
         let task = URLSession.shared.downloadTask(with: authenticatedRequest) { downloadedURL, response, error in
             if let error {
-                try? database.updateItemSyncState(id: item.id, state: .placeholder)
+                resetToPlaceholder(itemID: item.id, database: database)
                 completionBridge.fail(error)
                 return
             }
@@ -54,7 +67,7 @@ enum FileDownloader {
             guard let downloadedURL,
                   let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {
-                try? database.updateItemSyncState(id: item.id, state: .placeholder)
+                resetToPlaceholder(itemID: item.id, database: database)
                 completionBridge.fail(FoodleError.downloadFailed(itemID: item.id, reason: "Download failed"))
                 return
             }
@@ -78,7 +91,7 @@ enum FileDownloader {
                     item: FileProviderItem(localItem: updatedItem)
                 )
             } catch {
-                try? database.updateItemSyncState(id: item.id, state: .placeholder)
+                resetToPlaceholder(itemID: item.id, database: database)
                 completionBridge.fail(error)
             }
         }

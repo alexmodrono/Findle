@@ -47,6 +47,10 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         logger.info("File Provider extension initialized for domain: \(domain.identifier.rawValue, privacy: .public)")
     }
 
+    /// Has the orphaned-content sweep run for this extension instance?
+    /// Guarded by `stateLock`.
+    private var hasReconciledOrphans = false
+
     private func resolveDatabaseLocked() -> Database? {
         do {
             let stateDirectoryURL = try Self.stateDirectoryURL(for: domain)
@@ -166,6 +170,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         }
 
         if containerItemIdentifier == .workingSet {
+            reconcileOrphanedLocalContentIfNeeded()
             return WorkingSetEnumerator(database: db, siteID: siteID)
         }
 
@@ -364,7 +369,15 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                     newFilename = item.filename
                 }
                 if changedFields.contains(.parentItemIdentifier) {
-                    newParentID = item.parentItemIdentifier == .rootContainer ? nil : item.parentItemIdentifier.rawValue
+                    let candidateParentID = item.parentItemIdentifier == .rootContainer
+                        ? nil
+                        : item.parentItemIdentifier.rawValue
+                    guard isReparentAllowed(itemID: localItem.id, newParentID: candidateParentID, db: db) else {
+                        logger.error("Rejected reparent of \(localItem.id, privacy: .public) to \(candidateParentID ?? "root", privacy: .public) — missing parent or cycle")
+                        completionHandler(nil, [], false, NSFileProviderError(.cannotSynchronize))
+                        return Progress()
+                    }
+                    newParentID = candidateParentID
                 }
                 if changedFields.contains(.contents), let newContents {
                     let dest = try localContentURL(itemID: localItem.id)
@@ -462,6 +475,76 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
         completionHandler(nil, [], false, NSFileProviderError(.cannotSynchronize))
         return Progress()
+    }
+
+    /// Whether moving `itemID` under `newParentID` is structurally valid.
+    /// Rejects moves whose new parent is missing (would orphan the item) or
+    /// that would place the item inside itself or one of its descendants
+    /// (a cycle). Moving to the root (`nil`) is always allowed.
+    private func isReparentAllowed(itemID: String, newParentID: String?, db: Database) -> Bool {
+        guard let newParentID else { return true }
+        if newParentID == itemID { return false }
+
+        // Walk the ancestor chain of the proposed parent. If it leads back to
+        // the item being moved, the move would create a cycle. A missing
+        // ancestor means the chain is orphaned, so reject that too. `visited`
+        // guards against pre-existing corrupt loops in the data.
+        var cursor: String? = newParentID
+        var visited: Set<String> = []
+        while let current = cursor {
+            if current == itemID { return false }
+            guard visited.insert(current).inserted else { return false }
+            guard let parent = try? db.fetchItem(id: current) else { return false }
+            cursor = parent.parentID
+        }
+        return true
+    }
+
+    // MARK: - Maintenance
+
+    /// Sweep `LocalContent/` for files with no corresponding local item and
+    /// remove them. Partial failures during create/modify/delete can leave such
+    /// orphans behind, growing disk usage unbounded. Runs at most once per
+    /// extension instance, off the request thread.
+    private func reconcileOrphanedLocalContentIfNeeded() {
+        stateLock.lock()
+        let alreadyRan = hasReconciledOrphans
+        hasReconciledOrphans = true
+        stateLock.unlock()
+
+        guard !alreadyRan, let db = database else { return }
+        guard let directory = try? localContentDirectory() else { return }
+
+        let log = logger
+        DispatchQueue.global(qos: .utility).async {
+            Self.reconcileOrphanedLocalContent(directory: directory, database: db, logger: log)
+        }
+    }
+
+    private static func reconcileOrphanedLocalContent(directory: URL, database: Database, logger: Logger) {
+        let fileManager = FileManager.default
+        guard let entries = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ) else { return }
+
+        var removed = 0
+        for fileURL in entries {
+            // Local content is stored under the item's own identifier.
+            let itemID = fileURL.lastPathComponent
+            if let item = try? database.fetchItem(id: itemID), item.isLocal {
+                continue
+            }
+            do {
+                try fileManager.removeItem(at: fileURL)
+                removed += 1
+            } catch {
+                logger.warning("Failed to remove orphaned local content \(itemID, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        if removed > 0 {
+            logger.info("Reconciled \(removed) orphaned local content file(s)")
+        }
     }
 
     func deleteItem(
