@@ -116,12 +116,14 @@ targets:
       - target: FoodleFileProvider
         embed: true
         codeSign: true
+      - target: FindleMCP
+        copy:
+          destination: executables
+          codeSign: true
       - package: Airlock
         product: Airlock
       - package: Sparkle
         product: Sparkle
-      - package: WhatsNewKit
-        product: WhatsNewKit
       - sdk: CoreSpotlight.framework
     settings:
       base:
@@ -275,10 +277,12 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.mcp
         CODE_SIGN_IDENTITY: "-"
-        # The CLI and the frameworks it links are co-located in the build
-        # products directory, so search for them next to the executable.
+        # Find the linked frameworks both standalone (next to the binary in the
+        # build products dir) and when bundled into the app as a helper, where
+        # they live in the app's Contents/Frameworks.
         LD_RUNPATH_SEARCH_PATHS:
           - "@executable_path"
+          - "@executable_path/../Frameworks"
 
   SharedDomainTests:
     type: bundle.unit-test

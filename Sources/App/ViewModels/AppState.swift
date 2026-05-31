@@ -44,6 +44,10 @@ final class AppState: ObservableObject {
     private let moodleClient = MoodleClient()
     private var database: Database?
     private var databaseSecurityScopedURL: URL?
+
+    /// On-disk path of the shared database, passed to the bundled MCP helper when
+    /// registering it with Claude so it reads the right App Group container.
+    var databaseFilePath: String? { database?.filePath }
     private(set) var syncEngine: SyncEngine?
     private(set) var currentToken: AuthToken?
     private(set) var currentSite: MoodleSite?

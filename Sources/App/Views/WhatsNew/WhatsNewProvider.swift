@@ -4,62 +4,63 @@
 // You may obtain a copy of the License in the LICENSE file at the root of this repository.
 
 import SwiftUI
-import WhatsNewKit
 
-/// Central registry of all What's New entries shown after app updates.
-///
-/// The collection is built on demand on the MainActor instead of being a
-/// global static. WhatsNewKit's value types embed SwiftUI `Color`s, which
-/// historically required the previous `nonisolated(unsafe)` annotation to
-/// silence Swift 6 strict concurrency. Building it on demand keeps the
-/// SwiftUI types on the only actor that's allowed to touch them.
-enum WhatsNewProvider {
-    @MainActor
-    static func makeCollection() -> WhatsNewCollection {
-        [
-            WhatsNew(
-                version: "0.1.2",
-                title: "What's New in Findle",
-                features: [
-                    WhatsNew.Feature(
-                        image: .init(
-                            systemName: "folder.fill",
-                            foregroundColor: .accentColor
-                        ),
-                        title: "Your Courses in Finder",
-                        subtitle: "Browse and open Moodle files directly from the Finder sidebar — no browser needed."
-                    ),
-                    WhatsNew.Feature(
-                        image: .init(
-                            systemName: "arrow.down.circle.fill",
-                            foregroundColor: .green
-                        ),
-                        title: "On-Demand Downloads",
-                        subtitle: "Files download only when you open them and can be evicted to save disk space."
-                    ),
-                    WhatsNew.Feature(
-                        image: .init(
-                            systemName: "lock.shield.fill",
-                            foregroundColor: .orange
-                        ),
-                        title: "SSO & Direct Login",
-                        subtitle: "Sign in with your university's SSO provider or with username and password."
-                    ),
-                    WhatsNew.Feature(
-                        image: .init(
-                            systemName: "doc.badge.plus",
-                            foregroundColor: .purple
-                        ),
-                        title: "Local Files",
-                        subtitle: "Create your own notes and files alongside course content — they stay local and never sync."
-                    )
-                ],
-                primaryAction: WhatsNew.PrimaryAction(
-                    title: "Continue",
-                    backgroundColor: .accentColor,
-                    foregroundColor: .white
-                )
+/// Content for the custom "What's New" showcase shown after an update.
+struct WhatsNewRelease {
+    let version: String
+    let headline: String
+    let subheadline: String
+    let sections: [Section]
+
+    struct Section: Identifiable {
+        let id = UUID()
+        let icon: String
+        let tint: Color
+        let title: String
+        let body: String
+        /// A featured section gets the prominent gradient treatment and, for the
+        /// MCP, the "Connect to Claude" actions.
+        var style: Style = .standard
+
+        enum Style {
+            case standard
+            case connectToClaude
+        }
+    }
+}
+
+extension WhatsNewRelease {
+    /// The release currently advertised. Bump `version` to re-show the sheet.
+    static let current = WhatsNewRelease(
+        version: "0.2.0",
+        headline: "A fresh look — and an AI that knows your courses",
+        subheadline: "Findle 0.2.0",
+        sections: [
+            Section(
+                icon: "sparkles",
+                tint: .pink,
+                title: "Connect your coursework to Claude",
+                body: "Findle now ships a built-in assistant bridge. Let Claude search across all your courses, read your notes and slides, summarise theory, and track deadlines and grades — grounded in your own files, with nothing to upload.",
+                style: .connectToClaude
+            ),
+            Section(
+                icon: "square.grid.2x2",
+                tint: .blue,
+                title: "A course gallery",
+                body: "Your courses now appear as a bookshelf of covers — pulled from Moodle when available — so you can jump straight to what you need."
+            ),
+            Section(
+                icon: "rectangle.3.group",
+                tint: .purple,
+                title: "Redesigned course view",
+                body: "An elastic cover header, file and download counts at a glance, a browsable contents list, and an inline editor for the icon, name, and tags."
+            ),
+            Section(
+                icon: "calendar.badge.clock",
+                tint: .orange,
+                title: "Deadlines & grades",
+                body: "Findle now tracks assignment due dates, submission status, grades, and quiz attempts — ready for the assistant to reason over."
             )
         ]
-    }
+    )
 }

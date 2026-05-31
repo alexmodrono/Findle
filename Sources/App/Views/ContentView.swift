@@ -4,18 +4,12 @@
 // You may obtain a copy of the License in the LICENSE file at the root of this repository.
 
 import SwiftUI
-import WhatsNewKit
 
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
 
-    // Build the environment once per ContentView instance instead of on every
-    // body re-evaluation. Avoids spinning up a fresh UserDefaultsWhatsNewVersionStore
-    // and re-constructing the collection on every state change.
-    @State private var whatsNewEnvironment = WhatsNewEnvironment(
-        versionStore: UserDefaultsWhatsNewVersionStore(),
-        whatsNewCollection: WhatsNewProvider.makeCollection()
-    )
+    @AppStorage("lastWhatsNewVersion") private var lastWhatsNewVersion = ""
+    @State private var showWhatsNew = false
 
     var body: some View {
         Group {
@@ -24,10 +18,24 @@ struct ContentView: View {
                 OnboardingView()
             case .workspace:
                 WorkspaceView()
-                    .environment(\.whatsNew, whatsNewEnvironment)
-                    .whatsNewSheet()
                     .supportPrompt()
+                    .sheet(isPresented: $showWhatsNew) {
+                        WhatsNewView(release: .current, databasePath: appState.databaseFilePath) {
+                            lastWhatsNewVersion = WhatsNewRelease.current.version
+                            showWhatsNew = false
+                        }
+                    }
+                    .task { evaluateWhatsNew() }
             }
+        }
+    }
+
+    private func evaluateWhatsNew() {
+        if lastWhatsNewVersion.isEmpty {
+            // Fresh install — record the version without showing the sheet.
+            lastWhatsNewVersion = WhatsNewRelease.current.version
+        } else if lastWhatsNewVersion != WhatsNewRelease.current.version {
+            showWhatsNew = true
         }
     }
 }
