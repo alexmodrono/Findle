@@ -19,6 +19,8 @@ struct Catalog {
     /// Writable full-text index + extracted-text cache (the server's own DB).
     /// Optional: the catalog tools work without it; only text search/caching do.
     let indexStore: IndexStore?
+    /// On-device embedder for semantic search. Optional like `indexStore`.
+    let embedder: Embedder?
 
     /// The site the user is signed into. Derived from the first account so the
     /// server keeps working if Findle finishes signing in after launch.
@@ -177,6 +179,57 @@ struct Catalog {
         return Self.encode(SearchTextResult(matches: out, note: nil))
     }
 
+    /// Concept search over embedded chunks. Returns the most semantically similar
+    /// passages, ranked by cosine similarity. Requires index_course to have run.
+    func semanticSearch(query: String, courseID: Int?, k: Int) -> String {
+        guard let indexStore, let embedder else {
+            return Self.errorJSON(message: "Semantic search unavailable.")
+        }
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return Self.errorJSON(message: "Empty query") }
+
+        let language = Embedder.detectLanguage(trimmed)
+        guard let embedded = embedder.embed(trimmed, language: language) else {
+            return Self.errorJSON(message: "Could not embed the query.")
+        }
+
+        let candidates = indexStore.fetchEmbeddings(language: embedded.language.rawValue, courseID: courseID)
+        if candidates.isEmpty {
+            return Self.encode(SemanticResult(matches: [], note: "Nothing embedded for this language yet. Run index_course on the relevant course first."))
+        }
+
+        let ranked = candidates
+            .map { (hit: $0, score: Embedder.cosineSimilarity(embedded.vector, $0.vector)) }
+            .sorted { $0.score > $1.score }
+            .prefix(max(1, k))
+            .map { scored in
+                SemanticHit(
+                    id: scored.hit.itemID,
+                    courseID: scored.hit.courseID,
+                    filename: scored.hit.filename,
+                    score: (scored.score * 1000).rounded() / 1000,
+                    passage: String(scored.hit.chunkText.prefix(400))
+                )
+            }
+        return Self.encode(SemanticResult(matches: ranked, note: nil))
+    }
+
+    /// Chunk, embed, and store `text` for `item` — built during index_course so
+    /// the embedding index mirrors the full-text index.
+    private func embedAndStore(item: LocalItem, text: String) {
+        guard let indexStore, let embedder, !text.isEmpty else { return }
+        let version = item.contentVersion ?? ""
+        guard !indexStore.hasEmbeddings(itemID: item.id, contentVersion: version) else { return }
+
+        let language = Embedder.detectLanguage(text)
+        let chunks = Embedder.chunks(of: text).enumerated().compactMap { index, chunkText -> IndexStore.EmbeddingChunk? in
+            guard let embedded = embedder.embed(chunkText, language: language) else { return nil }
+            return IndexStore.EmbeddingChunk(index: index, text: chunkText, language: embedded.language.rawValue, vector: embedded.vector)
+        }
+        guard !chunks.isEmpty else { return }
+        indexStore.replaceEmbeddings(itemID: item.id, courseID: item.courseID, filename: item.filename, contentVersion: version, chunks: chunks)
+    }
+
     func indexCourse(courseID: Int) -> String {
         guard let siteID else { return Self.noAccountJSON }
         guard indexStore != nil else { return Self.errorJSON(message: "Full-text index unavailable.") }
@@ -188,6 +241,7 @@ struct Catalog {
             for file in files {
                 switch fullText(for: file) {
                 case .success(let text):
+                    embedAndStore(item: file, text: text)
                     indexed += 1
                     characters += text.count
                 case .failure:
@@ -516,6 +570,19 @@ struct Catalog {
     private struct SearchTextResult: Codable {
         let matches: [SearchHit]
         let note: String?
+    }
+
+    private struct SemanticResult: Codable {
+        let matches: [SemanticHit]
+        let note: String?
+    }
+
+    private struct SemanticHit: Codable {
+        let id: String
+        let courseID: Int
+        let filename: String
+        let score: Float
+        let passage: String
     }
 
     private struct SearchHit: Codable {

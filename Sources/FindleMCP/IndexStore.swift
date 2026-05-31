@@ -48,6 +48,105 @@ final class IndexStore: @unchecked Sendable {
                 tokenize = 'unicode61 remove_diacritics 2'
             );
         """)
+
+        // Per-chunk on-device embeddings for semantic search. `vector` is a raw
+        // little-endian Float32 array; `language` records the model used so a
+        // query is only compared against chunks in the same embedding space.
+        try exec("""
+            CREATE TABLE IF NOT EXISTS embeddings (
+                item_id TEXT NOT NULL,
+                course_id INTEGER NOT NULL,
+                filename TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                chunk_text TEXT NOT NULL,
+                language TEXT NOT NULL,
+                vector BLOB NOT NULL,
+                content_version TEXT NOT NULL,
+                PRIMARY KEY (item_id, chunk_index)
+            );
+        """)
+    }
+
+    struct EmbeddingChunk {
+        let index: Int
+        let text: String
+        let language: String
+        let vector: [Float]
+    }
+
+    struct EmbeddingHit {
+        let itemID: String
+        let courseID: Int
+        let filename: String
+        let chunkText: String
+        let vector: [Float]
+    }
+
+    /// Whether `itemID` already has embeddings stored at the given content version.
+    func hasEmbeddings(itemID: String, contentVersion: String) -> Bool {
+        queue.sync {
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_prepare_v2(db, "SELECT 1 FROM embeddings WHERE item_id = ? AND content_version = ? LIMIT 1", -1, &stmt, nil) == SQLITE_OK else { return false }
+            sqlite3_bind_text(stmt, 1, itemID, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, contentVersion, -1, SQLITE_TRANSIENT)
+            return sqlite3_step(stmt) == SQLITE_ROW
+        }
+    }
+
+    /// Replace all embeddings for `itemID` with a fresh set of chunks.
+    func replaceEmbeddings(itemID: String, courseID: Int, filename: String, contentVersion: String, chunks: [EmbeddingChunk]) {
+        queue.sync {
+            _ = run("DELETE FROM embeddings WHERE item_id = ?") { sqlite3_bind_text($0, 1, itemID, -1, SQLITE_TRANSIENT) }
+            for chunk in chunks {
+                let blob = chunk.vector.withUnsafeBufferPointer { Data(buffer: $0) }
+                _ = run("INSERT INTO embeddings (item_id, course_id, filename, chunk_index, chunk_text, language, vector, content_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)") { stmt in
+                    sqlite3_bind_text(stmt, 1, itemID, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_int64(stmt, 2, Int64(courseID))
+                    sqlite3_bind_text(stmt, 3, filename, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_int64(stmt, 4, Int64(chunk.index))
+                    sqlite3_bind_text(stmt, 5, chunk.text, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(stmt, 6, chunk.language, -1, SQLITE_TRANSIENT)
+                    blob.withUnsafeBytes { raw in
+                        _ = sqlite3_bind_blob(stmt, 7, raw.baseAddress, Int32(raw.count), SQLITE_TRANSIENT)
+                    }
+                    sqlite3_bind_text(stmt, 8, contentVersion, -1, SQLITE_TRANSIENT)
+                }
+            }
+        }
+    }
+
+    /// All embedded chunks in a given language (optionally scoped to a course),
+    /// for brute-force cosine ranking.
+    func fetchEmbeddings(language: String, courseID: Int?) -> [EmbeddingHit] {
+        queue.sync {
+            var sql = "SELECT item_id, course_id, filename, chunk_text, vector FROM embeddings WHERE language = ?"
+            if courseID != nil { sql += " AND course_id = ?" }
+
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            sqlite3_bind_text(stmt, 1, language, -1, SQLITE_TRANSIENT)
+            if let courseID { sqlite3_bind_int64(stmt, 2, Int64(courseID)) }
+
+            var hits: [EmbeddingHit] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let bytes = sqlite3_column_bytes(stmt, 4)
+                var vector: [Float] = []
+                if let blob = sqlite3_column_blob(stmt, 4), bytes > 0 {
+                    let count = Int(bytes) / MemoryLayout<Float>.stride
+                    vector = Array(UnsafeBufferPointer(start: blob.assumingMemoryBound(to: Float.self), count: count))
+                }
+                hits.append(EmbeddingHit(
+                    itemID: sqlite3_column_text(stmt, 0).map { String(cString: $0) } ?? "",
+                    courseID: Int(sqlite3_column_int64(stmt, 1)),
+                    filename: sqlite3_column_text(stmt, 2).map { String(cString: $0) } ?? "",
+                    chunkText: sqlite3_column_text(stmt, 3).map { String(cString: $0) } ?? "",
+                    vector: vector
+                ))
+            }
+            return hits
+        }
     }
 
     deinit {

@@ -29,9 +29,10 @@ struct FindleMCP {
             failStartup("could not open database: \(error.localizedDescription)")
         }
 
-        // The full-text index is best-effort; the catalog tools work without it.
+        // The full-text index and embedder are best-effort; the catalog tools
+        // work without them (only text/semantic search need them).
         let indexStore = try? IndexStore()
-        let catalog = Catalog(database: database, indexStore: indexStore)
+        let catalog = Catalog(database: database, indexStore: indexStore, embedder: Embedder())
 
         let server = Server(
             name: "findle",
@@ -72,6 +73,12 @@ struct FindleMCP {
                 )
             case "index_course":
                 text = catalog.indexCourse(courseID: intArg(args, "course") ?? -1)
+            case "semantic_search":
+                text = catalog.semanticSearch(
+                    query: stringArg(args, "query") ?? "",
+                    courseID: intArg(args, "course"),
+                    k: intArg(args, "k") ?? 6
+                )
             case "get_moodle_url":
                 text = catalog.getMoodleURL(id: stringArg(args, "id") ?? "")
             case "list_deadlines":
@@ -184,8 +191,30 @@ struct FindleMCP {
             ])
         ),
         Tool(
+            name: "semantic_search",
+            description: "Concept search over file contents using on-device embeddings — finds passages by meaning even when they don't share the query's words. Requires index_course first. Returns ranked passages with similarity scores.",
+            inputSchema: .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "query": .object([
+                        "type": .string("string"),
+                        "description": .string("A concept or question to find related passages for.")
+                    ]),
+                    "course": .object([
+                        "type": .string("integer"),
+                        "description": .string("Optional course id to restrict the search.")
+                    ]),
+                    "k": .object([
+                        "type": .string("integer"),
+                        "description": .string("Number of passages to return (default 6).")
+                    ])
+                ]),
+                "required": .array([.string("query")])
+            ])
+        ),
+        Tool(
             name: "index_course",
-            description: "Download and extract the text of every file in a course to make its contents searchable via search_text. This materializes files (one-time download cost).",
+            description: "Download and extract the text of every file in a course to make its contents searchable via search_text and semantic_search. This materializes files (one-time download cost).",
             inputSchema: .object([
                 "type": .string("object"),
                 "properties": .object([
