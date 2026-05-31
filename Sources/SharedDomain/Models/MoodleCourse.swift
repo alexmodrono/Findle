@@ -20,6 +20,9 @@ public struct MoodleCourse: Sendable, Codable, Equatable, Hashable, Identifiable
     public var customFolderName: String?
     public var customIconName: String?
     public var isSyncEnabled: Bool
+    /// The course's Moodle overview/banner image, used as a gallery cover.
+    /// Requires the auth token to download (it's a pluginfile URL).
+    public var imageURL: URL?
 
     public init(
         id: Int,
@@ -34,7 +37,8 @@ public struct MoodleCourse: Sendable, Codable, Equatable, Hashable, Identifiable
         siteID: String,
         customFolderName: String? = nil,
         customIconName: String? = nil,
-        isSyncEnabled: Bool = true
+        isSyncEnabled: Bool = true,
+        imageURL: URL? = nil
     ) {
         self.id = id
         self.shortName = shortName
@@ -49,6 +53,7 @@ public struct MoodleCourse: Sendable, Codable, Equatable, Hashable, Identifiable
         self.customFolderName = customFolderName
         self.customIconName = customIconName
         self.isSyncEnabled = isSyncEnabled
+        self.imageURL = imageURL
     }
 
     /// A sanitized name suitable for use as a folder name in Finder.
