@@ -50,6 +50,12 @@ schemes:
       config: Debug
     archive:
       config: Release
+  FindleMCP:
+    build:
+      targets:
+        FindleMCP: all
+    run:
+      config: Debug
   Foodle-Nightly:
     build:
       targets:
@@ -82,12 +88,16 @@ packages:
   WhatsNewKit:
     url: https://github.com/SvenTiigi/WhatsNewKit
     from: 2.2.1
+  MCP:
+    url: https://github.com/modelcontextprotocol/swift-sdk
+    from: 0.12.1
 
 targets:
   Foodle:
     type: application
     platform: macOS
     configFiles:
+      Debug: Config/Debug-App.xcconfig
       Nightly: Config/Nightly-App.xcconfig
       Release: Config/Release-App.xcconfig
     attributes:
@@ -197,6 +207,7 @@ targets:
     type: app-extension
     platform: macOS
     configFiles:
+      Debug: Config/Debug-FileProvider.xcconfig
       Nightly: Config/Nightly-FileProvider.xcconfig
       Release: Config/Release-FileProvider.xcconfig
     attributes:
@@ -249,6 +260,25 @@ targets:
             - NSExtensionFileProviderActionIdentifier: $(FOODLE_BUNDLE_PREFIX).action.remove-download
               NSExtensionFileProviderActionName: Remove Download
               NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
+
+  FindleMCP:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Sources/FindleMCP
+    dependencies:
+      - target: SharedDomain
+      - target: FoodlePersistence
+      - package: MCP
+        product: MCP
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.mcp
+        CODE_SIGN_IDENTITY: "-"
+        # The CLI and the frameworks it links are co-located in the build
+        # products directory, so search for them next to the executable.
+        LD_RUNPATH_SEARCH_PATHS:
+          - "@executable_path"
 
   SharedDomainTests:
     type: bundle.unit-test
