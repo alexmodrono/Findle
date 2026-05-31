@@ -1,0 +1,8 @@
+// Debug configuration for the Findle app target.
+//
+// Pulls in your local Team ID (gitignored) so the app signs without re-selecting
+// a team in Xcode after every `xcodegen generate`. The `?` makes the include
+// optional: builds (e.g. CI with CODE_SIGNING_ALLOWED=NO) still work if the file
+// is absent.
+
+#include? "Signing.local.xcconfig"

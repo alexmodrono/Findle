@@ -1,3 +1,6 @@
 #include "Release-Base.xcconfig"
+// Local-only Team ID for local Release archives. CI overwrites this whole file
+// with its own manual signing settings, so this include is a no-op there.
+#include? "Signing.local.xcconfig"
 
 VALIDATE_PRODUCT = YES
