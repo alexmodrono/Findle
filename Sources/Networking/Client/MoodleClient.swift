@@ -421,7 +421,13 @@ public final class MoodleClient: LMSProvider, Sendable {
         )
 
         return response.map { course in
-            MoodleCourse(
+            // Pick the first image-type overview file as the course cover.
+            let imageURL = course.overviewfiles?
+                .first { ($0.mimetype ?? "").hasPrefix("image/") }
+                .flatMap { $0.fileurl }
+                .flatMap { URL(string: $0) }
+
+            return MoodleCourse(
                 id: course.id,
                 shortName: course.shortname,
                 fullName: course.fullname,
@@ -431,7 +437,8 @@ public final class MoodleClient: LMSProvider, Sendable {
                 endDate: course.enddate.flatMap { $0 > 0 ? Date(timeIntervalSince1970: TimeInterval($0)) : nil },
                 lastAccessed: course.lastaccess.flatMap { $0 > 0 ? Date(timeIntervalSince1970: TimeInterval($0)) : nil },
                 visible: (course.visible ?? 1) == 1,
-                siteID: site.id
+                siteID: site.id,
+                imageURL: imageURL
             )
         }
     }
@@ -479,6 +486,125 @@ public final class MoodleClient: LMSProvider, Sendable {
                 }
             )
         }
+    }
+
+    // MARK: - Coursework Tracking (read-only)
+
+    public func fetchAssignments(site: MoodleSite, token: AuthToken, courseIDs: [Int]) async throws -> [MoodleAssignment] {
+        guard !courseIDs.isEmpty else { return [] }
+        let response: AssignmentsResponse = try await callWebService(
+            site: site,
+            token: token,
+            function: "mod_assign_get_assignments",
+            params: Self.indexedParams("courseids", courseIDs)
+        )
+        return response.courses.flatMap { course in
+            course.assignments.map { item in
+                MoodleAssignment(
+                    id: item.id,
+                    courseID: item.course,
+                    name: item.name,
+                    dueDate: Self.timestamp(item.duedate),
+                    cutoffDate: Self.timestamp(item.cutoffdate)
+                )
+            }
+        }
+    }
+
+    /// Submission/grading state for one assignment. Best-effort — sites may
+    /// restrict this function, so callers should tolerate a thrown error.
+    public func fetchSubmissionStatus(site: MoodleSite, token: AuthToken, assignmentID: Int) async throws -> (submitted: Bool, graded: Bool, grade: String?) {
+        let response: SubmissionStatusResponse = try await callWebService(
+            site: site,
+            token: token,
+            function: "mod_assign_get_submission_status",
+            params: ["assignid": String(assignmentID)]
+        )
+        let submitted = response.lastattempt?.submission?.status == "submitted"
+        let graded = response.lastattempt?.gradingstatus == "graded"
+        return (submitted, graded, response.feedback?.grade?.grade)
+    }
+
+    public func fetchGrades(site: MoodleSite, token: AuthToken, courseID: Int, userID: Int) async throws -> [MoodleGradeItem] {
+        let response: GradeItemsResponse = try await callWebService(
+            site: site,
+            token: token,
+            function: "gradereport_user_get_grade_items",
+            params: ["courseid": String(courseID), "userid": String(userID)]
+        )
+        return response.usergrades.flatMap { userGrade in
+            userGrade.gradeitems.map { item in
+                MoodleGradeItem(
+                    id: item.id,
+                    courseID: userGrade.courseid,
+                    itemName: (item.itemname?.isEmpty == false ? item.itemname! : "Course total"),
+                    grade: item.gradeformatted,
+                    percentage: item.percentageformatted,
+                    feedback: Self.stripHTML(item.feedback)
+                )
+            }
+        }
+    }
+
+    public func fetchQuizzes(site: MoodleSite, token: AuthToken, courseIDs: [Int]) async throws -> [MoodleQuiz] {
+        guard !courseIDs.isEmpty else { return [] }
+        let response: QuizzesResponse = try await callWebService(
+            site: site,
+            token: token,
+            function: "mod_quiz_get_quizzes_by_courses",
+            params: Self.indexedParams("courseids", courseIDs)
+        )
+        return response.quizzes.map { quiz in
+            MoodleQuiz(
+                id: quiz.id,
+                courseID: quiz.course,
+                name: quiz.name,
+                openDate: Self.timestamp(quiz.timeopen),
+                closeDate: Self.timestamp(quiz.timeclose),
+                timeLimit: (quiz.timelimit ?? 0) > 0 ? quiz.timelimit : nil
+            )
+        }
+    }
+
+    public func fetchQuizAttempts(site: MoodleSite, token: AuthToken, quizID: Int, userID: Int) async throws -> [MoodleQuizAttempt] {
+        let response: QuizAttemptsResponse = try await callWebService(
+            site: site,
+            token: token,
+            function: "mod_quiz_get_user_attempts",
+            params: ["quizid": String(quizID), "userid": String(userID), "status": "all"]
+        )
+        return response.attempts.map { attempt in
+            MoodleQuizAttempt(
+                id: attempt.id,
+                quizID: attempt.quiz,
+                attemptNumber: attempt.attempt,
+                state: attempt.state,
+                sumGrades: attempt.sumgrades,
+                startTime: Self.timestamp(attempt.timestart),
+                finishTime: Self.timestamp(attempt.timefinish)
+            )
+        }
+    }
+
+    private static func indexedParams(_ key: String, _ values: [Int]) -> [String: String] {
+        var params: [String: String] = [:]
+        for (index, value) in values.enumerated() {
+            params["\(key)[\(index)]"] = String(value)
+        }
+        return params
+    }
+
+    private static func timestamp(_ value: Int?) -> Date? {
+        guard let value, value > 0 else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(value))
+    }
+
+    private static func stripHTML(_ value: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        let cleaned = value
+            .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? nil : cleaned
     }
 
     // MARK: - File Download
