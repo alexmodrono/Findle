@@ -46,63 +46,41 @@ struct FindleMCP {
 
         await server.withMethodHandler(CallTool.self) { params in
             let args = params.arguments
-            let text: String
-            switch params.name {
-            case "list_courses":
-                text = catalog.listCourses()
-            case "get_item":
-                text = catalog.getItem(id: stringArg(args, "id") ?? "")
-            case "read_item":
-                text = catalog.readItem(
-                    id: stringArg(args, "id") ?? "",
-                    maxChars: intArg(args, "max_chars") ?? 100_000
-                )
-            case "search_items":
-                text = catalog.searchItems(
-                    query: stringArg(args, "query") ?? "",
-                    courseID: intArg(args, "course"),
-                    limit: intArg(args, "limit") ?? 20
-                )
-            case "get_course_contents":
-                text = catalog.getCourseContents(courseID: intArg(args, "course") ?? -1)
-            case "search_text":
-                text = catalog.searchText(
-                    query: stringArg(args, "query") ?? "",
-                    courseID: intArg(args, "course"),
-                    limit: intArg(args, "limit") ?? 10
-                )
-            case "index_course":
-                text = catalog.indexCourse(courseID: intArg(args, "course") ?? -1)
-            case "semantic_search":
-                text = catalog.semanticSearch(
-                    query: stringArg(args, "query") ?? "",
-                    courseID: intArg(args, "course"),
-                    k: intArg(args, "k") ?? 6
-                )
-            case "get_moodle_url":
-                text = catalog.getMoodleURL(id: stringArg(args, "id") ?? "")
-            case "trigger_sync":
-                text = catalog.triggerSync(courseID: intArg(args, "course"))
-            case "list_deadlines":
-                text = catalog.listDeadlines(courseID: intArg(args, "course"), withinDays: intArg(args, "within_days"))
-            case "get_submission_status":
-                text = catalog.getSubmissionStatus(assignmentID: intArg(args, "assignment_id") ?? -1)
-            case "get_grades":
-                text = catalog.getGrades(courseID: intArg(args, "course"))
-            case "get_quiz_attempts":
-                text = catalog.getQuizAttempts(quizID: intArg(args, "quiz_id") ?? -1)
-            default:
-                return .init(content: [.text("Unknown tool: \(params.name)")], isError: true)
-            }
-            return .init(content: [.text(text)], isError: false)
+            let reader = ArgReader(string: { stringArg(args, $0) }, int: { intArg(args, $0) })
+            let result = catalog.callTool(named: params.name, args: reader)
+            return .init(content: [.text(result.text)], isError: result.isError)
         }
 
-        do {
-            try await server.start(transport: StdioTransport())
-            await server.waitUntilCompleted()
-        } catch {
-            failStartup("server error: \(error.localizedDescription)")
+        // HTTP (Streamable HTTP + bearer token) when requested, otherwise stdio.
+        if let http = HTTPOptions.fromArguments() {
+            runHTTP(http, catalog: catalog)
+        } else {
+            do {
+                try await server.start(transport: StdioTransport())
+                await server.waitUntilCompleted()
+            } catch {
+                failStartup("server error: \(error.localizedDescription)")
+            }
         }
+    }
+
+    /// Serve the tools over HTTP (for tunnelling to remote clients like ChatGPT)
+    /// and block forever. Bearer-token gated; `trigger_sync` is intentionally not
+    /// exposed remotely (it's a local side effect).
+    static func runHTTP(_ options: HTTPOptions, catalog: Catalog) -> Never {
+        let httpTools = tools.filter { !httpExcludedTools.contains($0.name) }
+        let server = HTTPServer(port: options.port, token: options.token) { body in
+            processHTTPBody(body, catalog: catalog, tools: httpTools)
+        }
+        do {
+            try server.start()
+            FileHandle.standardError.write(Data("findle-mcp: HTTP server listening on 127.0.0.1:\(options.port)\n".utf8))
+        } catch {
+            failStartup("could not start HTTP server: \(error.localizedDescription)")
+        }
+        // Park forever; the listener serves requests on its own queue. `server`
+        // stays retained by this frame.
+        while true { Thread.sleep(forTimeInterval: 3600) }
     }
 
     // MARK: - Tool definitions
@@ -328,9 +306,106 @@ struct FindleMCP {
             ])
         )
     ]
+
+    /// Tools not exposed over HTTP (local side effects that make no sense to a
+    /// remote client and that the model can't observe the result of anyway).
+    static let httpExcludedTools: Set<String> = ["trigger_sync"]
+
+    /// Parse a request body (single message or batch), dispatch each, and
+    /// serialize the response(s). Returns nil when there's nothing to send back
+    /// (e.g. only notifications).
+    static func processHTTPBody(_ body: Data, catalog: Catalog, tools: [Tool]) -> Data? {
+        guard let json = try? JSONSerialization.jsonObject(with: body) else {
+            let parseError: [String: Any] = ["jsonrpc": "2.0", "id": NSNull(), "error": ["code": -32700, "message": "Parse error"]]
+            return try? JSONSerialization.data(withJSONObject: parseError)
+        }
+        if let batch = json as? [[String: Any]] {
+            let responses = batch.compactMap { handleRPC($0, catalog: catalog, tools: tools) }
+            guard !responses.isEmpty else { return nil }
+            return try? JSONSerialization.data(withJSONObject: responses)
+        }
+        if let single = json as? [String: Any], let response = handleRPC(single, catalog: catalog, tools: tools) {
+            return try? JSONSerialization.data(withJSONObject: response)
+        }
+        return nil
+    }
+
+    /// Process a single JSON-RPC message for the HTTP transport. Returns the
+    /// response object, or nil for notifications (which get no response).
+    static func handleRPC(_ message: [String: Any], catalog: Catalog, tools: [Tool]) -> [String: Any]? {
+        let method = message["method"] as? String
+        let id = message["id"]
+
+        // No "id" → notification: act on it but send no response.
+        guard id != nil else { return nil }
+
+        func ok(_ result: Any) -> [String: Any] { ["jsonrpc": "2.0", "id": id!, "result": result] }
+        func fail(_ code: Int, _ msg: String) -> [String: Any] {
+            ["jsonrpc": "2.0", "id": id!, "error": ["code": code, "message": msg]]
+        }
+
+        switch method {
+        case "initialize":
+            return ok([
+                "protocolVersion": "2024-11-05",
+                "capabilities": ["tools": [String: Any]()],
+                "serverInfo": ["name": "findle", "version": "0.1.0"]
+            ])
+        case "ping":
+            return ok([String: Any]())
+        case "tools/list":
+            let toolsJSON = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(tools))) ?? []
+            return ok(["tools": toolsJSON])
+        case "tools/call":
+            let params = message["params"] as? [String: Any] ?? [:]
+            guard let name = params["name"] as? String else { return fail(-32602, "Missing tool name") }
+            if httpExcludedTools.contains(name) {
+                return fail(-32601, "Tool '\(name)' is not available over HTTP")
+            }
+            let arguments = params["arguments"] as? [String: Any] ?? [:]
+            let reader = ArgReader(
+                string: { arguments[$0] as? String },
+                int: { key in
+                    if let i = arguments[key] as? Int { return i }
+                    if let d = arguments[key] as? Double { return Int(d) }
+                    if let s = arguments[key] as? String { return Int(s) }
+                    return nil
+                }
+            )
+            let result = catalog.callTool(named: name, args: reader)
+            return ok(["content": [["type": "text", "text": result.text]], "isError": result.isError])
+        default:
+            return fail(-32601, "Method not found: \(method ?? "nil")")
+        }
+    }
 }
 
 // MARK: - Helpers
+
+/// HTTP serving options parsed from `--http <port> --token <secret>` (token may
+/// also come from `FINDLE_MCP_TOKEN`). Refuses to run unauthenticated.
+struct HTTPOptions {
+    let port: UInt16
+    let token: String
+
+    static func fromArguments() -> HTTPOptions? {
+        let args = CommandLine.arguments
+        guard let index = args.firstIndex(of: "--http"), index + 1 < args.count else { return nil }
+
+        var portString = args[index + 1]
+        if portString.hasPrefix(":") { portString.removeFirst() }
+        guard let port = UInt16(portString) else {
+            failStartup("--http needs a port, e.g. --http 8080")
+        }
+
+        let flagToken = args.firstIndex(of: "--token").flatMap { i in i + 1 < args.count ? args[i + 1] : nil }
+        let token = flagToken ?? ProcessInfo.processInfo.environment["FINDLE_MCP_TOKEN"]
+        guard let token, !token.isEmpty else {
+            failStartup("HTTP mode requires --token <secret> (or FINDLE_MCP_TOKEN) — refusing to serve unauthenticated")
+        }
+        return HTTPOptions(port: port, token: token)
+    }
+}
 
 /// Resolve the database path: `FINDLE_DB_PATH` env, then a `--db-path` argument,
 /// then the default shared App Group container location.

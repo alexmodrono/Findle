@@ -694,3 +694,49 @@ struct Catalog {
     private static let noAccountJSON =
         #"{"error":"No account signed in. Open Findle and sign in first."}"#
 }
+
+/// Transport-neutral argument accessor, so the stdio and HTTP front-ends share
+/// one tool dispatch regardless of how they decode arguments.
+struct ArgReader {
+    let string: (String) -> String?
+    let int: (String) -> Int?
+}
+
+extension Catalog {
+    /// Run a tool by name. Shared by both transports; returns the JSON text and
+    /// whether it represents an error.
+    func callTool(named name: String, args: ArgReader) -> (text: String, isError: Bool) {
+        switch name {
+        case "list_courses":
+            return (listCourses(), false)
+        case "get_course_contents":
+            return (getCourseContents(courseID: args.int("course") ?? -1), false)
+        case "search_items":
+            return (searchItems(query: args.string("query") ?? "", courseID: args.int("course"), limit: args.int("limit") ?? 20), false)
+        case "search_text":
+            return (searchText(query: args.string("query") ?? "", courseID: args.int("course"), limit: args.int("limit") ?? 10), false)
+        case "semantic_search":
+            return (semanticSearch(query: args.string("query") ?? "", courseID: args.int("course"), k: args.int("k") ?? 6), false)
+        case "index_course":
+            return (indexCourse(courseID: args.int("course") ?? -1), false)
+        case "read_item":
+            return (readItem(id: args.string("id") ?? "", maxChars: args.int("max_chars") ?? 100_000), false)
+        case "get_item":
+            return (getItem(id: args.string("id") ?? ""), false)
+        case "get_moodle_url":
+            return (getMoodleURL(id: args.string("id") ?? ""), false)
+        case "trigger_sync":
+            return (triggerSync(courseID: args.int("course")), false)
+        case "list_deadlines":
+            return (listDeadlines(courseID: args.int("course"), withinDays: args.int("within_days")), false)
+        case "get_submission_status":
+            return (getSubmissionStatus(assignmentID: args.int("assignment_id") ?? -1), false)
+        case "get_grades":
+            return (getGrades(courseID: args.int("course")), false)
+        case "get_quiz_attempts":
+            return (getQuizAttempts(quizID: args.int("quiz_id") ?? -1), false)
+        default:
+            return ("Unknown tool: \(name)", true)
+        }
+    }
+}
