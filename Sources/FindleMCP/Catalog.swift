@@ -304,6 +304,30 @@ struct Catalog {
         return .success(text)
     }
 
+    /// Ask the Findle app to pull fresh content by opening a `findle://sync`
+    /// URL. The app (which holds the Moodle token) performs the sync; this MCP
+    /// process never syncs directly. Best-effort and fire-and-forget — the agent
+    /// should re-query after a few seconds.
+    func triggerSync(courseID: Int?) -> String {
+        var urlString = "findle://sync"
+        if let courseID { urlString += "?course=\(courseID)" }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        // -g: hand the URL to the app without bringing it to the foreground.
+        process.arguments = ["-g", urlString]
+        do {
+            try process.run()
+            return Self.encode(TriggerSyncOut(
+                requested: true,
+                scope: courseID.map { "course \($0)" } ?? "all enabled courses",
+                note: "Asked Findle to sync. New content appears once the app finishes — re-query (list_courses / get_course_contents / read_item) in a few seconds. Findle must be installed and signed in."
+            ))
+        } catch {
+            return Self.errorJSON(error)
+        }
+    }
+
     func getMoodleURL(id: String) -> String {
         do {
             guard let item = try database.fetchItem(id: id) else {
@@ -570,6 +594,12 @@ struct Catalog {
     private struct SearchTextResult: Codable {
         let matches: [SearchHit]
         let note: String?
+    }
+
+    private struct TriggerSyncOut: Codable {
+        let requested: Bool
+        let scope: String
+        let note: String
     }
 
     private struct SemanticResult: Codable {

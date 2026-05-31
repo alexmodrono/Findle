@@ -81,6 +81,8 @@ struct FindleMCP {
                 )
             case "get_moodle_url":
                 text = catalog.getMoodleURL(id: stringArg(args, "id") ?? "")
+            case "trigger_sync":
+                text = catalog.triggerSync(courseID: intArg(args, "course"))
             case "list_deadlines":
                 text = catalog.listDeadlines(courseID: intArg(args, "course"), withinDays: intArg(args, "within_days"))
             case "get_submission_status":
@@ -252,6 +254,19 @@ struct FindleMCP {
                     ])
                 ]),
                 "required": .array([.string("id")])
+            ])
+        ),
+        Tool(
+            name: "trigger_sync",
+            description: "Ask the Findle app to pull fresh content from Moodle (the app holds the token; this server never syncs directly). Fire-and-forget — re-query after a few seconds. Findle must be installed and signed in.",
+            inputSchema: .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "course": .object([
+                        "type": .string("integer"),
+                        "description": .string("Optional course id to sync just that course; omit to sync all enabled courses.")
+                    ])
+                ])
             ])
         ),
         Tool(
