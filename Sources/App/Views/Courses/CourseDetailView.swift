@@ -68,6 +68,11 @@ struct CourseDetailView: View {
             // (e.g. a sync just finished and new items landed).
             loadContents()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            // Files materialized in Finder (by the extension) update the DB but
+            // not courseSyncStates, so refresh the counts when the user returns.
+            loadContents()
+        }
     }
 
     // MARK: - Hero
@@ -104,7 +109,18 @@ struct CourseDetailView: View {
 
     private var heroTitle: some View {
         VStack(alignment: .leading, spacing: 8) {
-            statusPill
+            HStack(spacing: 8) {
+                statusPill
+
+                if !course.visible {
+                    Label("Hidden", systemImage: "eye.slash.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(.orange.opacity(0.9), in: Capsule())
+                }
+            }
 
             Text(course.fullName)
                 .font(.largeTitle.weight(.bold))
@@ -416,16 +432,16 @@ struct CourseDetailView: View {
     }
 
     private var formattedDateRange: String? {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .none
+        // Value-type formatting — avoids allocating a DateFormatter on every body
+        // evaluation, which the elastic hero triggers on each scroll frame.
+        func fmt(_ date: Date) -> String { date.formatted(date: .abbreviated, time: .omitted) }
         switch (course.startDate, course.endDate) {
         case let (start?, end?):
-            return "\(formatter.string(from: start)) – \(formatter.string(from: end))"
+            return "\(fmt(start)) – \(fmt(end))"
         case let (start?, nil):
-            return "From \(formatter.string(from: start))"
+            return "From \(fmt(start))"
         case let (nil, end?):
-            return "Until \(formatter.string(from: end))"
+            return "Until \(fmt(end))"
         case (nil, nil):
             return nil
         }

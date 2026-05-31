@@ -425,7 +425,9 @@ public final class MoodleClient: LMSProvider, Sendable {
             let imageURL = course.overviewfiles?
                 .first { ($0.mimetype ?? "").hasPrefix("image/") }
                 .flatMap { $0.fileurl }
-                .flatMap { URL(string: $0) }
+                // Moodle cover filenames often contain spaces / accented UTF-8,
+                // which plain URL(string:) rejects — encode invalid characters.
+                .flatMap { URL(string: $0, encodingInvalidCharacters: true) }
 
             return MoodleCourse(
                 id: course.id,

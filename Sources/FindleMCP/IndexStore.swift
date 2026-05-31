@@ -89,7 +89,9 @@ final class IndexStore: @unchecked Sendable {
 
         return queue.sync {
             var sql = "SELECT item_id, course_id, filename, snippet(item_text, 3, '«', '»', '…', 14) FROM item_text WHERE item_text MATCH ?"
-            if courseID != nil { sql += " AND course_id = ?" }
+            // CAST: course_id is an FTS5 UNINDEXED column; its stored affinity is
+            // unreliable, so compare as an integer to keep scoped search correct.
+            if courseID != nil { sql += " AND CAST(course_id AS INTEGER) = ?" }
             sql += " ORDER BY rank LIMIT ?"
 
             var stmt: OpaquePointer?

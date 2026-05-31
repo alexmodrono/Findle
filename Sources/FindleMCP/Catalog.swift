@@ -227,9 +227,17 @@ struct Catalog {
         }
         // Reading the file triggers File Provider materialization if it isn't
         // local yet — the extension holds the token.
-        guard let text = Self.extractText(from: fileURL, filename: item.filename) else {
+        let text: String
+        switch Self.extractText(from: fileURL, filename: item.filename) {
+        case .unsupported:
             let ext = (item.filename as NSString).pathExtension.lowercased()
             return .failure("Text extraction is not supported for .\(ext) files yet.")
+        case .unreadable:
+            // Don't cache a read failure as empty text — surface it so the agent
+            // can retry once the File Provider finishes downloading the file.
+            return .failure("Could not read \(item.filename) — it may still be downloading. Try again.")
+        case .text(let extracted):
+            text = extracted
         }
 
         indexStore?.upsert(
@@ -396,36 +404,58 @@ struct Catalog {
         if let insensitive = entries.first(where: { fold($0.lastPathComponent) == target }) {
             return insensitive
         }
-        // Handles "Campos Electromagnéticos" on disk vs "… [DIE-GITT-221]" in the DB.
-        return entries.first { entry in
-            let folded = fold(entry.lastPathComponent)
-            return target.hasPrefix(folded) || folded.hasPrefix(target)
+        // The on-disk name commonly drifts to a SHORTER form than the DB record
+        // ("Campos Electromagnéticos" on disk vs "… [DIE-GITT-221]" stored), so
+        // prefer the longest on-disk name that is a prefix of the target — the
+        // most specific match. This disambiguates siblings like "Cálculo" vs
+        // "Cálculo II" (a plain "first prefix" would pick either arbitrarily).
+        if let best = entries
+            .filter({ target.hasPrefix(fold($0.lastPathComponent)) })
+            .max(by: { fold($0.lastPathComponent).count < fold($1.lastPathComponent).count }) {
+            return best
         }
+        // Rare reverse drift (on-disk name longer than stored): closest/shortest.
+        return entries
+            .filter { fold($0.lastPathComponent).hasPrefix(target) }
+            .min(by: { fold($0.lastPathComponent).count < fold($1.lastPathComponent).count })
     }
 
-    /// Extract full plain text from a file. Returns `nil` for unsupported types,
-    /// or an empty string for e.g. scanned PDFs with no text layer.
-    static func extractText(from url: URL, filename: String) -> String? {
+    /// The outcome of extracting text from a file.
+    enum Extraction {
+        /// Extracted text — possibly empty (e.g. a scanned PDF with no text layer).
+        case text(String)
+        /// The file type isn't extractable yet.
+        case unsupported
+        /// The file couldn't be opened/read (e.g. still materializing, or I/O error).
+        case unreadable
+    }
+
+    /// Extract full plain text from a file, distinguishing a genuinely empty
+    /// document from a read failure (so failures aren't cached as empty text).
+    static func extractText(from url: URL, filename: String) -> Extraction {
         let ext = (filename as NSString).pathExtension.lowercased()
         let raw: String
 
         switch ext {
         case "pdf":
-            raw = PDFDocument(url: url)?.string ?? ""
+            // A nil document means the file couldn't be parsed (e.g. partial
+            // download); a non-nil doc with no text is a legitimately empty PDF.
+            guard let document = PDFDocument(url: url) else { return .unreadable }
+            raw = document.string ?? ""
         case "txt", "md", "markdown", "csv", "tsv", "json", "tex", "log", "srt", "rtf",
              "swift", "py", "c", "cpp", "h", "java", "js", "ts":
             guard let s = (try? String(contentsOf: url, encoding: .utf8))
-                ?? (try? String(contentsOf: url, encoding: .isoLatin1)) else { return "" }
+                ?? (try? String(contentsOf: url, encoding: .isoLatin1)) else { return .unreadable }
             raw = s
         case "html", "htm":
             guard let s = (try? String(contentsOf: url, encoding: .utf8))
-                ?? (try? String(contentsOf: url, encoding: .isoLatin1)) else { return "" }
+                ?? (try? String(contentsOf: url, encoding: .isoLatin1)) else { return .unreadable }
             raw = s.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
         default:
-            return nil
+            return .unsupported
         }
 
-        return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return .text(raw.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     // MARK: - Output types

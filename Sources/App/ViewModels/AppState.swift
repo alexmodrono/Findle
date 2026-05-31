@@ -645,7 +645,9 @@ final class AppState: ObservableObject {
         for course in courses {
             guard let remoteURL = course.imageURL, courseCoverImages[course.id] == nil else { continue }
 
-            let destination = coverCacheDirectory.appendingPathComponent("\(course.id)")
+            // Key the cache file by site too, so a colliding course id across
+            // two Moodle sites can't serve the wrong site's cover.
+            let destination = coverCacheDirectory.appendingPathComponent("\(course.siteID)-\(course.id)")
             if let cached = NSImage(contentsOf: destination) {
                 courseCoverImages[course.id] = cached
                 continue
@@ -660,6 +662,11 @@ final class AppState: ObservableObject {
             try await moodleClient.downloadFile(url: remoteURL, token: token, destination: destination)
             if let image = NSImage(contentsOf: destination) {
                 courseCoverImages[courseID] = image
+            } else {
+                // The download wasn't a valid image (e.g. an HTML error body):
+                // drop it so a stale bad file doesn't linger and the next launch
+                // can re-attempt cleanly.
+                try? FileManager.default.removeItem(at: destination)
             }
         } catch {
             logger.debug("Course cover download failed for \(courseID): \(error.localizedDescription, privacy: .public)")
@@ -976,47 +983,79 @@ final class AppState: ObservableObject {
 
     /// Fetch read-only coursework tracking (assignments + submission status,
     /// grades, quizzes + attempts) for the sync-enabled courses and store it for
-    /// the MCP server. Entirely best-effort: individual failures are ignored so
-    /// a restricted WS function never breaks the refresh.
+    /// the MCP server. Best-effort, but a *failed* list fetch is never persisted
+    /// as an empty result — the replace-all saves would otherwise wipe good data
+    /// on a transient network/token error. Independent per-item calls run with
+    /// bounded concurrency instead of one-at-a-time.
     func refreshTracking() async {
         guard let site = currentSite, let token = currentToken, let db = database,
               let userID = accounts.first?.userID else { return }
         let courseIDs = courses.filter(\.isSyncEnabled).map(\.id)
         guard !courseIDs.isEmpty else { return }
+        let client = moodleClient
 
-        // Assignments, enriched with per-assignment submission status.
-        var assignments = (try? await moodleClient.fetchAssignments(site: site, token: token, courseIDs: courseIDs)) ?? []
-        for index in assignments.indices {
-            if let status = try? await moodleClient.fetchSubmissionStatus(site: site, token: token, assignmentID: assignments[index].id) {
-                assignments[index].submitted = status.submitted
-                assignments[index].graded = status.graded
-                assignments[index].grade = status.grade
+        // Assignments (+ submission status). Persist only if the list fetch worked.
+        if let base = try? await client.fetchAssignments(site: site, token: token, courseIDs: courseIDs) {
+            let enriched = await Self.boundedMap(base) { assignment in
+                var a = assignment
+                if let status = try? await client.fetchSubmissionStatus(site: site, token: token, assignmentID: assignment.id) {
+                    a.submitted = status.submitted
+                    a.graded = status.graded
+                    a.grade = status.grade
+                }
+                return a
+            }
+            try? db.saveAssignments(enriched, siteID: site.id)
+        }
+
+        // Grades, per course. Skip the save entirely if every course fetch failed.
+        let gradeResults = await Self.boundedMap(courseIDs) { courseID -> [MoodleGradeItem]? in
+            try? await client.fetchGrades(site: site, token: token, courseID: courseID, userID: userID)
+        }
+        if gradeResults.contains(where: { $0 != nil }) {
+            try? db.saveGradeItems(gradeResults.compactMap { $0 }.flatMap { $0 }, siteID: site.id)
+        }
+
+        // Quizzes (+ attempts). Persist only if the quiz-list fetch worked.
+        if let quizzes = try? await client.fetchQuizzes(site: site, token: token, courseIDs: courseIDs) {
+            try? db.saveQuizzes(quizzes, siteID: site.id)
+
+            let attemptResults = await Self.boundedMap(quizzes) { quiz -> [MoodleQuizAttempt]? in
+                try? await client.fetchQuizAttempts(site: site, token: token, quizID: quiz.id, userID: userID)
+            }
+            if attemptResults.contains(where: { $0 != nil }) {
+                try? db.saveQuizAttempts(attemptResults.compactMap { $0 }.flatMap { $0 }, siteID: site.id)
             }
         }
-        try? db.saveAssignments(assignments, siteID: site.id)
 
-        // Grades, per course.
-        var grades: [MoodleGradeItem] = []
-        for courseID in courseIDs {
-            if let items = try? await moodleClient.fetchGrades(site: site, token: token, courseID: courseID, userID: userID) {
-                grades.append(contentsOf: items)
+        logger.info("Tracking refresh complete")
+    }
+
+    /// Run `transform` over `items` with a bounded number of concurrent tasks.
+    private static func boundedMap<T: Sendable, R: Sendable>(
+        _ items: [T],
+        maxConcurrency: Int = 5,
+        _ transform: @escaping @Sendable (T) async -> R
+    ) async -> [R] {
+        guard !items.isEmpty else { return [] }
+        return await withTaskGroup(of: (Int, R).self) { group in
+            var results = [R?](repeating: nil, count: items.count)
+            var next = 0
+            for _ in 0..<min(maxConcurrency, items.count) {
+                let index = next
+                next += 1
+                group.addTask { (index, await transform(items[index])) }
             }
-        }
-        try? db.saveGradeItems(grades, siteID: site.id)
-
-        // Quizzes, with the user's attempts per quiz.
-        let quizzes = (try? await moodleClient.fetchQuizzes(site: site, token: token, courseIDs: courseIDs)) ?? []
-        try? db.saveQuizzes(quizzes, siteID: site.id)
-
-        var attempts: [MoodleQuizAttempt] = []
-        for quiz in quizzes {
-            if let quizAttempts = try? await moodleClient.fetchQuizAttempts(site: site, token: token, quizID: quiz.id, userID: userID) {
-                attempts.append(contentsOf: quizAttempts)
+            while let (index, value) = await group.next() {
+                results[index] = value
+                if next < items.count {
+                    let index = next
+                    next += 1
+                    group.addTask { (index, await transform(items[index])) }
+                }
             }
+            return results.compactMap { $0 }
         }
-        try? db.saveQuizAttempts(attempts, siteID: site.id)
-
-        logger.info("Tracking refreshed: \(assignments.count) assignments, \(grades.count) grades, \(quizzes.count) quizzes, \(attempts.count) attempts")
     }
 
     // MARK: - Session Recovery
@@ -1182,6 +1221,10 @@ final class AppState: ObservableObject {
         sites = []
         courses = []
         courseTags = [:]
+        // Clear per-course caches keyed by course id so they can't leak across
+        // a sign-out/site-switch where a course id collides with the next site.
+        courseSyncStates = [:]
+        courseCoverImages = [:]
         validatedSitesByURL.removeAll()
         currentSite = nil
         currentToken = nil
