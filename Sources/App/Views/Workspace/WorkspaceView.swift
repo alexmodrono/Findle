@@ -13,9 +13,8 @@ struct WorkspaceView: View {
     @State private var isSyncing = false
 
     enum SidebarSelection: Hashable {
+        case gallery
         case course(Int)
-        case settings
-        case diagnostics
     }
 
     private var filteredCourses: [MoodleCourse] {
@@ -36,46 +35,19 @@ struct WorkspaceView: View {
         filteredCourses.filter { !$0.isSyncEnabled }
     }
 
-    /// Enabled courses grouped by tag for sidebar display.
+    /// Enabled courses (respecting the search filter) grouped by tag for the sidebar.
     private var taggedSections: [(tag: FinderTag?, courses: [MoodleCourse])] {
-        let courses = enabledCourses
-        let allTags = appState.courseTags
-
-        // Collect unique tags in use, sorted by name
-        var usedTags: [FinderTag] = []
-        var seen = Set<String>()
-        for tags in allTags.values {
-            for tag in tags where !seen.contains(tag.name) {
-                usedTags.append(tag)
-                seen.insert(tag.name)
-            }
-        }
-        usedTags.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-
-        guard !usedTags.isEmpty else { return [] }
-
-        var sections: [(tag: FinderTag?, courses: [MoodleCourse])] = []
-
-        for tag in usedTags {
-            let matching = courses.filter { course in
-                allTags[course.id]?.contains(where: { $0.name == tag.name }) ?? false
-            }
-            if !matching.isEmpty {
-                sections.append((tag: tag, courses: matching))
-            }
-        }
-
-        // Untagged courses
-        let untagged = courses.filter { allTags[$0.id]?.isEmpty ?? true }
-        if !untagged.isEmpty {
-            sections.append((tag: nil, courses: untagged))
-        }
-
-        return sections
+        appState.tagSections(for: enabledCourses)
     }
 
     private var hasAnyTags: Bool {
         !appState.courseTags.isEmpty
+    }
+
+    /// Total sync-enabled courses, ignoring the search filter — used for the
+    /// "Sync All" tooltip count.
+    private var syncAllEnabledCount: Int {
+        appState.courses.filter(\.isSyncEnabled).count
     }
 
     var body: some View {
@@ -102,7 +74,9 @@ struct WorkspaceView: View {
                         Label("Sync All", systemImage: "arrow.triangle.2.circlepath")
                     }
                 }
-                .help(isSyncing ? "Syncing…" : "Sync all enabled courses")
+                .help(isSyncing
+                    ? "Syncing…"
+                    : "Sync all \(syncAllEnabledCount) enabled course\(syncAllEnabledCount == 1 ? "" : "s")")
                 .disabled(isSyncing)
             }
         }
@@ -135,6 +109,8 @@ struct WorkspaceView: View {
                     icon: "exclamationmark.triangle.fill",
                     tint: .red,
                     message: error,
+                    secondaryActionTitle: "Retry",
+                    secondaryAction: { syncAll() },
                     actionTitle: "Dismiss"
                 ) {
                     appState.dismissError()
@@ -147,6 +123,8 @@ struct WorkspaceView: View {
         icon: String,
         tint: Color,
         message: String,
+        secondaryActionTitle: String? = nil,
+        secondaryAction: (() -> Void)? = nil,
         actionTitle: String,
         action: @escaping () -> Void
     ) -> some View {
@@ -156,6 +134,10 @@ struct WorkspaceView: View {
             Text(message)
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            if let secondaryActionTitle, let secondaryAction {
+                Button(secondaryActionTitle, action: secondaryAction)
+                    .buttonStyle(.borderless)
+            }
             Button(actionTitle, action: action)
                 .buttonStyle(.borderless)
         }
@@ -172,6 +154,9 @@ struct WorkspaceView: View {
 
     private var sidebar: some View {
         List(selection: $selection) {
+            Label("All Courses", systemImage: "square.grid.2x2")
+                .tag(SidebarSelection.gallery)
+
             if filteredCourses.isEmpty {
                 if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     ContentUnavailableView(
@@ -222,13 +207,6 @@ struct WorkspaceView: View {
                     }
                 }
             }
-
-            Section {
-                Label("Settings", systemImage: "gearshape")
-                    .tag(SidebarSelection.settings)
-                Label("Diagnostics", systemImage: "stethoscope")
-                    .tag(SidebarSelection.diagnostics)
-            }
         }
         .listStyle(.sidebar)
         .searchable(text: $searchText, prompt: "Filter courses")
@@ -241,7 +219,8 @@ struct WorkspaceView: View {
     private func courseRowItem(_ course: MoodleCourse) -> some View {
         CourseRow(
             course: course,
-            tags: appState.courseTags[course.id] ?? []
+            tags: appState.courseTags[course.id] ?? [],
+            syncState: appState.courseSyncStates[course.id]
         )
         .tag(SidebarSelection.course(course.id))
         .contextMenu {
@@ -268,12 +247,15 @@ struct WorkspaceView: View {
     private var statusBar: some View {
         HStack(spacing: 6) {
             switch appState.syncStatus {
-            case .syncing:
-                ProgressView()
-                    .controlSize(.small)
+            case .syncing(let progress):
                 if let detail = appState.syncProgressDetail, detail.total > 0 {
+                    ProgressView(value: progress)
+                        .controlSize(.small)
+                        .frame(width: 72)
                     Text("Syncing \(min(detail.completed + 1, detail.total)) of \(detail.total)…")
                 } else {
+                    ProgressView()
+                        .controlSize(.small)
                     Text("Syncing…")
                 }
             case .completed:
@@ -310,7 +292,9 @@ struct WorkspaceView: View {
         switch selection {
         case .course(let id):
             if let course = appState.courses.first(where: { $0.id == id }) {
-                CourseDetailView(course: course, isSyncing: isSyncing)
+                CourseDetailView(course: course, isSyncing: isSyncing) {
+                    selection = .gallery
+                }
             } else {
                 ContentUnavailableView(
                     "Course Not Found",
@@ -318,16 +302,10 @@ struct WorkspaceView: View {
                     description: Text("This course is no longer available.")
                 )
             }
-        case .settings:
-            SettingsView()
-        case .diagnostics:
-            DiagnosticsView()
-        case nil:
-            ContentUnavailableView(
-                "Select a Course",
-                systemImage: "books.vertical",
-                description: Text("Choose a course from the sidebar to view its details.")
-            )
+        case .gallery, nil:
+            CourseGalleryView { id in
+                selection = .course(id)
+            }
         }
     }
 

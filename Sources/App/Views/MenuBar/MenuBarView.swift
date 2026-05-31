@@ -25,7 +25,12 @@ struct MenuBarView: View {
         Divider()
 
         Button("Open Findle…", action: showMainWindow)
-            .keyboardShortcut(",", modifiers: .command)
+            .keyboardShortcut("o", modifiers: .command)
+
+        SettingsLink {
+            Text("Settings…")
+        }
+        .keyboardShortcut(",", modifiers: .command)
 
         Divider()
 
