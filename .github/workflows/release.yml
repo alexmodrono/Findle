@@ -92,6 +92,19 @@ jobs:
           DEVELOPMENT_TEAM = ${{ secrets.TEAM_ID }}
           XCCONFIG
 
+          # The bundled MCP helper (FindleMCP) ships inside the app's Contents/MacOS.
+          # It must be Developer ID-signed with the same team as the embedded
+          # frameworks, or the hardened runtime's library validation refuses to
+          # load SharedDomain/FoodlePersistence at runtime (and notarization
+          # rejects an ad-hoc nested executable). A CLI tool needs no provisioning
+          # profile. Overwrites the gitignored local include used for dev builds.
+          cat > Config/MCP.xcconfig <<XCCONFIG
+          CODE_SIGN_STYLE = Manual
+          CODE_SIGN_IDENTITY = Developer ID Application
+          DEVELOPMENT_TEAM = ${{ secrets.TEAM_ID }}
+          OTHER_CODE_SIGN_FLAGS = --keychain $KEYCHAIN_PATH
+          XCCONFIG
+
       - name: Generate Xcode project
         run: xcodegen generate
 
