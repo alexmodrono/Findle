@@ -19,7 +19,7 @@ import OSLog
 enum ClaudeIntegration {
     private static let logger = Logger(subsystem: "es.amodrono.foodle", category: "ClaudeIntegration")
 
-    enum Target: CaseIterable {
+    enum Target: CaseIterable, Hashable {
         case desktop
         case code
 
@@ -62,6 +62,17 @@ enum ClaudeIntegration {
     /// Path of the MCP helper bundled inside the app.
     static var helperPath: String? {
         Bundle.main.url(forAuxiliaryExecutable: "FindleMCP")?.path
+    }
+
+    /// Whether a `findle` MCP server is already registered with `target`. Returns
+    /// `false` if the config is missing or unreadable.
+    static func isInstalled(_ target: Target) -> Bool {
+        guard let data = try? Data(contentsOf: target.configURL),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let servers = root["mcpServers"] as? [String: Any] else {
+            return false
+        }
+        return servers["findle"] != nil
     }
 
     /// Register the bundled MCP server with `target`, passing the app's actual

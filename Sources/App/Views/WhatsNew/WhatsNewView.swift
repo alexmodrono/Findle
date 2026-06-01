@@ -15,6 +15,7 @@ struct WhatsNewView: View {
 
     @State private var appeared = false
     @State private var toast: String?
+    @State private var installed: Set<ClaudeIntegration.Target> = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,7 +35,10 @@ struct WhatsNewView: View {
         .frame(width: 540, height: 660)
         .background(.background)
         .overlay(alignment: .bottom) { toastView }
-        .onAppear { appeared = true }
+        .onAppear {
+            appeared = true
+            installed = Set(ClaudeIntegration.Target.allCases.filter(ClaudeIntegration.isInstalled))
+        }
     }
 
     // MARK: - Hero
@@ -147,26 +151,39 @@ struct WhatsNewView: View {
     }
 
     private func connectButton(_ target: ClaudeIntegration.Target) -> some View {
-        Button {
+        let isAdded = installed.contains(target)
+        return Button {
             connect(target)
         } label: {
-            Label("Add to \(target.displayName)", systemImage: "plus")
-                .font(.callout.weight(.medium))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
+            Label(
+                isAdded ? "Added to \(target.displayName)" : "Add to \(target.displayName)",
+                systemImage: isAdded ? "checkmark" : "plus"
+            )
+            .font(.callout.weight(.medium))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
         }
         .buttonStyle(.plain)
-        .background(.white.opacity(0.22), in: Capsule())
+        .background(.white.opacity(isAdded ? 0.32 : 0.22), in: Capsule())
         .foregroundStyle(.white)
         .disabled(!target.isLikelyInstalled)
         .opacity(target.isLikelyInstalled ? 1 : 0.5)
-        .help(target.isLikelyInstalled ? "Register Findle's MCP server with \(target.displayName)" : "\(target.displayName) doesn't appear to be installed")
+        .help(helpText(target, isAdded: isAdded))
+    }
+
+    private func helpText(_ target: ClaudeIntegration.Target, isAdded: Bool) -> String {
+        guard target.isLikelyInstalled else { return "\(target.displayName) doesn't appear to be installed" }
+        return isAdded
+            ? "Already registered — re-add to update the path"
+            : "Register Findle's MCP server with \(target.displayName)"
     }
 
     private func connect(_ target: ClaudeIntegration.Target) {
+        let wasAdded = installed.contains(target)
         switch ClaudeIntegration.install(target, databasePath: databasePath) {
         case .installed:
-            showToast("Added to \(target.displayName) — restart it to load Findle's tools.")
+            installed.insert(target)
+            showToast("\(wasAdded ? "Updated" : "Added to") \(target.displayName) — restart it to load Findle's tools.")
         case .copiedToClipboard:
             showToast("Couldn't write the config automatically — it's copied to your clipboard.")
         }
