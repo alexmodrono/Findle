@@ -32,6 +32,8 @@ struct MenuBarView: View {
         }
         .keyboardShortcut(",", modifiers: .command)
 
+        Button("Connect to AI…", action: openConnect)
+
         Divider()
 
         Button("Quit Findle", action: quit)
@@ -85,6 +87,11 @@ struct MenuBarView: View {
 
     private func openInFinder() {
         Task { await appState.openFileProviderInFinder() }
+    }
+
+    private func openConnect() {
+        NSApp.activate()
+        openWindow(id: "mcp-connect")
     }
 
     private func showMainWindow() {

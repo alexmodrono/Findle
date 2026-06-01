@@ -8,6 +8,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var updateController: UpdateController
+    @Environment(\.openWindow) private var openWindow
     @StateObject private var loginItem = LoginItemController()
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
     @AppStorage("notifyOnSyncComplete") private var notifyOnSyncComplete = false
@@ -55,6 +56,18 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 Toggle("Notify when sync completes", isOn: $notifyOnSyncComplete)
+            }
+
+            Section {
+                Button("Connect to AI…") {
+                    openWindow(id: "mcp-connect")
+                }
+            } header: {
+                Text("Assistant")
+            } footer: {
+                Text("Add Findle's tools to Claude, or set up access for ChatGPT.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Account") {

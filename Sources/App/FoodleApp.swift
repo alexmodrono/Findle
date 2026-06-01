@@ -62,6 +62,12 @@ struct FoodleApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1220, height: 820)
 
+        Window("Connect Findle to AI", id: "mcp-connect") {
+            MCPConnectView()
+                .environmentObject(appState)
+        }
+        .windowResizability(.contentSize)
+
         Settings {
             SettingsView()
                 .environmentObject(appState)

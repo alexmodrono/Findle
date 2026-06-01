@@ -6,6 +6,7 @@
 import Foundation
 import AppKit
 import OSLog
+import Security
 
 /// Registers Findle's bundled MCP server with Claude Desktop and Claude Code by
 /// merging a `findle` entry into their JSON config files.
@@ -62,6 +63,25 @@ enum ClaudeIntegration {
     /// Path of the MCP helper bundled inside the app.
     static var helperPath: String? {
         Bundle.main.url(forAuxiliaryExecutable: "FindleMCP")?.path
+    }
+
+    /// A random hex token for the HTTP transport's bearer auth.
+    static func generateToken(bytes count: Int = 24) -> String {
+        var bytes = [UInt8](repeating: 0, count: count)
+        if SecRandomCopyBytes(kSecRandomDefault, count, &bytes) != errSecSuccess {
+            bytes = (0..<count).map { _ in UInt8.random(in: 0...255) }
+        }
+        return bytes.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The Terminal command that runs the bundled MCP helper in HTTP mode, ready
+    /// to copy/paste — pinned to the app's actual database path and bearer token.
+    static func chatGPTCommand(token: String, port: Int, databasePath: String?) -> String {
+        var parts = ["FINDLE_MCP_TOKEN=\"\(token)\""]
+        if let databasePath { parts.append("FINDLE_DB_PATH=\"\(databasePath)\"") }
+        parts.append("\"\(helperPath ?? "FindleMCP")\"")
+        parts.append("--http \(port)")
+        return parts.joined(separator: " ")
     }
 
     /// Whether a `findle` MCP server is already registered with `target`. Returns
