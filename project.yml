@@ -282,6 +282,12 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.mcp
+        # The helper ships only as an embedded copy inside the app (via the app's
+        # copy phase). Without this, the tool also installs to the archive's
+        # Products/usr/local/bin, making the archive multi-product: Xcode then
+        # omits ApplicationProperties and -exportArchive fails to determine a
+        # distribution method ("Unknown Distribution Error").
+        SKIP_INSTALL: true
         # Inherit the team signing identity (no ad-hoc override) so the bundled
         # helper's Team ID matches the app's frameworks — otherwise the hardened
         # runtime's library validation refuses to load them (different Team IDs).
