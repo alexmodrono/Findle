@@ -103,7 +103,7 @@ final class HTTPServer: @unchecked Sendable {
 
 /// A parsed HTTP/1.1 request, or `nil` if the buffer doesn't yet hold a complete
 /// one (headers up to `\r\n\r\n` plus `Content-Length` body bytes).
-private struct HTTPRequest {
+struct HTTPRequest {
     let method: String
     let path: String
     let headers: [String: String]

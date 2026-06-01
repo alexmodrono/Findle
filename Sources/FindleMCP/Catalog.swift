@@ -467,7 +467,7 @@ struct Catalog {
         return entries.first { $0.lastPathComponent.hasPrefix("Findle") }
     }
 
-    private static func bestChildMatch(in directory: URL, name: String) -> URL? {
+    static func bestChildMatch(in directory: URL, name: String) -> URL? {
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else {
             return nil

@@ -25,13 +25,20 @@ final class IndexStore: @unchecked Sendable {
         let snippet: String
     }
 
-    init() throws {
-        let dir = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
-            .appendingPathComponent("Library/Caches/FindleMCP", isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let path = dir.appendingPathComponent("index.db").path
+    /// Opens the index database. `path` is injectable for tests; production uses
+    /// the default cache location.
+    init(path: String? = nil) throws {
+        let resolvedPath: String
+        if let path {
+            resolvedPath = path
+        } else {
+            let dir = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+                .appendingPathComponent("Library/Caches/FindleMCP", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            resolvedPath = dir.appendingPathComponent("index.db").path
+        }
 
-        guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
+        guard sqlite3_open_v2(resolvedPath, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
             throw Failure.open
         }
         sqlite3_busy_timeout(db, 3000)

@@ -44,6 +44,7 @@ schemes:
         - FileProviderTests
         - PersistenceTests
         - SyncEngineTests
+        - FindleMCPTests
     profile:
       config: Release
     analyze:
@@ -71,6 +72,7 @@ schemes:
         - FileProviderTests
         - PersistenceTests
         - SyncEngineTests
+        - FindleMCPTests
     profile:
       config: Nightly
     analyze:
@@ -347,3 +349,19 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.sync-engine-tests
+
+  FindleMCPTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      # Compile the MCP logic into the test bundle (the @main entry is excluded).
+      - path: Sources/FindleMCP
+        excludes:
+          - FindleMCP.swift
+      - path: Tests/FindleMCPTests
+    dependencies:
+      - target: SharedDomain
+      - target: FoodlePersistence
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.mcp-tests
