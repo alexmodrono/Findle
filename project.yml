@@ -268,6 +268,10 @@ targets:
   FindleMCP:
     type: tool
     platform: macOS
+    configFiles:
+      Debug: Config/MCP.xcconfig
+      Nightly: Config/MCP.xcconfig
+      Release: Config/MCP.xcconfig
     sources:
       - path: Sources/FindleMCP
     dependencies:
@@ -278,7 +282,9 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.mcp
-        CODE_SIGN_IDENTITY: "-"
+        # Inherit the team signing identity (no ad-hoc override) so the bundled
+        # helper's Team ID matches the app's frameworks — otherwise the hardened
+        # runtime's library validation refuses to load them (different Team IDs).
         # Find the linked frameworks both standalone (next to the binary in the
         # build products dir) and when bundled into the app as a helper, where
         # they live in the app's Contents/Frameworks.
