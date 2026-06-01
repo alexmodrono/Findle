@@ -44,12 +44,19 @@ schemes:
         - FileProviderTests
         - PersistenceTests
         - SyncEngineTests
+        - FindleMCPTests
     profile:
       config: Release
     analyze:
       config: Debug
     archive:
       config: Release
+  FindleMCP:
+    build:
+      targets:
+        FindleMCP: all
+    run:
+      config: Debug
   Foodle-Nightly:
     build:
       targets:
@@ -65,6 +72,7 @@ schemes:
         - FileProviderTests
         - PersistenceTests
         - SyncEngineTests
+        - FindleMCPTests
     profile:
       config: Nightly
     analyze:
@@ -82,12 +90,16 @@ packages:
   WhatsNewKit:
     url: https://github.com/SvenTiigi/WhatsNewKit
     from: 2.2.1
+  MCP:
+    url: https://github.com/modelcontextprotocol/swift-sdk
+    from: 0.12.1
 
 targets:
   Foodle:
     type: application
     platform: macOS
     configFiles:
+      Debug: Config/Debug-App.xcconfig
       Nightly: Config/Nightly-App.xcconfig
       Release: Config/Release-App.xcconfig
     attributes:
@@ -106,12 +118,14 @@ targets:
       - target: FoodleFileProvider
         embed: true
         codeSign: true
+      - target: FindleMCP
+        copy:
+          destination: executables
+          codeSign: true
       - package: Airlock
         product: Airlock
       - package: Sparkle
         product: Sparkle
-      - package: WhatsNewKit
-        product: WhatsNewKit
       - sdk: CoreSpotlight.framework
     settings:
       base:
@@ -197,6 +211,7 @@ targets:
     type: app-extension
     platform: macOS
     configFiles:
+      Debug: Config/Debug-FileProvider.xcconfig
       Nightly: Config/Nightly-FileProvider.xcconfig
       Release: Config/Release-FileProvider.xcconfig
     attributes:
@@ -249,6 +264,33 @@ targets:
             - NSExtensionFileProviderActionIdentifier: $(FOODLE_BUNDLE_PREFIX).action.remove-download
               NSExtensionFileProviderActionName: Remove Download
               NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
+
+  FindleMCP:
+    type: tool
+    platform: macOS
+    configFiles:
+      Debug: Config/MCP.xcconfig
+      Nightly: Config/MCP.xcconfig
+      Release: Config/MCP.xcconfig
+    sources:
+      - path: Sources/FindleMCP
+    dependencies:
+      - target: SharedDomain
+      - target: FoodlePersistence
+      - package: MCP
+        product: MCP
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.mcp
+        # Inherit the team signing identity (no ad-hoc override) so the bundled
+        # helper's Team ID matches the app's frameworks — otherwise the hardened
+        # runtime's library validation refuses to load them (different Team IDs).
+        # Find the linked frameworks both standalone (next to the binary in the
+        # build products dir) and when bundled into the app as a helper, where
+        # they live in the app's Contents/Frameworks.
+        LD_RUNPATH_SEARCH_PATHS:
+          - "@executable_path"
+          - "@executable_path/../Frameworks"
 
   SharedDomainTests:
     type: bundle.unit-test
@@ -313,3 +355,19 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.sync-engine-tests
+
+  FindleMCPTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      # Compile the MCP logic into the test bundle (the @main entry is excluded).
+      - path: Sources/FindleMCP
+        excludes:
+          - FindleMCP.swift
+      - path: Tests/FindleMCPTests
+    dependencies:
+      - target: SharedDomain
+      - target: FoodlePersistence
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.mcp-tests

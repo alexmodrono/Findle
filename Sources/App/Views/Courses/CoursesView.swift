@@ -9,6 +9,7 @@ import SharedDomain
 struct CourseRow: View {
     let course: MoodleCourse
     let tags: [FinderTag]
+    var syncState: CourseSubscriptionState?
 
     private var iconName: String {
         course.customIconName ?? "folder.fill"
@@ -22,39 +23,62 @@ struct CourseRow: View {
         return course.fullName
     }
 
+    /// Trailing status glyph — a spinner while this course syncs, an alert badge
+    /// on failure, and nothing otherwise (rows stay calm when up to date).
+    @ViewBuilder
+    private var syncIndicator: some View {
+        switch syncState {
+        case .syncing:
+            ProgressView()
+                .controlSize(.small)
+        case .error:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        default:
+            EmptyView()
+        }
+    }
+
     var body: some View {
-        Label {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(primaryText)
-                    .lineLimit(2)
+        HStack(spacing: 6) {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(primaryText)
+                        .lineLimit(2)
 
-                if course.customFolderName != nil &&
-                   !(course.customFolderName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(course.fullName)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                } else {
-                    Text(course.shortName)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
+                    if course.customFolderName != nil &&
+                       !(course.customFolderName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(course.fullName)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    } else {
+                        Text(course.shortName)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
 
-                if !tags.isEmpty {
-                    HStack(spacing: 4) {
-                        ForEach(tags, id: \.self) { tag in
-                            Circle()
-                                .fill(tag.color.swiftUIColor)
-                                .frame(width: 7, height: 7)
+                    if !tags.isEmpty {
+                        HStack(spacing: 4) {
+                            ForEach(tags, id: \.self) { tag in
+                                Circle()
+                                    .fill(tag.color.swiftUIColor)
+                                    .frame(width: 7, height: 7)
+                            }
                         }
                     }
                 }
+            } icon: {
+                Image(systemName: iconName)
+                    .foregroundStyle(course.isSyncEnabled ? .secondary : .quaternary)
             }
-        } icon: {
-            Image(systemName: iconName)
-                .foregroundStyle(course.isSyncEnabled ? .secondary : .quaternary)
+            .opacity(course.isSyncEnabled ? 1.0 : 0.5)
+
+            Spacer(minLength: 4)
+
+            syncIndicator
         }
-        .opacity(course.isSyncEnabled ? 1.0 : 0.5)
         .padding(.vertical, 1)
     }
 }

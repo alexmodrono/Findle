@@ -30,6 +30,22 @@ struct FoodleApp: App {
                     appState.handleSpotlightActivity(activity)
                 }
                 .onOpenURL { url in
+                    // findle://sync[?course=<id>] — the MCP server's broker asks
+                    // the app (which holds the token) to pull fresh content.
+                    if url.host == "sync" {
+                        let courseID = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                            .queryItems?.first { $0.name == "course" }?.value
+                            .flatMap(Int.init)
+                        Task {
+                            if appState.courses.isEmpty { await appState.loadCourses() }
+                            if let courseID, let course = appState.courses.first(where: { $0.id == courseID }) {
+                                await appState.syncCourse(course)
+                            } else {
+                                await appState.syncAll()
+                            }
+                        }
+                        return
+                    }
                     // Consume SSO callback URLs (findle://token=…) that arrive
                     // after relaunch.  In-flight SSO sessions handle the callback
                     // themselves; stale URLs delivered on a cold start can be
@@ -45,6 +61,12 @@ struct FoodleApp: App {
         // documents; the workspace's toolbar still renders in the title area.
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1220, height: 820)
+
+        Window("Connect Findle to AI", id: "mcp-connect") {
+            MCPConnectView()
+                .environmentObject(appState)
+        }
+        .windowResizability(.contentSize)
 
         Settings {
             SettingsView()

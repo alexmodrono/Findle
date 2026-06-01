@@ -23,9 +23,30 @@ public final class Database: @unchecked Sendable {
     private let path: String
     public var filePath: String { path }
 
-    public static let schemaVersion = 11
+    /// The on-disk path of the shared database inside the App Group container,
+    /// built by hand from the user's home directory so a non-sandboxed helper
+    /// (the MCP server) can locate it without the App Group entitlement.
+    public static var sharedContainerDatabasePath: String {
+        URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("Library/Group Containers/\(appGroupIdentifier)/Application Support/Foodle/foodle.db")
+            .path
+    }
 
-    public init(path: String? = nil) throws {
+    public static let schemaVersion = 13
+
+    /// Opens the database.
+    ///
+    /// - Parameter readOnly: when `true`, opens as a pure reader and skips all
+    ///   schema creation/migration. Used by the MCP server, a third reader on
+    ///   the shared WAL database — the app remains the single writer.
+    ///
+    ///   The handle is opened `READWRITE` (not `READONLY`) on purpose: a true
+    ///   `SQLITE_OPEN_READONLY` connection cannot reliably read rows still in the
+    ///   `-wal` file (it sees only the last checkpoint), so it would miss data
+    ///   the live app hasn't checkpointed yet. `PRAGMA query_only = ON` then
+    ///   makes any write attempt an error, preserving read-only semantics while
+    ///   getting full WAL visibility.
+    public init(path: String? = nil, readOnly: Bool = false) throws {
         if let path = path {
             self.path = path
         } else {
@@ -55,7 +76,9 @@ public final class Database: @unchecked Sendable {
         }
 
         var dbPointer: OpaquePointer?
-        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+        let flags = readOnly
+            ? (SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX)
+            : (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX)
         let status = sqlite3_open_v2(self.path, &dbPointer, flags, nil)
         guard status == SQLITE_OK, let pointer = dbPointer else {
             let message = dbPointer.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "Unknown error"
@@ -67,6 +90,16 @@ public final class Database: @unchecked Sendable {
         // extension reading concurrently under WAL, lock contention is normal
         // and short retries inside SQLite are cheaper than surfacing errors.
         sqlite3_busy_timeout(pointer, 5000)
+
+        if readOnly {
+            // A pure reader: don't touch journal mode (can't, on a read-only
+            // handle) and never create or migrate the schema. `query_only`
+            // turns any accidental write into an error rather than a silent
+            // mutation of the app's database.
+            try execute("PRAGMA query_only = ON")
+            logger.info("Database opened read-only at \(self.path, privacy: .public)")
+            return
+        }
 
         // Enable WAL mode for better concurrent performance
         try execute("PRAGMA journal_mode = WAL")
@@ -211,6 +244,63 @@ public final class Database: @unchecked Sendable {
                 tag_name TEXT NOT NULL,
                 tag_color INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (course_id, site_id, tag_name)
+            )
+        """)
+
+        // MARK: Read-only coursework tracking (deadlines, grades, quizzes)
+
+        try execute("""
+            CREATE TABLE IF NOT EXISTS assignments (
+                id INTEGER NOT NULL,
+                site_id TEXT NOT NULL,
+                course_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                due_date REAL,
+                cutoff_date REAL,
+                submitted INTEGER NOT NULL DEFAULT 0,
+                graded INTEGER NOT NULL DEFAULT 0,
+                grade TEXT,
+                PRIMARY KEY (id, site_id)
+            )
+        """)
+
+        try execute("""
+            CREATE TABLE IF NOT EXISTS grade_items (
+                id INTEGER NOT NULL,
+                site_id TEXT NOT NULL,
+                course_id INTEGER NOT NULL,
+                item_name TEXT NOT NULL,
+                grade TEXT,
+                percentage TEXT,
+                feedback TEXT,
+                PRIMARY KEY (id, site_id, course_id)
+            )
+        """)
+
+        try execute("""
+            CREATE TABLE IF NOT EXISTS quizzes (
+                id INTEGER NOT NULL,
+                site_id TEXT NOT NULL,
+                course_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                open_date REAL,
+                close_date REAL,
+                time_limit INTEGER,
+                PRIMARY KEY (id, site_id)
+            )
+        """)
+
+        try execute("""
+            CREATE TABLE IF NOT EXISTS quiz_attempts (
+                id INTEGER NOT NULL,
+                site_id TEXT NOT NULL,
+                quiz_id INTEGER NOT NULL,
+                attempt_number INTEGER NOT NULL,
+                state TEXT NOT NULL,
+                sum_grades REAL,
+                start_time REAL,
+                finish_time REAL,
+                PRIMARY KEY (id, site_id)
             )
         """)
 
@@ -421,6 +511,23 @@ public final class Database: @unchecked Sendable {
                 END
             """)
             logger.info("Migrated database schema to version 11 (monotonic change counter)")
+        }
+
+        if currentVersion < 12 {
+            // v11 -> v12: add the Moodle overview/banner image URL used as a
+            // gallery cover. Nullable; populated on the next course fetch.
+            let courseColumns = try existingColumns(table: "courses")
+            if !courseColumns.contains("image_url") {
+                try execute("ALTER TABLE courses ADD COLUMN image_url TEXT")
+            }
+            logger.info("Migrated database schema to version 12 (course cover images)")
+        }
+
+        if currentVersion < 13 {
+            // v12 -> v13: read-only coursework tracking tables (assignments,
+            // grade_items, quizzes, quiz_attempts). Created in createSchema()
+            // with IF NOT EXISTS, so this is just the version marker.
+            logger.info("Migrated database schema to version 13 (coursework tracking)")
         }
 
         try execute("PRAGMA user_version = \(Self.schemaVersion)")
@@ -671,8 +778,8 @@ extension Database {
         let sql = """
             INSERT INTO courses (id, site_id, short_name, full_name, summary,
                 category_id, start_date, end_date, last_accessed, visible, subscription_state,
-                custom_folder_name, custom_icon_name)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                custom_folder_name, custom_icon_name, image_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id, site_id) DO UPDATE SET
                 short_name = excluded.short_name,
                 full_name = excluded.full_name,
@@ -684,7 +791,8 @@ extension Database {
                 visible = excluded.visible,
                 subscription_state = courses.subscription_state,
                 custom_folder_name = COALESCE(courses.custom_folder_name, excluded.custom_folder_name),
-                custom_icon_name = COALESCE(courses.custom_icon_name, excluded.custom_icon_name)
+                custom_icon_name = COALESCE(courses.custom_icon_name, excluded.custom_icon_name),
+                image_url = excluded.image_url
         """
         try queue.sync {
             try executeUnsafe("BEGIN TRANSACTION")
@@ -716,6 +824,11 @@ extension Database {
                         sqlite3_bind_text(stmt, 13, (cin as NSString).utf8String, -1, SQLITE_TRANSIENT)
                     } else {
                         sqlite3_bind_null(stmt, 13)
+                    }
+                    if let imageURL = course.imageURL {
+                        sqlite3_bind_text(stmt, 14, (imageURL.absoluteString as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    } else {
+                        sqlite3_bind_null(stmt, 14)
                     }
 
                     guard sqlite3_step(stmt) == SQLITE_DONE else {
@@ -757,6 +870,11 @@ extension Database {
                     return sqlite3_column_text(stmt, 12).map { String(cString: $0) }
                 }()
 
+                let imageURL: URL? = {
+                    guard colCount > 13, sqlite3_column_type(stmt, 13) != SQLITE_NULL else { return nil }
+                    return sqlite3_column_text(stmt, 13).map { String(cString: $0) }.flatMap { URL(string: $0) }
+                }()
+
                 courses.append(MoodleCourse(
                     id: Int(sqlite3_column_int64(stmt, 0)),
                     shortName: String(cString: sqlite3_column_text(stmt, 2)),
@@ -770,7 +888,8 @@ extension Database {
                     siteID: siteID,
                     customFolderName: customFolderName,
                     customIconName: customIconName,
-                    isSyncEnabled: subscriptionState != CourseSubscriptionState.unsubscribed.rawValue
+                    isSyncEnabled: subscriptionState != CourseSubscriptionState.unsubscribed.rawValue,
+                    imageURL: imageURL
                 ))
             }
             return courses
@@ -991,6 +1110,17 @@ extension Database {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            return try readItems(from: stmt)
+        }
+    }
+
+    public func fetchItems(courseID: Int, siteID: String) throws -> [LocalItem] {
+        let sql = "SELECT * FROM items WHERE course_id = ? AND site_id = ? ORDER BY is_directory DESC, filename"
+        return try queue.sync {
+            let stmt = try prepareStatement(sql)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int64(stmt, 1, Int64(courseID))
+            sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
             return try readItems(from: stmt)
         }
     }
@@ -1429,6 +1559,243 @@ extension Database {
             }
             return cursors
         }
+    }
+}
+
+// MARK: - Coursework Tracking Operations
+
+extension Database {
+    public func saveAssignments(_ assignments: [MoodleAssignment], siteID: String) throws {
+        try queue.sync {
+            try executeUnsafe("BEGIN TRANSACTION")
+            do {
+                try deleteForSite("assignments", siteID: siteID)
+                let sql = """
+                    INSERT OR REPLACE INTO assignments (id, site_id, course_id, name, due_date, cutoff_date, submitted, graded, grade)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+                for a in assignments {
+                    let stmt = try prepareStatement(sql)
+                    defer { sqlite3_finalize(stmt) }
+                    sqlite3_bind_int64(stmt, 1, Int64(a.id))
+                    sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_int64(stmt, 3, Int64(a.courseID))
+                    sqlite3_bind_text(stmt, 4, (a.name as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    bindOptionalDate(stmt, 5, a.dueDate)
+                    bindOptionalDate(stmt, 6, a.cutoffDate)
+                    sqlite3_bind_int(stmt, 7, a.submitted ? 1 : 0)
+                    sqlite3_bind_int(stmt, 8, a.graded ? 1 : 0)
+                    bindOptionalText(stmt, 9, a.grade)
+                    guard sqlite3_step(stmt) == SQLITE_DONE else {
+                        throw FoodleError.databaseError(detail: "saveAssignments: \(String(cString: sqlite3_errmsg(db)))")
+                    }
+                }
+                try executeUnsafe("COMMIT")
+            } catch {
+                try? executeUnsafe("ROLLBACK")
+                throw error
+            }
+        }
+    }
+
+    public func fetchAssignments(siteID: String) throws -> [MoodleAssignment] {
+        try queue.sync {
+            let stmt = try prepareStatement("SELECT id, course_id, name, due_date, cutoff_date, submitted, graded, grade FROM assignments WHERE site_id = ?")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            var out: [MoodleAssignment] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                out.append(MoodleAssignment(
+                    id: Int(sqlite3_column_int64(stmt, 0)),
+                    courseID: Int(sqlite3_column_int64(stmt, 1)),
+                    name: String(cString: sqlite3_column_text(stmt, 2)),
+                    dueDate: Self.columnDate(stmt, 3),
+                    cutoffDate: Self.columnDate(stmt, 4),
+                    submitted: sqlite3_column_int(stmt, 5) == 1,
+                    graded: sqlite3_column_int(stmt, 6) == 1,
+                    grade: sqlite3_column_text(stmt, 7).map { String(cString: $0) }
+                ))
+            }
+            return out
+        }
+    }
+
+    public func saveGradeItems(_ items: [MoodleGradeItem], siteID: String) throws {
+        try queue.sync {
+            try executeUnsafe("BEGIN TRANSACTION")
+            do {
+                try deleteForSite("grade_items", siteID: siteID)
+                let sql = """
+                    INSERT OR REPLACE INTO grade_items (id, site_id, course_id, item_name, grade, percentage, feedback)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """
+                for g in items {
+                    let stmt = try prepareStatement(sql)
+                    defer { sqlite3_finalize(stmt) }
+                    sqlite3_bind_int64(stmt, 1, Int64(g.id))
+                    sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_int64(stmt, 3, Int64(g.courseID))
+                    sqlite3_bind_text(stmt, 4, (g.itemName as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    bindOptionalText(stmt, 5, g.grade)
+                    bindOptionalText(stmt, 6, g.percentage)
+                    bindOptionalText(stmt, 7, g.feedback)
+                    guard sqlite3_step(stmt) == SQLITE_DONE else {
+                        throw FoodleError.databaseError(detail: "saveGradeItems: \(String(cString: sqlite3_errmsg(db)))")
+                    }
+                }
+                try executeUnsafe("COMMIT")
+            } catch {
+                try? executeUnsafe("ROLLBACK")
+                throw error
+            }
+        }
+    }
+
+    public func fetchGradeItems(siteID: String) throws -> [MoodleGradeItem] {
+        try queue.sync {
+            let stmt = try prepareStatement("SELECT id, course_id, item_name, grade, percentage, feedback FROM grade_items WHERE site_id = ?")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            var out: [MoodleGradeItem] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                out.append(MoodleGradeItem(
+                    id: Int(sqlite3_column_int64(stmt, 0)),
+                    courseID: Int(sqlite3_column_int64(stmt, 1)),
+                    itemName: String(cString: sqlite3_column_text(stmt, 2)),
+                    grade: sqlite3_column_text(stmt, 3).map { String(cString: $0) },
+                    percentage: sqlite3_column_text(stmt, 4).map { String(cString: $0) },
+                    feedback: sqlite3_column_text(stmt, 5).map { String(cString: $0) }
+                ))
+            }
+            return out
+        }
+    }
+
+    public func saveQuizzes(_ quizzes: [MoodleQuiz], siteID: String) throws {
+        try queue.sync {
+            try executeUnsafe("BEGIN TRANSACTION")
+            do {
+                try deleteForSite("quizzes", siteID: siteID)
+                let sql = """
+                    INSERT OR REPLACE INTO quizzes (id, site_id, course_id, name, open_date, close_date, time_limit)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """
+                for q in quizzes {
+                    let stmt = try prepareStatement(sql)
+                    defer { sqlite3_finalize(stmt) }
+                    sqlite3_bind_int64(stmt, 1, Int64(q.id))
+                    sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_int64(stmt, 3, Int64(q.courseID))
+                    sqlite3_bind_text(stmt, 4, (q.name as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    bindOptionalDate(stmt, 5, q.openDate)
+                    bindOptionalDate(stmt, 6, q.closeDate)
+                    if let t = q.timeLimit { sqlite3_bind_int64(stmt, 7, Int64(t)) } else { sqlite3_bind_null(stmt, 7) }
+                    guard sqlite3_step(stmt) == SQLITE_DONE else {
+                        throw FoodleError.databaseError(detail: "saveQuizzes: \(String(cString: sqlite3_errmsg(db)))")
+                    }
+                }
+                try executeUnsafe("COMMIT")
+            } catch {
+                try? executeUnsafe("ROLLBACK")
+                throw error
+            }
+        }
+    }
+
+    public func fetchQuizzes(siteID: String) throws -> [MoodleQuiz] {
+        try queue.sync {
+            let stmt = try prepareStatement("SELECT id, course_id, name, open_date, close_date, time_limit FROM quizzes WHERE site_id = ?")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            var out: [MoodleQuiz] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                out.append(MoodleQuiz(
+                    id: Int(sqlite3_column_int64(stmt, 0)),
+                    courseID: Int(sqlite3_column_int64(stmt, 1)),
+                    name: String(cString: sqlite3_column_text(stmt, 2)),
+                    openDate: Self.columnDate(stmt, 3),
+                    closeDate: Self.columnDate(stmt, 4),
+                    timeLimit: sqlite3_column_type(stmt, 5) != SQLITE_NULL ? Int(sqlite3_column_int64(stmt, 5)) : nil
+                ))
+            }
+            return out
+        }
+    }
+
+    public func saveQuizAttempts(_ attempts: [MoodleQuizAttempt], siteID: String) throws {
+        try queue.sync {
+            try executeUnsafe("BEGIN TRANSACTION")
+            do {
+                try deleteForSite("quiz_attempts", siteID: siteID)
+                let sql = """
+                    INSERT OR REPLACE INTO quiz_attempts (id, site_id, quiz_id, attempt_number, state, sum_grades, start_time, finish_time)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """
+                for a in attempts {
+                    let stmt = try prepareStatement(sql)
+                    defer { sqlite3_finalize(stmt) }
+                    sqlite3_bind_int64(stmt, 1, Int64(a.id))
+                    sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_int64(stmt, 3, Int64(a.quizID))
+                    sqlite3_bind_int64(stmt, 4, Int64(a.attemptNumber))
+                    sqlite3_bind_text(stmt, 5, (a.state as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    if let s = a.sumGrades { sqlite3_bind_double(stmt, 6, s) } else { sqlite3_bind_null(stmt, 6) }
+                    bindOptionalDate(stmt, 7, a.startTime)
+                    bindOptionalDate(stmt, 8, a.finishTime)
+                    guard sqlite3_step(stmt) == SQLITE_DONE else {
+                        throw FoodleError.databaseError(detail: "saveQuizAttempts: \(String(cString: sqlite3_errmsg(db)))")
+                    }
+                }
+                try executeUnsafe("COMMIT")
+            } catch {
+                try? executeUnsafe("ROLLBACK")
+                throw error
+            }
+        }
+    }
+
+    public func fetchQuizAttempts(siteID: String) throws -> [MoodleQuizAttempt] {
+        try queue.sync {
+            let stmt = try prepareStatement("SELECT id, quiz_id, attempt_number, state, sum_grades, start_time, finish_time FROM quiz_attempts WHERE site_id = ?")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            var out: [MoodleQuizAttempt] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                out.append(MoodleQuizAttempt(
+                    id: Int(sqlite3_column_int64(stmt, 0)),
+                    quizID: Int(sqlite3_column_int64(stmt, 1)),
+                    attemptNumber: Int(sqlite3_column_int64(stmt, 2)),
+                    state: String(cString: sqlite3_column_text(stmt, 3)),
+                    sumGrades: sqlite3_column_type(stmt, 4) != SQLITE_NULL ? sqlite3_column_double(stmt, 4) : nil,
+                    startTime: Self.columnDate(stmt, 5),
+                    finishTime: Self.columnDate(stmt, 6)
+                ))
+            }
+            return out
+        }
+    }
+
+    // MARK: Tracking helpers (call inside `queue.sync`)
+
+    private func deleteForSite(_ table: String, siteID: String) throws {
+        let stmt = try prepareStatement("DELETE FROM \(table) WHERE site_id = ?")
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw FoodleError.databaseError(detail: "deleteForSite(\(table)): \(String(cString: sqlite3_errmsg(db)))")
+        }
+    }
+
+    private func bindOptionalDate(_ stmt: OpaquePointer?, _ index: Int32, _ date: Date?) {
+        if let date { sqlite3_bind_double(stmt, index, date.timeIntervalSince1970) } else { sqlite3_bind_null(stmt, index) }
+    }
+
+    private func bindOptionalText(_ stmt: OpaquePointer?, _ index: Int32, _ text: String?) {
+        if let text { sqlite3_bind_text(stmt, index, (text as NSString).utf8String, -1, SQLITE_TRANSIENT) } else { sqlite3_bind_null(stmt, index) }
+    }
+
+    private static func columnDate(_ stmt: OpaquePointer?, _ index: Int32) -> Date? {
+        sqlite3_column_type(stmt, index) != SQLITE_NULL ? Date(timeIntervalSince1970: sqlite3_column_double(stmt, index)) : nil
     }
 }
 

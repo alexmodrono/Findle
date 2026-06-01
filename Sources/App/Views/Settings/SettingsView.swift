@@ -8,6 +8,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var updateController: UpdateController
+    @Environment(\.openWindow) private var openWindow
     @StateObject private var loginItem = LoginItemController()
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
     @AppStorage("notifyOnSyncComplete") private var notifyOnSyncComplete = false
@@ -16,7 +17,7 @@ struct SettingsView: View {
     @AppStorage("enableVerboseLogging") private var verboseLogging = false
 
     @State private var confirmingSignOut = false
-    @State private var confirmingResetProvider = false
+    @State private var showingDiagnostics = false
 
     var body: some View {
         Form {
@@ -55,6 +56,18 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 Toggle("Notify when sync completes", isOn: $notifyOnSyncComplete)
+            }
+
+            Section {
+                Button("Connect to AI…") {
+                    openWindow(id: "mcp-connect")
+                }
+            } header: {
+                Text("Assistant")
+            } footer: {
+                Text("Add Findle's tools to Claude, or set up access for ChatGPT.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Account") {
@@ -133,31 +146,34 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Advanced") {
+            Section {
                 Toggle("Verbose logging", isOn: $verboseLogging)
 
-                Button("Rebuild Index") {
-                    Task { await appState.rebuildIndex() }
+                Button("Diagnostics…") {
+                    showingDiagnostics = true
                 }
-
-                Button("Reset File Provider") {
-                    confirmingResetProvider = true
-                }
-                .confirmationDialog(
-                    "Reset File Provider?",
-                    isPresented: $confirmingResetProvider
-                ) {
-                    Button("Reset", role: .destructive) {
-                        Task { await appState.resetProvider() }
-                    }
-                } message: {
-                    Text("This will remove and re-register the File Provider domain. Downloaded files will need to be re-synced.")
-                }
+            } header: {
+                Text("Advanced")
+            } footer: {
+                Text("Connection details, sync health, and maintenance actions (rebuild index, reset File Provider).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .navigationTitle("Settings")
         .frame(minWidth: 480, idealWidth: 520)
+        .sheet(isPresented: $showingDiagnostics) {
+            NavigationStack {
+                DiagnosticsView()
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showingDiagnostics = false }
+                        }
+                    }
+            }
+            .frame(minWidth: 540, minHeight: 480)
+        }
         .onAppear {
             // System Settings > Login Items can flip our registration state
             // without notifying us, so re-read it whenever Settings reopens.

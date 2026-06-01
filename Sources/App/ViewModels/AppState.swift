@@ -33,10 +33,21 @@ final class AppState: ObservableObject {
     /// Fine-grained progress for the in-flight "sync all" pass, shown in the
     /// workspace. Only meaningful while `syncStatus` is `.syncing`.
     @Published var syncProgressDetail: SyncProgressDetail?
+    /// Per-course sync state, driving the sidebar status indicators and the
+    /// course-detail status pill. Seeded from sync cursors at load and updated
+    /// live from the engine during a sync.
+    @Published var courseSyncStates: [Int: CourseSubscriptionState] = [:]
+    /// Downloaded Moodle cover images, keyed by course id. Populated lazily from
+    /// the on-disk cache; the gallery falls back to a generated tile when absent.
+    @Published private(set) var courseCoverImages: [Int: NSImage] = [:]
 
     private let moodleClient = MoodleClient()
     private var database: Database?
     private var databaseSecurityScopedURL: URL?
+
+    /// On-disk path of the shared database, passed to the bundled MCP helper when
+    /// registering it with Claude so it reads the right App Group container.
+    var databaseFilePath: String? { database?.filePath }
     private(set) var syncEngine: SyncEngine?
     private(set) var currentToken: AuthToken?
     private(set) var currentSite: MoodleSite?
@@ -74,6 +85,24 @@ final class AppState: ObservableObject {
         var completed: Int
         var total: Int
         var courseName: String
+    }
+
+    /// A content + status snapshot for one course, used by the detail overview.
+    /// Derived from the local `items` table and the course's sync cursor.
+    struct CourseContents: Equatable {
+        struct Section: Identifiable, Equatable {
+            let id: String
+            let name: String
+            let fileCount: Int
+        }
+
+        var sections: [Section] = []
+        var fileCount: Int = 0
+        var totalBytes: Int64 = 0
+        var downloadedCount: Int = 0
+        var lastSynced: Date?
+
+        static let empty = CourseContents()
     }
 
     private static let syncOnLaunchKey = "syncOnLaunch"
@@ -592,6 +621,8 @@ final class AppState: ObservableObject {
             // Re-read from database to pick up persisted custom folder names
             courses = try database?.fetchCourses(siteID: site.id) ?? remoteCourses
             reloadCourseTags()
+            seedCourseSyncStatesFromCursors(siteID: site.id)
+            loadCourseCovers()
             logger.info("Loaded \(self.courses.count) courses")
         } catch let error as FoodleError where error.requiresReauthentication {
             logger.error("Failed to load courses: session expired")
@@ -599,6 +630,60 @@ final class AppState: ObservableObject {
         } catch {
             logger.error("Failed to load courses: \(error.localizedDescription, privacy: .public)")
             errorMessage = error.localizedDescription
+        }
+    }
+
+    // MARK: - Course Covers
+
+    /// On-disk cache directory for downloaded course cover images.
+    private var coverCacheDirectory: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("CourseCovers", isDirectory: true)
+    }
+
+    /// Populate `courseCoverImages` from the cache, downloading any missing cover
+    /// for courses that expose a Moodle overview image. Courses without an image
+    /// are skipped — the gallery shows a generated tile for them.
+    private func loadCourseCovers() {
+        guard let token = currentToken else { return }
+        for course in courses {
+            guard let remoteURL = course.imageURL, courseCoverImages[course.id] == nil else { continue }
+
+            // Key the cache file by site too, so a colliding course id across
+            // two Moodle sites can't serve the wrong site's cover.
+            let destination = coverCacheDirectory.appendingPathComponent("\(course.siteID)-\(course.id)")
+            if let cached = NSImage(contentsOf: destination) {
+                courseCoverImages[course.id] = cached
+                continue
+            }
+
+            Task { await downloadCover(courseID: course.id, from: remoteURL, token: token, to: destination) }
+        }
+    }
+
+    private func downloadCover(courseID: Int, from remoteURL: URL, token: AuthToken, to destination: URL) async {
+        do {
+            try await moodleClient.downloadFile(url: remoteURL, token: token, destination: destination)
+            if let image = NSImage(contentsOf: destination) {
+                courseCoverImages[courseID] = image
+            } else {
+                // The download wasn't a valid image (e.g. an HTML error body):
+                // drop it so a stale bad file doesn't linger and the next launch
+                // can re-attempt cleanly.
+                try? FileManager.default.removeItem(at: destination)
+            }
+        } catch {
+            logger.debug("Course cover download failed for \(courseID): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Mark courses that already have a sync cursor as `.synced` so the sidebar
+    /// reflects prior syncs after a relaunch, before any live engine state.
+    private func seedCourseSyncStatesFromCursors(siteID: String) {
+        guard let database else { return }
+        let cursors = (try? database.fetchAllSyncCursors(siteID: siteID)) ?? []
+        for cursor in cursors where courseSyncStates[cursor.courseID] == nil {
+            courseSyncStates[cursor.courseID] = .synced
         }
     }
 
@@ -702,6 +787,90 @@ final class AppState: ObservableObject {
         return (try? db.fetchCourseTags(courseID: course.id, siteID: course.siteID)) ?? []
     }
 
+    /// Group `courses` by their Finder tags for the sidebar and gallery. Returns
+    /// one entry per tag in use (sorted by name), then a trailing `nil`-tag entry
+    /// for untagged courses. Empty when no tags exist anywhere.
+    func tagSections(for courses: [MoodleCourse]) -> [(tag: FinderTag?, courses: [MoodleCourse])] {
+        let allTags = courseTags
+
+        var usedTags: [FinderTag] = []
+        var seen = Set<String>()
+        for tags in allTags.values {
+            for tag in tags where !seen.contains(tag.name) {
+                usedTags.append(tag)
+                seen.insert(tag.name)
+            }
+        }
+        usedTags.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
+        guard !usedTags.isEmpty else { return [] }
+
+        var sections: [(tag: FinderTag?, courses: [MoodleCourse])] = []
+        for tag in usedTags {
+            let matching = courses.filter { course in
+                allTags[course.id]?.contains(where: { $0.name == tag.name }) ?? false
+            }
+            if !matching.isEmpty {
+                sections.append((tag: tag, courses: matching))
+            }
+        }
+
+        let untagged = courses.filter { allTags[$0.id]?.isEmpty ?? true }
+        if !untagged.isEmpty {
+            sections.append((tag: nil, courses: untagged))
+        }
+
+        return sections
+    }
+
+    /// Build a content + status snapshot for `course` from the local database:
+    /// file count, total size, downloaded count, last-synced time, and the
+    /// top-level sections with the number of files each contains.
+    func courseContents(for course: MoodleCourse) -> CourseContents {
+        guard let db = database else { return .empty }
+        guard let items = try? db.fetchItems(courseID: course.id, siteID: course.siteID),
+              !items.isEmpty else {
+            // No items yet, but a cursor may still record a prior sync time.
+            let lastSynced = (try? db.fetchSyncCursor(courseID: course.id, siteID: course.siteID))?.lastSyncDate
+            return CourseContents(lastSynced: lastSynced)
+        }
+
+        let files = items.filter { !$0.isDirectory }
+        let fileCount = files.count
+        let totalBytes = files.reduce(Int64(0)) { $0 + $1.fileSize }
+        let downloadedCount = files.filter { $0.syncState == .materialized }.count
+
+        // Children grouped by parent, so we can count files anywhere beneath a
+        // section (modules may nest files inside folders).
+        let childrenByParent = Dictionary(grouping: items, by: { $0.parentID })
+        func descendantFileCount(under id: String) -> Int {
+            var total = 0
+            for child in childrenByParent[id] ?? [] {
+                if child.isDirectory {
+                    total += descendantFileCount(under: child.id)
+                } else {
+                    total += 1
+                }
+            }
+            return total
+        }
+
+        let courseRootID = "course-\(course.siteID)-\(course.id)"
+        let sections = (childrenByParent[courseRootID] ?? [])
+            .filter { $0.isDirectory }
+            .map { CourseContents.Section(id: $0.id, name: $0.filename, fileCount: descendantFileCount(under: $0.id)) }
+
+        let lastSynced = (try? db.fetchSyncCursor(courseID: course.id, siteID: course.siteID))?.lastSyncDate
+
+        return CourseContents(
+            sections: sections,
+            fileCount: fileCount,
+            totalBytes: totalBytes,
+            downloadedCount: downloadedCount,
+            lastSynced: lastSynced
+        )
+    }
+
     func updateCourseTags(for course: MoodleCourse, tags: [FinderTag]) {
         guard let db = database, let site = currentSite else { return }
         do {
@@ -730,6 +899,9 @@ final class AppState: ObservableObject {
         syncProgressDetail = enabledCourses.isEmpty
             ? nil
             : SyncProgressDetail(completed: 0, total: enabledCourses.count, courseName: enabledCourses[0].shortName)
+        for course in enabledCourses {
+            courseSyncStates[course.id] = .syncing
+        }
 
         // Poll the engine for per-course progress while the sync runs so the
         // workspace can show "syncing X of Y".
@@ -737,6 +909,9 @@ final class AppState: ObservableObject {
             while !Task.isCancelled {
                 guard let self else { return }
                 let progress = await engine.allProgress()
+                for (id, courseProgress) in progress {
+                    self.courseSyncStates[id] = courseProgress.state
+                }
                 let completed = enabledCourses.filter { (progress[$0.id]?.state ?? .syncing) != .syncing }.count
                 let current = enabledCourses.first { (progress[$0.id]?.state ?? .syncing) == .syncing }
                 self.syncProgressDetail = SyncProgressDetail(
@@ -755,11 +930,18 @@ final class AppState: ObservableObject {
         do {
             try await engine.syncAllCourses(site: site, token: token, courses: enabledCourses)
             progressTask.cancel()
+            let finalProgress = await engine.allProgress()
+            for course in enabledCourses {
+                courseSyncStates[course.id] = finalProgress[course.id]?.state ?? .synced
+            }
             syncStatus = .completed
             lastSyncDate = Date()
             signalFileProviderChanges()
             indexForSpotlight()
             notifySyncCompletedIfEnabled(courseCount: enabledCourses.count)
+            // Refresh deadlines/grades/quizzes in the background so it doesn't
+            // delay the content sync's completion. Best-effort.
+            Task { await refreshTracking() }
         } catch let error as FoodleError where error.requiresReauthentication {
             progressTask.cancel()
             handleSessionExpired()
@@ -768,6 +950,9 @@ final class AppState: ObservableObject {
             syncStatus = .idle
         } catch {
             progressTask.cancel()
+            for course in enabledCourses where courseSyncStates[course.id] == .syncing {
+                courseSyncStates[course.id] = .error
+            }
             syncStatus = .error(error.localizedDescription)
             errorMessage = error.localizedDescription
         }
@@ -778,19 +963,102 @@ final class AppState: ObservableObject {
 
         errorMessage = nil
         syncStatus = .syncing(progress: 0)
+        courseSyncStates[course.id] = .syncing
 
         do {
             try await engine.syncCourse(site: site, token: token, course: course)
+            courseSyncStates[course.id] = .synced
             syncStatus = .completed
             lastSyncDate = Date()
             signalFileProviderChanges()
         } catch let error as FoodleError where error.requiresReauthentication {
             handleSessionExpired()
         } catch is CancellationError {
+            courseSyncStates[course.id] = .stale
             syncStatus = .idle
         } catch {
+            courseSyncStates[course.id] = .error
             syncStatus = .error(error.localizedDescription)
             errorMessage = error.localizedDescription
+        }
+    }
+
+    // MARK: - Coursework Tracking
+
+    /// Fetch read-only coursework tracking (assignments + submission status,
+    /// grades, quizzes + attempts) for the sync-enabled courses and store it for
+    /// the MCP server. Best-effort, but a *failed* list fetch is never persisted
+    /// as an empty result — the replace-all saves would otherwise wipe good data
+    /// on a transient network/token error. Independent per-item calls run with
+    /// bounded concurrency instead of one-at-a-time.
+    func refreshTracking() async {
+        guard let site = currentSite, let token = currentToken, let db = database,
+              let userID = accounts.first?.userID else { return }
+        let courseIDs = courses.filter(\.isSyncEnabled).map(\.id)
+        guard !courseIDs.isEmpty else { return }
+        let client = moodleClient
+
+        // Assignments (+ submission status). Persist only if the list fetch worked.
+        if let base = try? await client.fetchAssignments(site: site, token: token, courseIDs: courseIDs) {
+            let enriched = await Self.boundedMap(base) { assignment in
+                var a = assignment
+                if let status = try? await client.fetchSubmissionStatus(site: site, token: token, assignmentID: assignment.id) {
+                    a.submitted = status.submitted
+                    a.graded = status.graded
+                    a.grade = status.grade
+                }
+                return a
+            }
+            try? db.saveAssignments(enriched, siteID: site.id)
+        }
+
+        // Grades, per course. Skip the save entirely if every course fetch failed.
+        let gradeResults = await Self.boundedMap(courseIDs) { courseID -> [MoodleGradeItem]? in
+            try? await client.fetchGrades(site: site, token: token, courseID: courseID, userID: userID)
+        }
+        if gradeResults.contains(where: { $0 != nil }) {
+            try? db.saveGradeItems(gradeResults.compactMap { $0 }.flatMap { $0 }, siteID: site.id)
+        }
+
+        // Quizzes (+ attempts). Persist only if the quiz-list fetch worked.
+        if let quizzes = try? await client.fetchQuizzes(site: site, token: token, courseIDs: courseIDs) {
+            try? db.saveQuizzes(quizzes, siteID: site.id)
+
+            let attemptResults = await Self.boundedMap(quizzes) { quiz -> [MoodleQuizAttempt]? in
+                try? await client.fetchQuizAttempts(site: site, token: token, quizID: quiz.id, userID: userID)
+            }
+            if attemptResults.contains(where: { $0 != nil }) {
+                try? db.saveQuizAttempts(attemptResults.compactMap { $0 }.flatMap { $0 }, siteID: site.id)
+            }
+        }
+
+        logger.info("Tracking refresh complete")
+    }
+
+    /// Run `transform` over `items` with a bounded number of concurrent tasks.
+    private static func boundedMap<T: Sendable, R: Sendable>(
+        _ items: [T],
+        maxConcurrency: Int = 5,
+        _ transform: @escaping @Sendable (T) async -> R
+    ) async -> [R] {
+        guard !items.isEmpty else { return [] }
+        return await withTaskGroup(of: (Int, R).self) { group in
+            var results = [R?](repeating: nil, count: items.count)
+            var next = 0
+            for _ in 0..<min(maxConcurrency, items.count) {
+                let index = next
+                next += 1
+                group.addTask { (index, await transform(items[index])) }
+            }
+            while let (index, value) = await group.next() {
+                results[index] = value
+                if next < items.count {
+                    let index = next
+                    next += 1
+                    group.addTask { (index, await transform(items[index])) }
+                }
+            }
+            return results.compactMap { $0 }
         }
     }
 
@@ -957,6 +1225,10 @@ final class AppState: ObservableObject {
         sites = []
         courses = []
         courseTags = [:]
+        // Clear per-course caches keyed by course id so they can't leak across
+        // a sign-out/site-switch where a course id collides with the next site.
+        courseSyncStates = [:]
+        courseCoverImages = [:]
         validatedSitesByURL.removeAll()
         currentSite = nil
         currentToken = nil

@@ -1,0 +1,20 @@
+// Local code-signing configuration (TEMPLATE).
+//
+// Copy this file to `Config/Signing.local.xcconfig` and set your Apple
+// Developer Team ID. The real file is gitignored, so your team ID never lands
+// in version control, and `xcodegen generate` keeps it wired up automatically
+// across regenerations.
+//
+//     cp Config/Signing.local.xcconfig.example Config/Signing.local.xcconfig
+//     # then edit the copy and paste your Team ID
+//
+// Find your Team ID at https://developer.apple.com/account → Membership details
+// (a 10-character string like "A1B2C3D4E5"), or run:
+//
+//     security find-identity -v -p codesigning
+//
+// Local Debug/Nightly builds use Automatic signing with this team. CI overrides
+// signing entirely from secrets, so this file is local-only and never required
+// for the release pipeline.
+
+DEVELOPMENT_TEAM = YOUR_TEAM_ID

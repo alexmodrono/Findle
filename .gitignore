@@ -50,6 +50,7 @@ Package.resolved
 *.env
 .env.*
 Secrets/
+Config/Signing.local.xcconfig
 
 # Local-only workspace content
 Docs/

@@ -1,0 +1,10 @@
+// Build settings for the bundled MCP helper (FindleMCP).
+//
+// Pulls in the local Team ID (gitignored) so the helper signs with the same
+// team as the app's embedded frameworks. The hardened runtime's library
+// validation refuses to load frameworks signed by a different team, so an
+// ad-hoc helper inside a team-signed app can't load SharedDomain/FoodlePersistence.
+//
+// The include is optional: CI / contributors without a team build with
+// CODE_SIGNING_ALLOWED=NO, which skips signing entirely.
+#include? "Signing.local.xcconfig"

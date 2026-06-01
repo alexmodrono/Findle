@@ -1,4 +1,5 @@
 #include "Release-Base.xcconfig"
+#include? "Signing.local.xcconfig"
 
 APPLICATION_EXTENSION_API_ONLY = YES
 VALIDATE_PRODUCT = YES

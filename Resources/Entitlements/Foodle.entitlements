@@ -21,5 +21,13 @@
         <string>$(PRODUCT_BUNDLE_IDENTIFIER)-spks</string>
         <string>$(PRODUCT_BUNDLE_IDENTIFIER)-spki</string>
     </array>
+    <!-- Lets the "Connect to Claude" feature register the bundled MCP server by
+         writing the Claude Desktop / Claude Code config files. Scoped to exactly
+         those paths; permitted for non-Mac-App-Store (.dmg / Homebrew) builds. -->
+    <key>com.apple.security.temporary-exception.files.home-relative-path.read-write</key>
+    <array>
+        <string>/Library/Application Support/Claude/</string>
+        <string>/.claude.json</string>
+    </array>
 </dict>
 </plist>

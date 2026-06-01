@@ -1,0 +1,6 @@
+// Debug configuration for the File Provider extension target.
+//
+// See Debug-App.xcconfig. The extension needs the same Team ID so its app-group
+// and File Provider entitlements resolve under Automatic signing.
+
+#include? "Signing.local.xcconfig"
