@@ -31,10 +31,11 @@ struct ContentView: View {
     }
 
     private func evaluateWhatsNew() {
-        if lastWhatsNewVersion.isEmpty {
-            // Fresh install — record the version without showing the sheet.
-            lastWhatsNewVersion = WhatsNewRelease.current.version
-        } else if lastWhatsNewVersion != WhatsNewRelease.current.version {
+        // Show the showcase whenever the user hasn't seen the current release —
+        // fresh installs included. The sheet is only attached to the workspace,
+        // so onboarding is never interrupted, and `lastWhatsNewVersion` is
+        // stamped to the current version when the sheet is dismissed.
+        if lastWhatsNewVersion != WhatsNewRelease.current.version {
             showWhatsNew = true
         }
     }

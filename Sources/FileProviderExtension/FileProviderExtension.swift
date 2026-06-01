@@ -16,7 +16,6 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     let logger = Logger(subsystem: "es.amodrono.foodle.file-provider", category: "Extension")
     private let stateLock = NSLock()
     private var _database: Database?
-    private var databaseSecurityScopedURL: URL?
     private var rootContainerName: String {
         "Findle-\(FileNameSanitizer.sanitize(domain.displayName))"
     }
@@ -32,7 +31,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     /// Lazily resolve the database, retrying until the main app has finished seeding it.
     ///
     /// File Provider requests can arrive concurrently, so the resolution path is
-    /// serialized to avoid racing on the cached database and security-scoped URL.
+    /// serialized to avoid racing on the cached database handle.
     var database: Database? {
         stateLock.lock()
         defer { stateLock.unlock() }
@@ -53,31 +52,16 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
     private func resolveDatabaseLocked() -> Database? {
         do {
-            let stateDirectoryURL = try Self.stateDirectoryURL(for: domain)
-            let databaseURL = Self.databaseURL(in: stateDirectoryURL)
-
-            guard FileManager.default.fileExists(atPath: databaseURL.path) else {
-                return nil
-            }
-
-            let didStart = stateDirectoryURL.startAccessingSecurityScopedResource()
-            var adoptedScope = false
-            defer {
-                if didStart && !adoptedScope {
-                    stateDirectoryURL.stopAccessingSecurityScopedResource()
-                }
-            }
-
-            let db = try Database(path: databaseURL.path)
+            // The canonical database lives in the App Group container — reachable
+            // directly via the app-group entitlement (no security-scoped bookmark)
+            // and never reclaimed by fileproviderd, unlike the domain's state
+            // directory.
+            let db = try Database()
             guard try databaseIsReady(db) else {
                 logger.info("Database exists but is not seeded yet for domain: \(self.domain.identifier.rawValue, privacy: .public)")
                 return nil
             }
 
-            // Adopt security-scoped access, releasing any previous scope
-            databaseSecurityScopedURL?.stopAccessingSecurityScopedResource()
-            databaseSecurityScopedURL = didStart ? stateDirectoryURL : nil
-            adoptedScope = true
             _database = db
             logger.info("Database resolved for domain: \(self.domain.identifier.rawValue, privacy: .public)")
             return db
@@ -104,28 +88,8 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     func invalidate() {
         stateLock.lock()
         defer { stateLock.unlock() }
-        databaseSecurityScopedURL?.stopAccessingSecurityScopedResource()
-        databaseSecurityScopedURL = nil
         _database = nil
         logger.info("File Provider extension invalidated")
-    }
-
-    private static func stateDirectoryURL(for domain: NSFileProviderDomain) throws -> URL {
-        guard let manager = NSFileProviderManager(for: domain) else {
-            throw NSError(domain: NSCocoaErrorDomain, code: NSFeatureUnsupportedError)
-        }
-
-        guard #available(macOS 15.0, *) else {
-            throw NSError(domain: NSCocoaErrorDomain, code: NSFeatureUnsupportedError)
-        }
-        return try manager.stateDirectoryURL()
-    }
-
-    private static func databaseURL(in stateDirectoryURL: URL) -> URL {
-        stateDirectoryURL
-            .appendingPathComponent(".FoodleState", isDirectory: true)
-            .appendingPathComponent("Foodle", isDirectory: true)
-            .appendingPathComponent("foodle.db")
     }
 
     // MARK: - Item Lookup
@@ -241,10 +205,11 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     // MARK: - Local Content Storage
 
     /// Directory for storing user-created local file content.
+    ///
+    /// Kept in the App Group container alongside the database so it survives File
+    /// Provider domain remove/re-add — the state directory does not.
     private func localContentDirectory() throws -> URL {
-        let stateDir = try Self.stateDirectoryURL(for: domain)
-        let dir = stateDir
-            .appendingPathComponent(".FoodleState", isDirectory: true)
+        let dir = try Database.appGroupSupportDirectory()
             .appendingPathComponent("LocalContent", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir

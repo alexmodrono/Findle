@@ -50,29 +50,8 @@ public final class Database: @unchecked Sendable {
         if let path = path {
             self.path = path
         } else {
-            let fm = FileManager.default
-            let appSupport: URL
-            if let groupURL = fm.containerURL(forSecurityApplicationGroupIdentifier: Self.appGroupIdentifier) {
-                let preferredAppSupport = groupURL.appendingPathComponent("Application Support", isDirectory: true)
-                let legacyAppSupport = groupURL
-                    .appendingPathComponent("Library", isDirectory: true)
-                    .appendingPathComponent("Application Support", isDirectory: true)
-
-                try Self.migrateLegacyDatabaseIfNeeded(
-                    from: legacyAppSupport,
-                    to: preferredAppSupport,
-                    fileManager: fm
-                )
-
-                appSupport = preferredAppSupport
-            } else {
-                appSupport = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
-                    .appendingPathComponent("Library", isDirectory: true)
-                    .appendingPathComponent("Application Support", isDirectory: true)
-            }
-            let dbDir = appSupport.appendingPathComponent("Foodle", isDirectory: true)
-            try FileManager.default.createDirectory(at: dbDir, withIntermediateDirectories: true)
-            self.path = dbDir.appendingPathComponent("foodle.db").path
+            self.path = try Self.appGroupSupportDirectory()
+                .appendingPathComponent("foodle.db").path
         }
 
         var dbPointer: OpaquePointer?
@@ -114,6 +93,42 @@ public final class Database: @unchecked Sendable {
         if let db = db {
             sqlite3_close(db)
         }
+    }
+
+    /// The App Group "Application Support/Foodle" directory that holds the
+    /// canonical database and other shared on-disk state (e.g. user-created local
+    /// file content).
+    ///
+    /// This lives in the App Group container — accessible to the app, the File
+    /// Provider extension, and the MCP helper via the app-group entitlement —
+    /// rather than the File Provider domain's state directory, which
+    /// `fileproviderd` deletes on every domain remove/re-add. Storing the live
+    /// database here keeps the handle valid across domain resets, which otherwise
+    /// surface as "saveItems step failed: disk I/O error".
+    public static func appGroupSupportDirectory() throws -> URL {
+        let fm = FileManager.default
+        let appSupport: URL
+        if let groupURL = fm.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
+            let preferredAppSupport = groupURL.appendingPathComponent("Application Support", isDirectory: true)
+            let legacyAppSupport = groupURL
+                .appendingPathComponent("Library", isDirectory: true)
+                .appendingPathComponent("Application Support", isDirectory: true)
+
+            try migrateLegacyDatabaseIfNeeded(
+                from: legacyAppSupport,
+                to: preferredAppSupport,
+                fileManager: fm
+            )
+
+            appSupport = preferredAppSupport
+        } else {
+            appSupport = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+                .appendingPathComponent("Library", isDirectory: true)
+                .appendingPathComponent("Application Support", isDirectory: true)
+        }
+        let dir = appSupport.appendingPathComponent("Foodle", isDirectory: true)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
     }
 
     private static func databaseDirectory(in appSupport: URL) -> URL {
