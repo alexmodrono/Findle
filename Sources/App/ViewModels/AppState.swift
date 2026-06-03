@@ -1256,10 +1256,13 @@ final class AppState: ObservableObject {
     }
 
     func openFileProviderInFinder(selecting course: MoodleCourse? = nil) async {
-        guard let site = currentSite else { return }
+        guard let site = currentSite else {
+            logger.warning("Open in Finder: no current site")
+            return
+        }
 
         guard let rootURL = await fileProviderRootURL(for: site) else {
-            logger.warning("Cannot open in Finder: File Provider root URL not available")
+            logger.warning("Open in Finder: File Provider root URL not available")
             return
         }
 
@@ -1271,13 +1274,24 @@ final class AppState: ObservableObject {
             targetURL = rootURL
         }
 
-        // NSWorkspace.shared.open() can be blocked by the sandbox for File
-        // Provider CloudStorage URLs after binary changes (e.g. Sparkle updates).
-        // Shell out to /usr/bin/open which is not subject to the app sandbox.
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        process.arguments = [targetURL.path]
-        try? process.run()
+        // The user-visible File Provider URL is security-scoped, so hold access
+        // while opening it. Open it with NSWorkspace from this process: shelling
+        // out to /usr/bin/open does not work, because the spawned tool inherits
+        // the app sandbox and its LaunchServices request to open a path outside
+        // the container is silently denied (no kernel sandbox violation, no
+        // effect).
+        let didAccess = targetURL.startAccessingSecurityScopedResource()
+        defer { if didAccess { targetURL.stopAccessingSecurityScopedResource() } }
+
+        do {
+            _ = try await NSWorkspace.shared.open(targetURL, configuration: NSWorkspace.OpenConfiguration())
+            logger.info("Opened \(targetURL.lastPathComponent, privacy: .public) in Finder")
+        } catch {
+            // Revealing (selecting the item in its parent) can still succeed when
+            // opening the folder itself does not.
+            logger.warning("NSWorkspace.open failed (\(error.localizedDescription, privacy: .public)); revealing in Finder instead")
+            NSWorkspace.shared.activateFileViewerSelecting([targetURL])
+        }
     }
 
     func resetProvider() async {
