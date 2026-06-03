@@ -43,6 +43,7 @@ final class AppState: ObservableObject {
 
     private let moodleClient = MoodleClient()
     private var database: Database?
+    private var databaseSecurityScopedURL: URL?
 
     /// On-disk path of the shared database, passed to the bundled MCP helper when
     /// registering it with Claude so it reads the right App Group container.
@@ -126,107 +127,120 @@ final class AppState: ObservableObject {
 
     }
 
+    private struct SharedDatabaseLocation {
+        let securityScopedDirectoryURL: URL
+        let databaseURL: URL
+    }
+
     private func configureInitialDatabase() throws {
         if let siteID = userDefaults.string(forKey: Self.currentSiteIDKey) {
-            database = try openCanonicalDatabase(siteID: siteID)
+            // Try to open the shared database directly first.
+            if let sharedDatabase = try openSharedDatabase(siteID: siteID, seedFrom: nil) {
+                database = sharedDatabase
+                return
+            }
+            // Shared database needs seeding — bootstrap from the app group database
+            // so the File Provider picks up existing data on relaunch.
+            let bootstrapDatabase = try Database()
+            if let sharedDatabase = try openSharedDatabase(siteID: siteID, seedFrom: bootstrapDatabase) {
+                database = sharedDatabase
+            } else {
+                database = bootstrapDatabase
+            }
         } else {
             database = try Database()
         }
     }
 
-    /// Opens the canonical database in the App Group container — the single
-    /// source of truth shared by the app, the File Provider extension, and the
-    /// MCP helper.
-    ///
-    /// Earlier builds kept this database inside the File Provider domain's state
-    /// directory, which `fileproviderd` deletes on every domain remove/re-add
-    /// (Sparkle update, session recovery, manual reset). The app then kept
-    /// writing through the now-unlinked handle, surfacing as
-    /// "saveItems step failed: disk I/O error". The App Group container is never
-    /// reclaimed, so the handle stays valid across domain resets.
-    private func openCanonicalDatabase(siteID: String) throws -> Database {
-        migrateLegacyStateDirectoryDatabaseIfNeeded(siteID: siteID)
-        let database = try Database()
-        userDefaults.set(siteID, forKey: Self.currentSiteIDKey)
-        return database
-    }
+    private func openSharedDatabase(siteID: String, seedFrom sourceDatabase: Database?) throws -> Database? {
+        guard let location = try sharedDatabaseLocation(siteID: siteID) else { return nil }
 
-    /// One-time migration for users upgrading from a build that stored the
-    /// database in the File Provider state directory: copy any surviving per-site
-    /// data into the App Group container so courses, items, and sync cursors
-    /// carry over. Safe to skip when the legacy database is already gone (e.g. the
-    /// domain was reset before this build first ran).
-    private func migrateLegacyStateDirectoryDatabaseIfNeeded(siteID: String) {
-        let flagKey = "didMigrateStateDirDB.\(siteID)"
-        guard !userDefaults.bool(forKey: flagKey) else { return }
-
-        guard #available(macOS 15.0, *) else {
-            userDefaults.set(true, forKey: flagKey)
-            return
+        let didStartAccessing = location.securityScopedDirectoryURL.startAccessingSecurityScopedResource()
+        var adoptedScope = false
+        defer {
+            if didStartAccessing && !adoptedScope {
+                location.securityScopedDirectoryURL.stopAccessingSecurityScopedResource()
+            }
         }
 
+        if try sharedDatabaseNeedsSeeding(siteID: siteID, databaseURL: location.databaseURL) {
+            guard let sourceDatabase else { return nil }
+            try seedSharedDatabase(from: sourceDatabase, siteID: siteID, destinationURL: location.databaseURL)
+        }
+
+        let sharedDatabase = try Database(path: location.databaseURL.path)
+        databaseSecurityScopedURL?.stopAccessingSecurityScopedResource()
+        databaseSecurityScopedURL = didStartAccessing ? location.securityScopedDirectoryURL : nil
+        adoptedScope = true
+        userDefaults.set(siteID, forKey: Self.currentSiteIDKey)
+        return sharedDatabase
+    }
+
+    private func sharedDatabaseLocation(siteID: String) throws -> SharedDatabaseLocation? {
         let domainID = NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: siteID))
         let domain = NSFileProviderDomain(identifier: domainID, displayName: siteID)
-        guard let manager = NSFileProviderManager(for: domain),
-              let stateRoot = try? manager.stateDirectoryURL() else { return }
+        guard let manager = NSFileProviderManager(for: domain) else { return nil }
 
-        let legacyURL = stateRoot
+        guard #available(macOS 15.0, *) else { return nil }
+        let storageRootURL = try manager.stateDirectoryURL()
+
+        let databaseURL = storageRootURL
             .appendingPathComponent(".FoodleState", isDirectory: true)
             .appendingPathComponent("Foodle", isDirectory: true)
             .appendingPathComponent("foodle.db")
 
-        guard FileManager.default.fileExists(atPath: legacyURL.path) else {
-            // Nothing to migrate (fresh install, or the state dir was reclaimed).
-            userDefaults.set(true, forKey: flagKey)
-            return
-        }
-
-        let didStart = stateRoot.startAccessingSecurityScopedResource()
-        defer { if didStart { stateRoot.stopAccessingSecurityScopedResource() } }
-
-        do {
-            let legacy = try Database(path: legacyURL.path)
-            guard try legacy.fetchSite(id: siteID) != nil else {
-                userDefaults.set(true, forKey: flagKey)
-                return
-            }
-            let container = try Database()
-            // Don't clobber newer container data: only migrate when the legacy
-            // database holds more items for this site than the container does.
-            let containerItems = (try? container.fetchAllItems(siteID: siteID))?.count ?? 0
-            let legacyItems = try legacy.fetchAllItems(siteID: siteID).count
-            if legacyItems > containerItems {
-                try copyData(from: legacy, to: container, siteID: siteID)
-                logger.info("Migrated \(legacyItems) item(s) from the legacy state-directory database into the App Group container for site \(siteID, privacy: .public)")
-            }
-            userDefaults.set(true, forKey: flagKey)
-        } catch {
-            // Leave the flag unset so a later launch can retry once readable.
-            logger.warning("Legacy state-directory database migration skipped: \(error.localizedDescription, privacy: .public)")
-        }
+        return SharedDatabaseLocation(
+            securityScopedDirectoryURL: storageRootURL,
+            databaseURL: databaseURL
+        )
     }
 
-    /// Copies one site's rows (site, accounts, courses, items, sync cursors) from
-    /// one database to another. Upserts only — never deletes — so it is safe to
-    /// run against a populated destination.
-    private func copyData(from source: Database, to destination: Database, siteID: String) throws {
-        if let site = try source.fetchSite(id: siteID) {
-            try destination.saveSite(site)
+    private func sharedDatabaseNeedsSeeding(siteID: String, databaseURL: URL) throws -> Bool {
+        guard FileManager.default.fileExists(atPath: databaseURL.path) else { return true }
+
+        let sharedDatabase = try Database(path: databaseURL.path)
+        let hasSite = try sharedDatabase.fetchSite(id: siteID) != nil
+        let hasConnectedAccount = try sharedDatabase.fetchAccounts().contains {
+            $0.siteID == siteID && $0.state.isConnected
         }
-        for account in try source.fetchAccounts().filter({ $0.siteID == siteID }) {
-            try destination.saveAccount(account)
+
+        return !(hasSite && hasConnectedAccount)
+    }
+
+    private func seedSharedDatabase(from sourceDatabase: Database, siteID: String, destinationURL: URL) throws {
+        try FileManager.default.createDirectory(
+            at: destinationURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        let sharedDatabase = try Database(path: destinationURL.path)
+        try sharedDatabase.deleteAllData()
+
+        if let site = try sourceDatabase.fetchSite(id: siteID) {
+            try sharedDatabase.saveSite(site)
         }
-        let courses = try source.fetchCourses(siteID: siteID)
+
+        let siteAccounts = try sourceDatabase.fetchAccounts().filter { $0.siteID == siteID }
+        for account in siteAccounts {
+            try sharedDatabase.saveAccount(account)
+        }
+
+        let courses = try sourceDatabase.fetchCourses(siteID: siteID)
         if !courses.isEmpty {
-            try destination.saveCourses(courses)
+            try sharedDatabase.saveCourses(courses)
         }
-        let items = try source.fetchAllItems(siteID: siteID)
+
+        let items = try sourceDatabase.fetchAllItems(siteID: siteID)
         if !items.isEmpty {
-            try destination.saveItems(items)
+            try sharedDatabase.saveItems(items)
         }
-        for cursor in try source.fetchAllSyncCursors(siteID: siteID) {
-            try destination.saveSyncCursor(cursor)
+
+        let cursors = try sourceDatabase.fetchAllSyncCursors(siteID: siteID)
+        for cursor in cursors {
+            try sharedDatabase.saveSyncCursor(cursor)
         }
+
+        logger.info("Seeded File Provider state database for site \(siteID, privacy: .public)")
     }
 
     // MARK: - Account Management
@@ -387,7 +401,9 @@ final class AppState: ObservableObject {
         // should still succeed so the user can access courses in the app.
         do {
             try await setupFileProviderDomain(site: site)
-            database = try openCanonicalDatabase(siteID: site.id)
+            if let sharedDatabase = try openSharedDatabase(siteID: site.id, seedFrom: db) {
+                database = sharedDatabase
+            }
             await resolveFileProviderAuthentication(for: site)
             await pinToFinderSidebar(site: site)
         } catch {
@@ -458,7 +474,16 @@ final class AppState: ObservableObject {
         // Re-enable the extension — macOS disables it when Sparkle replaces the bundle.
         reenableFileProviderExtension()
 
-        // 1. Re-store the keychain token under the current signing context.
+        // 1. Snapshot current data so re-seeding restores everything.
+        if let sourceDatabase = database {
+            do {
+                try snapshotCurrentDataToBootstrap(from: sourceDatabase, siteID: site.id)
+            } catch {
+                logger.error("Snapshot before re-registration failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        // 2. Re-store the keychain token under the current signing context.
         //    This ensures the File Provider extension (which may have a refreshed
         //    code signature after Sparkle replaced the bundle) can read the token.
         if let token = currentToken,
@@ -471,10 +496,18 @@ final class AppState: ObservableObject {
             }
         }
 
-        // 2. Remove and re-add the domain to force macOS to reload the extension.
-        //    The canonical database lives in the App Group container, so it
-        //    survives the domain removal — no snapshot or re-seed is needed, and
-        //    the live `database`/`syncEngine` handles stay valid.
+        // 3. Point the live handle at the App Group bootstrap database before the
+        //    domain — and the state directory that holds the shared database — is
+        //    removed below. The app can write the bootstrap database, so a sync
+        //    that runs during the reset (or after a failed re-seed) writes there
+        //    instead of through the now-deleted state-directory handle, which is
+        //    what surfaced as "saveItems ... disk I/O error".
+        if let bootstrapDatabase = try? Database() {
+            self.database = bootstrapDatabase
+            syncEngine = SyncEngine(provider: moodleClient, database: bootstrapDatabase)
+        }
+
+        // 4. Remove and re-add the domain to force macOS to reload the extension.
         let domainID = NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: site.id))
         let domain = NSFileProviderDomain(identifier: domainID, displayName: site.displayName)
 
@@ -489,6 +522,32 @@ final class AppState: ObservableObject {
             try await addFileProviderDomain(site: site)
         } catch {
             logger.error("Failed to re-add domain during re-registration: \(error.localizedDescription, privacy: .public)")
+        }
+
+        // 5. Retry seeding the shared database with backoff — fileproviderd may
+        //    need time to initialize the new extension and state directory.
+        var seeded = false
+        for attempt in 1...5 {
+            try? await Task.sleep(for: .seconds(TimeInterval(attempt)))
+
+            do {
+                let bootstrapDatabase = try Database()
+                if let sharedDatabase = try openSharedDatabase(siteID: site.id, seedFrom: bootstrapDatabase) {
+                    self.database = sharedDatabase
+                    syncEngine = SyncEngine(provider: moodleClient, database: sharedDatabase)
+                    seeded = true
+                    logger.info("Re-seeded shared database on attempt \(attempt)")
+                    break
+                } else {
+                    logger.info("Shared database not ready on attempt \(attempt)")
+                }
+            } catch {
+                logger.warning("Shared database seeding attempt \(attempt) failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        if !seeded {
+            logger.error("Failed to re-seed shared database after 5 attempts")
         }
     }
 
@@ -1161,10 +1220,14 @@ final class AppState: ObservableObject {
         // Clear Keychain
         try? KeychainManager.shared.deleteToken(forAccount: account.id)
 
-        // Clear the canonical database in the App Group container, then reopen a
-        // fresh empty handle for the onboarding screen.
+        // Clear database before revoking security-scoped access
         try? database?.deleteAllData()
+        if let bootstrapDatabase = try? Database() {
+            try? bootstrapDatabase.deleteAllData()
+        }
         database = nil
+        databaseSecurityScopedURL?.stopAccessingSecurityScopedResource()
+        databaseSecurityScopedURL = nil
         database = try? Database()
         userDefaults.removeObject(forKey: Self.currentSiteIDKey)
 
@@ -1222,6 +1285,14 @@ final class AppState: ObservableObject {
 
         reenableFileProviderExtension()
 
+        if let sourceDatabase = database {
+            do {
+                try snapshotCurrentDataToBootstrap(from: sourceDatabase, siteID: site.id)
+            } catch {
+                logger.error("Snapshot before reset failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
         // Re-store the keychain token to guarantee accessibility after reset.
         if let token = currentToken,
            let account = accounts.first(where: { $0.state.isConnected }) {
@@ -1230,6 +1301,14 @@ final class AppState: ObservableObject {
             } catch {
                 logger.error("Failed to re-store keychain token during reset: \(error.localizedDescription, privacy: .public)")
             }
+        }
+
+        // Point the live handle at the App Group bootstrap database before the
+        // domain (and its state directory) is removed, so writes never go through
+        // a deleted state-directory handle (the "disk I/O error" failure mode).
+        if let bootstrapDatabase = try? Database() {
+            self.database = bootstrapDatabase
+            syncEngine = SyncEngine(provider: moodleClient, database: bootstrapDatabase)
         }
 
         let domainID = NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: site.id))
@@ -1247,22 +1326,37 @@ final class AppState: ObservableObject {
             logger.error("Failed to re-add domain during reset: \(error.localizedDescription, privacy: .public)")
         }
 
-        // The canonical database in the App Group container is untouched by the
-        // domain reset; just rebuild the in-memory session handles so they point
-        // at it again.
-        if let token = currentToken {
+        // Retry seeding with backoff — fileproviderd needs time to initialize.
+        var seeded = false
+        for attempt in 1...5 {
+            try? await Task.sleep(for: .seconds(TimeInterval(attempt)))
+
             do {
-                let database = try openCanonicalDatabase(siteID: site.id)
-                self.database = database
-                currentSite = site
-                currentToken = token
-                sites = [site]
-                syncEngine = SyncEngine(provider: moodleClient, database: database)
-                courses = try database.fetchCourses(siteID: site.id)
-                reloadCourseTags()
+                let bootstrapDatabase = try Database()
+                if let sharedDatabase = try openSharedDatabase(siteID: site.id, seedFrom: bootstrapDatabase) {
+                    database = sharedDatabase
+                    if let token = currentToken {
+                        currentSite = site
+                        currentToken = token
+                        sites = [site]
+                        syncEngine = SyncEngine(provider: moodleClient, database: sharedDatabase)
+
+                        courses = try sharedDatabase.fetchCourses(siteID: site.id)
+                        reloadCourseTags()
+                    }
+                    seeded = true
+                    logger.info("Re-seeded shared database after reset on attempt \(attempt)")
+                    break
+                } else {
+                    logger.info("Shared database not ready after reset on attempt \(attempt)")
+                }
             } catch {
-                logger.error("Failed to reopen database after reset: \(error.localizedDescription, privacy: .public)")
+                logger.warning("Reset seeding attempt \(attempt) failed: \(error.localizedDescription, privacy: .public)")
             }
+        }
+
+        if !seeded {
+            logger.error("Failed to re-seed shared database after reset (5 attempts)")
         }
 
         await resolveFileProviderAuthentication(for: site)
@@ -1281,11 +1375,14 @@ final class AppState: ObservableObject {
     ) {
         let activeDatabase: Database
         do {
-            let canonical = try openCanonicalDatabase(siteID: site.id)
-            activeDatabase = canonical
-            self.database = canonical
+            if let sharedDatabase = try openSharedDatabase(siteID: site.id, seedFrom: database) {
+                activeDatabase = sharedDatabase
+                self.database = sharedDatabase
+            } else {
+                activeDatabase = database
+            }
         } catch {
-            logger.error("Failed to adopt canonical database: \(error.localizedDescription, privacy: .public)")
+            logger.error("Failed to adopt File Provider database: \(error.localizedDescription, privacy: .public)")
             activeDatabase = database
         }
 
@@ -1328,6 +1425,35 @@ final class AppState: ObservableObject {
             }
             try Task.checkCancellation()
             self.refreshAutomaticSyncSchedule()
+        }
+    }
+
+    private func snapshotCurrentDataToBootstrap(from sourceDatabase: Database, siteID: String) throws {
+        let bootstrapDatabase = try Database()
+        try bootstrapDatabase.deleteAllData()
+
+        if let site = try sourceDatabase.fetchSite(id: siteID) {
+            try bootstrapDatabase.saveSite(site)
+        }
+
+        let siteAccounts = try sourceDatabase.fetchAccounts().filter { $0.siteID == siteID }
+        for account in siteAccounts {
+            try bootstrapDatabase.saveAccount(account)
+        }
+
+        let courses = try sourceDatabase.fetchCourses(siteID: siteID)
+        if !courses.isEmpty {
+            try bootstrapDatabase.saveCourses(courses)
+        }
+
+        let items = try sourceDatabase.fetchAllItems(siteID: siteID)
+        if !items.isEmpty {
+            try bootstrapDatabase.saveItems(items)
+        }
+
+        let cursors = try sourceDatabase.fetchAllSyncCursors(siteID: siteID)
+        for cursor in cursors {
+            try bootstrapDatabase.saveSyncCursor(cursor)
         }
     }
 
