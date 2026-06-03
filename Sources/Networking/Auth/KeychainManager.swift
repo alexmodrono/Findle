@@ -18,13 +18,6 @@ public final class KeychainManager: Sendable {
     private init() {}
 
     /// Store a token for a given account.
-    ///
-    /// Writes to the data-protection keychain so the token is shared with the
-    /// File Provider extension through their common `keychain-access-group`
-    /// entitlement. Access there is granted by entitlement rather than a
-    /// per-binary ACL, so it survives the app being re-signed (e.g. by a Sparkle
-    /// update) — unlike the file-based keychain, where a re-signed extension
-    /// silently loses read access and the domain shows as "signed out".
     public func storeToken(_ token: String, forAccount account: String) throws {
         let data = Data(token.utf8)
 
@@ -33,13 +26,17 @@ public final class KeychainManager: Sendable {
         // the user would silently be logged out. SecItemUpdate is atomic
         // and also normalises any accessibility-class mismatch from older
         // builds (where the item may have been stored with WhenUnlocked).
+        let lookupQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
         let updateAttributes: [String: Any] = [
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
         ]
-        let updateStatus = SecItemUpdate(query(account: account) as CFDictionary, updateAttributes as CFDictionary)
+        let updateStatus = SecItemUpdate(lookupQuery as CFDictionary, updateAttributes as CFDictionary)
         if updateStatus == errSecSuccess {
-            try? deleteLegacyToken(account: account)
             return
         }
         guard updateStatus == errSecItemNotFound else {
@@ -48,111 +45,69 @@ public final class KeychainManager: Sendable {
         }
 
         // Item doesn't exist yet — add it.
-        var addQuery = query(account: account)
-        addQuery[kSecValueData as String] = data
-        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        let addQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+        ]
 
         let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
         guard addStatus == errSecSuccess else {
             logger.error("Keychain add failed: \(addStatus)")
             throw KeychainError.storeFailed(status: addStatus)
         }
-        try? deleteLegacyToken(account: account)
     }
 
     /// Retrieve a token for a given account.
     public func retrieveToken(forAccount account: String) throws -> String? {
-        // Preferred: the shared data-protection keychain.
-        if let token = try copyToken(account: account, dataProtection: true) {
-            return token
-        }
-
-        // Legacy: older builds stored the token in the file-based login keychain,
-        // which the File Provider extension cannot read after the app is
-        // re-signed. Migrate any such token into the shared keychain so the
-        // extension regains access without the user signing in again.
-        if let legacy = (try? copyToken(account: account, dataProtection: false)) ?? nil {
-            try? storeToken(legacy, forAccount: account)
-            return legacy
-        }
-
-        return nil
-    }
-
-    /// Delete a token for a given account.
-    public func deleteToken(forAccount account: String) throws {
-        let status = SecItemDelete(query(account: account) as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            logger.error("Failed to delete token: \(status)")
-            throw KeychainError.deleteFailed(status: status)
-        }
-        try? deleteLegacyToken(account: account)
-    }
-
-    /// Delete all tokens for this app, in both the shared and legacy keychains.
-    public func deleteAllTokens() throws {
-        for dataProtection in [true, false] {
-            var deleteQuery: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: service
-            ]
-            deleteQuery[kSecUseDataProtectionKeychain as String] = dataProtection
-            let status = SecItemDelete(deleteQuery as CFDictionary)
-            guard status == errSecSuccess || status == errSecItemNotFound else {
-                throw KeychainError.deleteFailed(status: status)
-            }
-        }
-    }
-
-    // MARK: - Keychain query helpers
-
-    /// Base query against the data-protection keychain. Items land in the app's
-    /// default access group — the sole `keychain-access-groups` entitlement entry
-    /// shared by the app and the extension — so no explicit access group is set.
-    private func query(account: String?) -> [String: Any] {
-        var q: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecUseDataProtectionKeychain as String: true
-        ]
-        if let account {
-            q[kSecAttrAccount as String] = account
-        }
-        return q
-    }
-
-    private func copyToken(account: String, dataProtection: Bool) throws -> String? {
-        let copyQuery: [String: Any] = [
+        let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecUseDataProtectionKeychain as String: dataProtection,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
 
         var result: AnyObject?
-        let status = SecItemCopyMatching(copyQuery as CFDictionary, &result)
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
 
         if status == errSecItemNotFound {
             return nil
         }
+
         guard status == errSecSuccess, let data = result as? Data else {
             logger.error("Failed to retrieve token: \(status)")
             throw KeychainError.retrieveFailed(status: status)
         }
+
         return String(data: data, encoding: .utf8)
     }
 
-    /// Remove the token from the legacy file-based keychain used by older builds.
-    private func deleteLegacyToken(account: String) throws {
-        let legacyQuery: [String: Any] = [
+    /// Delete a token for a given account.
+    public func deleteToken(forAccount account: String) throws {
+        let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecUseDataProtectionKeychain as String: false
+            kSecAttrAccount as String: account
         ]
-        let status = SecItemDelete(legacyQuery as CFDictionary)
+
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            logger.error("Failed to delete token: \(status)")
+            throw KeychainError.deleteFailed(status: status)
+        }
+    }
+
+    /// Delete all tokens for this app.
+    public func deleteAllTokens() throws {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service
+        ]
+
+        let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw KeychainError.deleteFailed(status: status)
         }
