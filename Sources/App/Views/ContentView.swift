@@ -21,7 +21,7 @@ struct ContentView: View {
                     .supportPrompt()
                     .sheet(isPresented: $showWhatsNew) {
                         WhatsNewView(release: .current, databasePath: appState.databaseFilePath) {
-                            lastWhatsNewVersion = WhatsNewRelease.current.version
+                            lastWhatsNewVersion = currentBuildIdentifier
                             showWhatsNew = false
                         }
                     }
@@ -31,12 +31,23 @@ struct ContentView: View {
     }
 
     private func evaluateWhatsNew() {
-        // Show the showcase whenever the user hasn't seen the current release —
-        // fresh installs included. The sheet is only attached to the workspace,
-        // so onboarding is never interrupted, and `lastWhatsNewVersion` is
-        // stamped to the current version when the sheet is dismissed.
-        if lastWhatsNewVersion != WhatsNewRelease.current.version {
+        // Show the showcase whenever the user hasn't seen the current build —
+        // fresh installs included, and every new build of the same marketing
+        // version (e.g. 0.2.0 (19) → 0.2.0 (20)). The sheet is only attached to
+        // the workspace, so onboarding is never interrupted, and
+        // `lastWhatsNewVersion` is stamped to the current build on dismiss.
+        if lastWhatsNewVersion != currentBuildIdentifier {
             showWhatsNew = true
         }
+    }
+
+    /// Short version plus build number, e.g. "0.2.0 (20)". Keying the showcase
+    /// off this — rather than the marketing version alone — means each new build
+    /// surfaces it, which is what re-cut releases (same version, new build) need.
+    private var currentBuildIdentifier: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "0"
+        let build = info?["CFBundleVersion"] as? String ?? "0"
+        return "\(short) (\(build))"
     }
 }
