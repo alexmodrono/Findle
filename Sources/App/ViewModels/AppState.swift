@@ -133,22 +133,23 @@ final class AppState: ObservableObject {
     }
 
     private func configureInitialDatabase() throws {
-        if let siteID = userDefaults.string(forKey: Self.currentSiteIDKey) {
-            // Try to open the shared database directly first.
-            if let sharedDatabase = try openSharedDatabase(siteID: siteID, seedFrom: nil) {
-                database = sharedDatabase
-                return
-            }
-            // Shared database needs seeding — bootstrap from the app group database
-            // so the File Provider picks up existing data on relaunch.
-            let bootstrapDatabase = try Database()
-            if let sharedDatabase = try openSharedDatabase(siteID: siteID, seedFrom: bootstrapDatabase) {
-                database = sharedDatabase
-            } else {
-                database = bootstrapDatabase
-            }
-        } else {
-            database = try Database()
+        // Always open the App Group bootstrap database first, so the app has a
+        // working handle even when the File Provider domain isn't usable yet.
+        // Right after a Sparkle update macOS temporarily disables the extension,
+        // so `stateDirectoryURL()` (inside openSharedDatabase) throws on the first
+        // launch. Without this fallback that throw propagated out of init, left
+        // `database` nil, and blocked sign-in with "Database not available".
+        let bootstrapDatabase = try Database()
+        database = bootstrapDatabase
+
+        guard let siteID = userDefaults.string(forKey: Self.currentSiteIDKey) else { return }
+
+        // Upgrade to the shared File Provider state database when it's reachable.
+        // If it isn't (e.g. the extension is disabled post-update), keep the
+        // bootstrap handle — the session bootstrap re-seeds and adopts the shared
+        // database once the extension is back.
+        if let sharedDatabase = try? openSharedDatabase(siteID: siteID, seedFrom: bootstrapDatabase) {
+            database = sharedDatabase
         }
     }
 
@@ -374,7 +375,16 @@ final class AppState: ObservableObject {
     func persistSignIn(site: MoodleSite, token: AuthToken) async throws {
         let user = try await moodleClient.fetchUserInfo(site: site, token: token)
 
-        guard let db = database else { throw FoodleError.databaseError(detail: "Database not available") }
+        // Fall back to the App Group bootstrap database if no handle is active —
+        // e.g. the File Provider domain was unusable at launch right after an
+        // update — so sign-in never fails with "Database not available".
+        let db: Database
+        if let existing = database {
+            db = existing
+        } else {
+            db = try Database()
+            database = db
+        }
         try db.saveSite(site)
 
         let account = Account(
