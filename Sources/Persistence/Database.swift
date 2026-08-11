@@ -32,7 +32,7 @@ public final class Database: @unchecked Sendable {
             .path
     }
 
-    public static let schemaVersion = 13
+    public static let schemaVersion = 15
 
     /// Opens the database.
     ///
@@ -66,9 +66,12 @@ public final class Database: @unchecked Sendable {
 
                 appSupport = preferredAppSupport
             } else {
-                appSupport = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
-                    .appendingPathComponent("Library", isDirectory: true)
-                    .appendingPathComponent("Application Support", isDirectory: true)
+                // `NSHomeDirectory()` points at the real home directory even
+                // inside the sandbox. Use the resolved user-domain URL so a
+                // missing App Group entitlement cannot make sign-in attempt
+                // to write outside the app's container.
+                appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+                    ?? fm.temporaryDirectory.appendingPathComponent("Findle", isDirectory: true)
             }
             let dbDir = appSupport.appendingPathComponent("Findle", isDirectory: true)
             try FileManager.default.createDirectory(at: dbDir, withIntermediateDirectories: true)
@@ -204,6 +207,16 @@ public final class Database: @unchecked Sendable {
         """)
 
         try execute("""
+            CREATE TABLE IF NOT EXISTS course_outlines (
+                course_id INTEGER NOT NULL,
+                site_id TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                updated_at REAL NOT NULL DEFAULT (strftime('%s', 'now')),
+                PRIMARY KEY (course_id, site_id)
+            )
+        """)
+
+        try execute("""
             CREATE TABLE IF NOT EXISTS items (
                 id TEXT PRIMARY KEY,
                 parent_id TEXT,
@@ -307,6 +320,7 @@ public final class Database: @unchecked Sendable {
         try execute("""
             CREATE TABLE IF NOT EXISTS pending_deletions (
                 item_id TEXT PRIMARY KEY,
+                site_id TEXT NOT NULL DEFAULT '',
                 deleted_at REAL NOT NULL DEFAULT (strftime('%s', 'now')),
                 deleted_at_counter INTEGER NOT NULL DEFAULT 0
             )
@@ -319,6 +333,7 @@ public final class Database: @unchecked Sendable {
             )
         """)
         try execute("INSERT OR IGNORE INTO system_metadata (key, value) VALUES ('change_counter', 0)")
+        try execute("INSERT OR IGNORE INTO system_metadata (key, value) VALUES ('seed_complete', 0)")
 
         try execute("""
             CREATE INDEX IF NOT EXISTS idx_items_parent ON items(parent_id)
@@ -528,6 +543,57 @@ public final class Database: @unchecked Sendable {
             // grade_items, quizzes, quiz_attempts). Created in createSchema()
             // with IF NOT EXISTS, so this is just the version marker.
             logger.info("Migrated database schema to version 13 (coursework tracking)")
+        }
+
+        if currentVersion < 14 {
+            // v13 -> v14: compact, token-safe Moodle activity outlines. The
+            // table is created above for new databases and backfilled during
+            // the next course sync for existing installations.
+            logger.info("Migrated database schema to version 14 (course outlines)")
+        }
+
+        if currentVersion < 15 {
+            // v14 -> v15: associate deletion tombstones with their File
+            // Provider domain so one site's enumerator cannot receive another
+            // site's deleted identifiers. Existing rows retain an empty site
+            // ID and are intentionally excluded from site-scoped queries.
+            let pendingColumns = try existingColumns(table: "pending_deletions")
+            if !pendingColumns.contains("site_id") {
+                try execute("ALTER TABLE pending_deletions ADD COLUMN site_id TEXT NOT NULL DEFAULT ''")
+            }
+            // Remote item identifiers include the site UUID. Recover ownership
+            // for legacy tombstones before site-scoped enumerators start using
+            // the new column; ambiguous rows remain empty and are not emitted
+            // into an unrelated domain.
+            try execute("""
+                UPDATE pending_deletions
+                SET site_id = (
+                    SELECT sites.id
+                    FROM sites
+                    WHERE instr(pending_deletions.item_id, 'course-' || sites.id || '-') = 1
+                       OR instr(pending_deletions.item_id, 'section-' || sites.id || '-') = 1
+                       OR instr(pending_deletions.item_id, 'file-' || sites.id || '-') = 1
+                       OR instr(pending_deletions.item_id, 'folder-' || sites.id || '-') = 1
+                       OR instr(pending_deletions.item_id, 'url-' || sites.id || '-') = 1
+                       OR instr(pending_deletions.item_id, 'page-' || sites.id || '-') = 1
+                    LIMIT 1
+                )
+                WHERE site_id = ''
+            """)
+            logger.info("Migrated database schema to version 15 (site-scoped tombstones)")
+        }
+
+        // Databases created before the seed marker was introduced were already
+        // authoritative app databases. Promote only those legacy databases
+        // that contain a session; a partial v14+ snapshot must remain false.
+        if currentVersion < 14 {
+            try execute("""
+                UPDATE system_metadata
+                SET value = 1
+                WHERE key = 'seed_complete'
+                  AND EXISTS (SELECT 1 FROM sites)
+                  AND EXISTS (SELECT 1 FROM accounts WHERE state LIKE 'authenticated%')
+            """)
         }
 
         try execute("PRAGMA user_version = \(Self.schemaVersion)")
@@ -950,6 +1016,69 @@ extension Database {
     }
 }
 
+// MARK: - Course Outline Operations
+
+extension Database {
+    public func saveCourseOutline(_ outline: CourseOutlineSnapshot, siteID: String) throws {
+        let payload = try JSONEncoder().encode(outline)
+        try queue.sync {
+            let stmt = try prepareStatement("INSERT OR REPLACE INTO course_outlines (course_id, site_id, payload, updated_at) VALUES (?, ?, ?, ?)")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int64(stmt, 1, Int64(outline.courseID))
+            sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            _ = payload.withUnsafeBytes { bytes in
+                sqlite3_bind_text(stmt, 3, bytes.bindMemory(to: CChar.self).baseAddress, Int32(payload.count), SQLITE_TRANSIENT)
+            }
+            sqlite3_bind_double(stmt, 4, Date().timeIntervalSince1970)
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw FindleError.databaseError(detail: "Failed to save course outline")
+            }
+        }
+    }
+
+    public func fetchCourseOutline(courseID: Int, siteID: String) throws -> CourseOutlineSnapshot? {
+        try queue.sync {
+            let stmt = try prepareStatement("SELECT payload FROM course_outlines WHERE course_id = ? AND site_id = ?")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int64(stmt, 1, Int64(courseID))
+            sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            guard sqlite3_step(stmt) == SQLITE_ROW,
+                  let payload = sqlite3_column_text(stmt, 0) else { return nil }
+            return try JSONDecoder().decode(
+                CourseOutlineSnapshot.self,
+                from: Data(bytes: payload, count: Int(sqlite3_column_bytes(stmt, 0)))
+            )
+        }
+    }
+
+    public func fetchCourseOutlines(siteID: String) throws -> [CourseOutlineSnapshot] {
+        try queue.sync {
+            let stmt = try prepareStatement("SELECT payload FROM course_outlines WHERE site_id = ? ORDER BY course_id")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            var outlines: [CourseOutlineSnapshot] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                guard let payload = sqlite3_column_text(stmt, 0) else { continue }
+                let data = Data(bytes: payload, count: Int(sqlite3_column_bytes(stmt, 0)))
+                outlines.append(try JSONDecoder().decode(CourseOutlineSnapshot.self, from: data))
+            }
+            return outlines
+        }
+    }
+
+    public func deleteCourseOutline(courseID: Int, siteID: String) throws {
+        try queue.sync {
+            let stmt = try prepareStatement("DELETE FROM course_outlines WHERE course_id = ? AND site_id = ?")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int64(stmt, 1, Int64(courseID))
+            sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw FindleError.databaseError(detail: "Failed to delete course outline")
+            }
+        }
+    }
+}
+
 // MARK: - Course Tag Operations
 
 extension Database {
@@ -1039,7 +1168,19 @@ extension Database {
         try queue.sync {
             try executeUnsafe("BEGIN TRANSACTION")
             do {
+                let clearTombstoneStmt = try prepareStatement("DELETE FROM pending_deletions WHERE item_id = ?")
+                defer { sqlite3_finalize(clearTombstoneStmt) }
+
                 for item in items {
+                    // A reintroduced remote item must not retain the tombstone
+                    // from its previous deletion. Otherwise a later change
+                    // enumeration can delete the newly-created Finder item.
+                    sqlite3_reset(clearTombstoneStmt)
+                    sqlite3_bind_text(clearTombstoneStmt, 1, (item.id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    guard sqlite3_step(clearTombstoneStmt) == SQLITE_DONE else {
+                        throw FindleError.databaseError(detail: "saveItems tombstone cleanup failed")
+                    }
+
                     let stmt = try prepareStatement(sql)
                     defer { sqlite3_finalize(stmt) }
 
@@ -1092,6 +1233,25 @@ extension Database {
         }
     }
 
+    /// Return children in a single File Provider domain. Root enumeration must
+    /// be scoped as well as working-set enumeration; otherwise stale data from
+    /// another Moodle site can leak into this domain's Finder root.
+    public func fetchItems(parentID: String?, siteID: String) throws -> [LocalItem] {
+        try queue.sync {
+            let stmt: OpaquePointer
+            if let parentID {
+                stmt = try prepareStatement("SELECT * FROM items WHERE parent_id = ? AND site_id = ? ORDER BY is_directory DESC, filename")
+                sqlite3_bind_text(stmt, 1, (parentID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            } else {
+                stmt = try prepareStatement("SELECT * FROM items WHERE parent_id IS NULL AND site_id = ? ORDER BY is_directory DESC, filename")
+                sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            }
+            defer { sqlite3_finalize(stmt) }
+            return try readItems(from: stmt)
+        }
+    }
+
     public func fetchItem(id: String) throws -> LocalItem? {
         let sql = "SELECT * FROM items WHERE id = ?"
         return try queue.sync {
@@ -1126,12 +1286,13 @@ extension Database {
     }
 
     public func updateItemFilename(id: String, filename: String) throws {
-        let sql = "UPDATE items SET filename = ? WHERE id = ?"
+        let sql = "UPDATE items SET filename = ?, modification_date = ? WHERE id = ?"
         try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_text(stmt, 1, (filename as NSString).utf8String, -1, SQLITE_TRANSIENT)
-            sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_double(stmt, 2, Date().timeIntervalSince1970)
+            sqlite3_bind_text(stmt, 3, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
             let status = sqlite3_step(stmt)
             guard status == SQLITE_DONE else {
                 throw FindleError.databaseError(detail: "Failed to update item filename")
@@ -1140,7 +1301,7 @@ extension Database {
     }
 
     public func updateItemTagData(id: String, tagData: Data?) throws {
-        let sql = "UPDATE items SET tag_data = ? WHERE id = ?"
+        let sql = "UPDATE items SET tag_data = ?, modification_date = ? WHERE id = ?"
         try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
@@ -1149,7 +1310,8 @@ extension Database {
             } else {
                 sqlite3_bind_null(stmt, 1)
             }
-            sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_double(stmt, 2, Date().timeIntervalSince1970)
+            sqlite3_bind_text(stmt, 3, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
             let status = sqlite3_step(stmt)
             guard status == SQLITE_DONE else {
                 throw FindleError.databaseError(detail: "Failed to update item tag data")
@@ -1232,58 +1394,17 @@ extension Database {
     }
 
     public func deleteItems(courseID: Int, siteID: String) throws {
-        try queue.sync {
-            try executeUnsafe("BEGIN TRANSACTION")
-            do {
-                // Record IDs for the File Provider to report as deletions (skip local items).
-                // Append to any pending deletions from prior cycles that haven't drained yet —
-                // do NOT wipe the table blindly or earlier course deletions would be lost.
-                let insertStmt = try prepareStatement("INSERT OR IGNORE INTO pending_deletions (item_id) SELECT id FROM items WHERE course_id = ? AND site_id = ? AND is_local = 0")
-                defer { sqlite3_finalize(insertStmt) }
-                sqlite3_bind_int(insertStmt, 1, Int32(courseID))
-                sqlite3_bind_text(insertStmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                guard sqlite3_step(insertStmt) == SQLITE_DONE else {
-                    throw FindleError.databaseError(detail: "deleteItems pending insert failed")
-                }
-
-                let deleteStmt = try prepareStatement("DELETE FROM items WHERE course_id = ? AND site_id = ? AND is_local = 0")
-                defer { sqlite3_finalize(deleteStmt) }
-                sqlite3_bind_int(deleteStmt, 1, Int32(courseID))
-                sqlite3_bind_text(deleteStmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                guard sqlite3_step(deleteStmt) == SQLITE_DONE else {
-                    throw FindleError.databaseError(detail: "deleteItems delete failed")
-                }
-                try executeUnsafe("COMMIT")
-            } catch {
-                try? executeUnsafe("ROLLBACK")
-                throw error
-            }
-        }
+        let ids = try fetchItems(courseID: courseID, siteID: siteID)
+            .filter { !$0.isLocal }
+            .map(\.id)
+        try deleteItemsWithTombstone(ids: ids)
     }
 
     public func deleteAllItems(siteID: String) throws {
-        try queue.sync {
-            try executeUnsafe("BEGIN TRANSACTION")
-            do {
-                let insertStmt = try prepareStatement("INSERT OR IGNORE INTO pending_deletions (item_id) SELECT id FROM items WHERE site_id = ? AND is_local = 0")
-                defer { sqlite3_finalize(insertStmt) }
-                sqlite3_bind_text(insertStmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                guard sqlite3_step(insertStmt) == SQLITE_DONE else {
-                    throw FindleError.databaseError(detail: "deleteAllItems pending insert failed")
-                }
-
-                let deleteStmt = try prepareStatement("DELETE FROM items WHERE site_id = ? AND is_local = 0")
-                defer { sqlite3_finalize(deleteStmt) }
-                sqlite3_bind_text(deleteStmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                guard sqlite3_step(deleteStmt) == SQLITE_DONE else {
-                    throw FindleError.databaseError(detail: "deleteAllItems delete failed")
-                }
-                try executeUnsafe("COMMIT")
-            } catch {
-                try? executeUnsafe("ROLLBACK")
-                throw error
-            }
-        }
+        let ids = try fetchAllItems(siteID: siteID)
+            .filter { !$0.isLocal }
+            .map(\.id)
+        try deleteItemsWithTombstone(ids: ids)
     }
 
     /// Delete the given items (and their descendants) and record a tombstone
@@ -1295,19 +1416,53 @@ extension Database {
         try queue.sync {
             try executeUnsafe("BEGIN TRANSACTION")
             do {
-                var idsToDelete = Set(ids)
-                var frontier = Array(ids)
+                // Remote folders can contain user-created local items. Keep
+                // those items, but move them to the deleted remote item's
+                // parent so a Moodle refresh cannot destroy user work.
+                var idsToDelete = Set<String>()
+                var frontier: [String] = []
+                var parentByID: [String: String] = [:]
+                var siteByID: [String: String] = [:]
+                let hierarchyStmt = try prepareStatement("SELECT id, parent_id, site_id FROM items")
+                defer { sqlite3_finalize(hierarchyStmt) }
+                while sqlite3_step(hierarchyStmt) == SQLITE_ROW {
+                    let id = String(cString: sqlite3_column_text(hierarchyStmt, 0))
+                    parentByID[id] = sqlite3_column_text(hierarchyStmt, 1).map { String(cString: $0) } ?? ""
+                    siteByID[id] = String(cString: sqlite3_column_text(hierarchyStmt, 2))
+                }
+
+                let initialStmt = try prepareStatement("SELECT id, is_local, site_id FROM items WHERE id = ?")
+                defer { sqlite3_finalize(initialStmt) }
+                for id in ids {
+                    sqlite3_reset(initialStmt)
+                    sqlite3_bind_text(initialStmt, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    guard sqlite3_step(initialStmt) == SQLITE_ROW else { continue }
+                    guard sqlite3_column_int(initialStmt, 1) == 0 else { continue }
+                    siteByID[id] = String(cString: sqlite3_column_text(initialStmt, 2))
+                    if idsToDelete.insert(id).inserted {
+                        frontier.append(id)
+                    }
+                }
+
+                let childStmt = try prepareStatement("SELECT id, is_local, site_id FROM items WHERE parent_id = ?")
+                defer { sqlite3_finalize(childStmt) }
+                let reparentStmt = try prepareStatement("UPDATE items SET parent_id = ?, modification_date = ? WHERE id = ?")
+                defer { sqlite3_finalize(reparentStmt) }
+                var localReparents: [(id: String, parentID: String?)] = []
 
                 while !frontier.isEmpty {
                     var nextFrontier: [String] = []
-                    let childStmt = try prepareStatement("SELECT id FROM items WHERE parent_id = ?")
-                    defer { sqlite3_finalize(childStmt) }
                     for parentID in frontier {
                         sqlite3_reset(childStmt)
                         sqlite3_bind_text(childStmt, 1, (parentID as NSString).utf8String, -1, SQLITE_TRANSIENT)
                         while sqlite3_step(childStmt) == SQLITE_ROW {
                             let childID = String(cString: sqlite3_column_text(childStmt, 0))
-                            if idsToDelete.insert(childID).inserted {
+                            let childIsLocal = sqlite3_column_int(childStmt, 1) == 1
+                            siteByID[childID] = String(cString: sqlite3_column_text(childStmt, 2))
+                            if childIsLocal {
+                                let parentOfDeletedItem = parentByID[parentID].flatMap { $0.isEmpty ? nil : $0 }
+                                localReparents.append((id: childID, parentID: parentOfDeletedItem))
+                            } else if idsToDelete.insert(childID).inserted {
                                 nextFrontier.append(childID)
                             }
                         }
@@ -1315,7 +1470,30 @@ extension Database {
                     frontier = nextFrontier
                 }
 
-                let tombstoneStmt = try prepareStatement("INSERT OR IGNORE INTO pending_deletions (item_id) VALUES (?)")
+                // Resolve each local item's new parent only after the complete
+                // remote deletion set is known. This avoids leaving local work
+                // under another remote ancestor that is also being removed.
+                for local in localReparents {
+                    var target = local.parentID
+                    var visited: Set<String> = []
+                    while let candidate = target, idsToDelete.contains(candidate), visited.insert(candidate).inserted {
+                        target = parentByID[candidate].flatMap { $0.isEmpty ? nil : $0 }
+                    }
+
+                    sqlite3_reset(reparentStmt)
+                    if let target {
+                        sqlite3_bind_text(reparentStmt, 1, (target as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    } else {
+                        sqlite3_bind_null(reparentStmt, 1)
+                    }
+                    sqlite3_bind_double(reparentStmt, 2, Date().timeIntervalSince1970)
+                    sqlite3_bind_text(reparentStmt, 3, (local.id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    guard sqlite3_step(reparentStmt) == SQLITE_DONE else {
+                        throw FindleError.databaseError(detail: "deleteItemsWithTombstone local reparent failed")
+                    }
+                }
+
+                let tombstoneStmt = try prepareStatement("INSERT OR IGNORE INTO pending_deletions (item_id, site_id) VALUES (?, ?)")
                 defer { sqlite3_finalize(tombstoneStmt) }
                 let deleteStmt = try prepareStatement("DELETE FROM items WHERE id = ?")
                 defer { sqlite3_finalize(deleteStmt) }
@@ -1323,6 +1501,7 @@ extension Database {
                 for itemID in idsToDelete {
                     sqlite3_reset(tombstoneStmt)
                     sqlite3_bind_text(tombstoneStmt, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(tombstoneStmt, 2, ((siteByID[itemID] ?? "") as NSString).utf8String, -1, SQLITE_TRANSIENT)
                     guard sqlite3_step(tombstoneStmt) == SQLITE_DONE else {
                         throw FindleError.databaseError(detail: "deleteItemsWithTombstone tombstone failed")
                     }
@@ -1385,6 +1564,20 @@ extension Database {
         }
     }
 
+    public func fetchPendingDeletions(siteID: String) throws -> [String] {
+        let sql = "SELECT item_id FROM pending_deletions WHERE site_id = ? ORDER BY deleted_at"
+        return try queue.sync {
+            let stmt = try prepareStatement(sql)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            var ids: [String] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                ids.append(String(cString: sqlite3_column_text(stmt, 0)))
+            }
+            return ids
+        }
+    }
+
     /// Return the global monotonic change counter. The value is bumped by SQL
     /// triggers on writes to `items` and `pending_deletions`, so it's safe to
     /// use as a sync anchor handed to NSFileProviderChangeObserver.
@@ -1397,23 +1590,87 @@ extension Database {
         }
     }
 
+    /// Keep a replicated database's change counter at or above a previous
+    /// domain anchor before restoring rows. Subsequent item/tombstone triggers
+    /// then stamp restored rows with counters newer than Finder's anchor.
+    public func preserveChangeCounter(atLeast counter: Int64) throws {
+        try queue.sync {
+            let stmt = try prepareStatement("UPDATE system_metadata SET value = MAX(value, ?) WHERE key = 'change_counter'")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int64(stmt, 1, counter)
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw FindleError.databaseError(detail: "Failed to preserve change counter")
+            }
+        }
+    }
+
     /// Return items in a container whose `updated_at` is strictly greater than `anchor`.
     /// Pass `parentID == nil` for root items, or a parent ID for a single container.
     public func fetchItemsChangedSince(anchor: Int64, parentID: String?) throws -> [LocalItem] {
+        try fetchItemsChangedSince(anchor: anchor, parentID: parentID, through: nil)
+    }
+
+    /// Return changes in a container up to a captured counter. Bounding the
+    /// query and the returned anchor prevents writes that happen during
+    /// enumeration from being skipped permanently.
+    public func fetchItemsChangedSince(anchor: Int64, parentID: String?, through upperBound: Int64?) throws -> [LocalItem] {
         let sql: String
         if parentID == nil {
-            sql = "SELECT * FROM items WHERE parent_id IS NULL AND updated_at > ? ORDER BY updated_at"
+            sql = upperBound == nil
+                ? "SELECT * FROM items WHERE parent_id IS NULL AND updated_at > ? ORDER BY updated_at"
+                : "SELECT * FROM items WHERE parent_id IS NULL AND updated_at > ? AND updated_at <= ? ORDER BY updated_at"
         } else {
-            sql = "SELECT * FROM items WHERE parent_id = ? AND updated_at > ? ORDER BY updated_at"
+            sql = upperBound == nil
+                ? "SELECT * FROM items WHERE parent_id = ? AND updated_at > ? ORDER BY updated_at"
+                : "SELECT * FROM items WHERE parent_id = ? AND updated_at > ? AND updated_at <= ? ORDER BY updated_at"
         }
         return try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
+            var index: Int32 = 1
             if let parentID {
-                sqlite3_bind_text(stmt, 1, (parentID as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                sqlite3_bind_int64(stmt, 2, anchor)
-            } else {
-                sqlite3_bind_int64(stmt, 1, anchor)
+                sqlite3_bind_text(stmt, index, (parentID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                index += 1
+            }
+            sqlite3_bind_int64(stmt, index, anchor)
+            index += 1
+            if let upperBound {
+                sqlite3_bind_int64(stmt, index, upperBound)
+            }
+            return try readItems(from: stmt)
+        }
+    }
+
+    public func fetchItemsChangedSince(
+        anchor: Int64,
+        parentID: String?,
+        siteID: String,
+        through upperBound: Int64?
+    ) throws -> [LocalItem] {
+        let sql: String
+        if parentID == nil {
+            sql = upperBound == nil
+                ? "SELECT * FROM items WHERE parent_id IS NULL AND site_id = ? AND updated_at > ? ORDER BY updated_at"
+                : "SELECT * FROM items WHERE parent_id IS NULL AND site_id = ? AND updated_at > ? AND updated_at <= ? ORDER BY updated_at"
+        } else {
+            sql = upperBound == nil
+                ? "SELECT * FROM items WHERE parent_id = ? AND site_id = ? AND updated_at > ? ORDER BY updated_at"
+                : "SELECT * FROM items WHERE parent_id = ? AND site_id = ? AND updated_at > ? AND updated_at <= ? ORDER BY updated_at"
+        }
+        return try queue.sync {
+            let stmt = try prepareStatement(sql)
+            defer { sqlite3_finalize(stmt) }
+            var index: Int32 = 1
+            if let parentID {
+                sqlite3_bind_text(stmt, index, (parentID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                index += 1
+            }
+            sqlite3_bind_text(stmt, index, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            index += 1
+            sqlite3_bind_int64(stmt, index, anchor)
+            index += 1
+            if let upperBound {
+                sqlite3_bind_int64(stmt, index, upperBound)
             }
             return try readItems(from: stmt)
         }
@@ -1421,12 +1678,21 @@ extension Database {
 
     /// Return all items for a site whose `updated_at` is strictly greater than `anchor`.
     public func fetchItemsChangedSince(anchor: Int64, siteID: String) throws -> [LocalItem] {
-        let sql = "SELECT * FROM items WHERE site_id = ? AND updated_at > ? ORDER BY updated_at"
+        try fetchItemsChangedSince(anchor: anchor, siteID: siteID, through: nil)
+    }
+
+    public func fetchItemsChangedSince(anchor: Int64, siteID: String, through upperBound: Int64?) throws -> [LocalItem] {
+        let sql = upperBound == nil
+            ? "SELECT * FROM items WHERE site_id = ? AND updated_at > ? ORDER BY updated_at"
+            : "SELECT * FROM items WHERE site_id = ? AND updated_at > ? AND updated_at <= ? ORDER BY updated_at"
         return try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
             sqlite3_bind_int64(stmt, 2, anchor)
+            if let upperBound {
+                sqlite3_bind_int64(stmt, 3, upperBound)
+            }
             return try readItems(from: stmt)
         }
     }
@@ -1435,11 +1701,33 @@ extension Database {
     /// than `anchor`. Returned in counter order so the enumerator can derive
     /// the next anchor from the last entry.
     public func fetchPendingDeletionsSince(anchor: Int64) throws -> [String] {
-        let sql = "SELECT item_id FROM pending_deletions WHERE deleted_at_counter > ? ORDER BY deleted_at_counter"
+        try fetchPendingDeletionsSince(anchor: anchor, through: nil)
+    }
+
+    public func fetchPendingDeletionsSince(anchor: Int64, through upperBound: Int64?) throws -> [String] {
+        try fetchPendingDeletionsSince(anchor: anchor, filterSiteID: nil, through: upperBound)
+    }
+
+    public func fetchPendingDeletionsSince(anchor: Int64, siteID: String, through upperBound: Int64?) throws -> [String] {
+        try fetchPendingDeletionsSince(anchor: anchor, filterSiteID: siteID, through: upperBound)
+    }
+
+    private func fetchPendingDeletionsSince(anchor: Int64, filterSiteID: String?, through upperBound: Int64?) throws -> [String] {
+        let siteClause = filterSiteID == nil ? "" : " AND site_id = ?"
+        let upperBoundClause = upperBound == nil ? "" : " AND deleted_at_counter <= ?"
+        let sql = "SELECT item_id FROM pending_deletions WHERE deleted_at_counter > ?\(siteClause)\(upperBoundClause) ORDER BY deleted_at_counter"
         return try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_int64(stmt, 1, anchor)
+            var index: Int32 = 2
+            if let filterSiteID {
+                sqlite3_bind_text(stmt, index, (filterSiteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                index += 1
+            }
+            if let upperBound {
+                sqlite3_bind_int64(stmt, index, upperBound)
+            }
             var ids: [String] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
                 ids.append(String(cString: sqlite3_column_text(stmt, 0)))
@@ -1450,6 +1738,55 @@ extension Database {
 
     public func clearPendingDeletions() throws {
         try execute("DELETE FROM pending_deletions")
+    }
+
+    /// Recreate pending tombstones during a domain seed. New counters are
+    /// assigned by the destination database so its change anchor remains
+    /// monotonic after replication.
+    public func savePendingDeletions(_ itemIDs: [String], siteID: String? = nil) throws {
+        guard !itemIDs.isEmpty else { return }
+        try queue.sync {
+            try executeUnsafe("BEGIN TRANSACTION")
+            do {
+                let stmt = try prepareStatement("INSERT OR IGNORE INTO pending_deletions (item_id, site_id) VALUES (?, ?)")
+                defer { sqlite3_finalize(stmt) }
+                for itemID in itemIDs {
+                    sqlite3_reset(stmt)
+                    sqlite3_bind_text(stmt, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(stmt, 2, ((siteID ?? "") as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    guard sqlite3_step(stmt) == SQLITE_DONE else {
+                        throw FindleError.databaseError(detail: "Failed to restore pending deletion")
+                    }
+                }
+                try executeUnsafe("COMMIT")
+            } catch {
+                try? executeUnsafe("ROLLBACK")
+                throw error
+            }
+        }
+    }
+
+    /// Whether a replicated File Provider database contains a complete seed.
+    /// The app writes this marker last, after all copied rows are present, so
+    /// the extension never adopts a partially-seeded database.
+    public func isSeedComplete() throws -> Bool {
+        try queue.sync {
+            let stmt = try prepareStatement("SELECT value FROM system_metadata WHERE key = 'seed_complete'")
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return false }
+            return sqlite3_column_int(stmt, 0) == 1
+        }
+    }
+
+    public func setSeedComplete(_ complete: Bool) throws {
+        try queue.sync {
+            let stmt = try prepareStatement("INSERT OR REPLACE INTO system_metadata (key, value) VALUES ('seed_complete', ?)")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int(stmt, 1, complete ? 1 : 0)
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw FindleError.databaseError(detail: "Failed to update seed state")
+            }
+        }
     }
 
     private func readItems(from stmt: OpaquePointer) throws -> [LocalItem] {
@@ -1471,7 +1808,11 @@ extension Database {
             return Data(bytes: bytes, count: Int(length))
         }()
 
-        let isLocal = colCount > 17 ? sqlite3_column_int(stmt, 17) == 1 : false
+        // `is_local` was added before `updated_at` in older databases but
+        // after it in newly-created databases. Resolve it by name so the
+        // decoded value stays correct across both column layouts.
+        let isLocalIndex = columnIndex(stmt, named: "is_local")
+        let isLocal = isLocalIndex.map { sqlite3_column_int(stmt, $0) == 1 } ?? false
 
         return LocalItem(
             id: String(cString: sqlite3_column_text(stmt, 0)),
@@ -1493,6 +1834,17 @@ extension Database {
             tagData: tagData,
             isLocal: isLocal
         )
+    }
+
+    private func columnIndex(_ stmt: OpaquePointer, named name: String) -> Int32? {
+        let count = sqlite3_column_count(stmt)
+        for index in 0..<count {
+            guard let columnName = sqlite3_column_name(stmt, index) else { continue }
+            if String(cString: columnName) == name {
+                return index
+            }
+        }
+        return nil
     }
 }
 
@@ -1813,11 +2165,24 @@ extension Database {
     }
 
     public func deleteAllData() throws {
-        try execute("DELETE FROM items")
-        try execute("DELETE FROM sync_cursors")
-        try execute("DELETE FROM courses")
-        try execute("DELETE FROM accounts")
-        try execute("DELETE FROM sites")
+        try queue.sync {
+            try executeUnsafe("BEGIN TRANSACTION")
+            do {
+                for table in [
+                    "items", "pending_deletions", "course_tags", "sync_cursors",
+                    "course_outlines",
+                    "assignments", "grade_items", "quizzes", "quiz_attempts",
+                    "courses", "accounts", "sites"
+                ] {
+                    try executeUnsafe("DELETE FROM \(table)")
+                }
+                try executeUnsafe("UPDATE system_metadata SET value = 0 WHERE key IN ('change_counter', 'seed_complete')")
+                try executeUnsafe("COMMIT")
+            } catch {
+                try? executeUnsafe("ROLLBACK")
+                throw error
+            }
+        }
         logger.info("All database data deleted")
     }
 }

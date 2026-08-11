@@ -39,7 +39,10 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
             return caps
         }
         if localItem.isDirectory {
-            return [.allowsReading, .allowsContentEnumerating, .allowsAddingSubItems]
+            // Remote Moodle folders are read-only. Local work belongs in a
+            // provider-root workspace so a remote course refresh cannot delete
+            // or orphan it.
+            return [.allowsReading, .allowsContentEnumerating]
         }
         return [.allowsReading]
     }
@@ -72,10 +75,10 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
 
     var itemVersion: NSFileProviderItemVersion {
         let contentVersion = localItem.contentVersion ?? "1"
-        let versionData = Data(contentVersion.utf8)
+        let metadataVersion = localItem.modificationDate.map { String($0.timeIntervalSince1970) } ?? contentVersion
         return NSFileProviderItemVersion(
-            contentVersion: versionData,
-            metadataVersion: versionData
+            contentVersion: Data(contentVersion.utf8),
+            metadataVersion: Data(metadataVersion.utf8)
         )
     }
 
@@ -88,7 +91,7 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
     }
 
     var isUploaded: Bool {
-        true // Local items are never uploaded; remote items are always "uploaded"
+        !localItem.isLocal
     }
 
     var isUploading: Bool {

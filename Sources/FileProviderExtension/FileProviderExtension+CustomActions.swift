@@ -57,6 +57,10 @@ extension FileProviderExtension: NSFileProviderCustomAction {
 
         switch actionIdentifier.rawValue {
         case Self.openInMoodleIdentifier:
+            guard localItem?.isLocal != true else {
+                completionHandler(NSFileProviderError(.cannotSynchronize))
+                break
+            }
             let url: URL
             if let localItem {
                 url = MoodleURLBuilder.webURL(
@@ -74,6 +78,10 @@ extension FileProviderExtension: NSFileProviderCustomAction {
             completionHandler(nil)
 
         case Self.copyMoodleLinkIdentifier:
+            guard localItem?.isLocal != true else {
+                completionHandler(NSFileProviderError(.cannotSynchronize))
+                break
+            }
             let url: URL
             if let localItem {
                 url = MoodleURLBuilder.webURL(
@@ -93,6 +101,10 @@ extension FileProviderExtension: NSFileProviderCustomAction {
             completionHandler(nil)
 
         case Self.openCoursePageIdentifier:
+            guard localItem?.isLocal != true else {
+                completionHandler(NSFileProviderError(.cannotSynchronize))
+                break
+            }
             let courseURL: URL
             if let localItem {
                 courseURL = MoodleURLBuilder.courseURL(

@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://apple.com/macos"><img src="https://img.shields.io/badge/macOS-14.0%2B-lightgrey.svg" alt="macOS"></a>
+  <a href="https://apple.com/macos"><img src="https://img.shields.io/badge/macOS-15.0%2B-lightgrey.svg" alt="macOS"></a>
   <a href="https://swift.org"><img src="https://img.shields.io/badge/Swift-6.0-F05138.svg" alt="Swift"></a>
   <a href="https://github.com/alexmodrono/Findle/actions"><img src="https://github.com/alexmodrono/Findle/actions/workflows/release.yml/badge.svg" alt="Build Status"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
@@ -72,7 +72,7 @@ brew install --cask findle
 
 ### Requirements
 
-- macOS 14.0 (Sonoma) or later
+- macOS 15.0 (Sequoia) or later
 - Xcode 16.0 or later
 - Swift 6.0
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) (for generating the Xcode project)

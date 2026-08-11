@@ -17,6 +17,7 @@ public actor SyncEngine {
 
     private var activeTasks: [Int: Task<Void, Error>] = [:]
     private var syncProgress: [Int: SyncProgress] = [:]
+    private var isStopping = false
 
     public struct SyncProgress: Sendable {
         public let courseID: Int
@@ -192,18 +193,22 @@ public actor SyncEngine {
             itemCount: allItems.count
         )
         try database.saveSyncCursor(cursor)
+        try database.saveCourseOutline(
+            CourseOutlineSnapshot(courseID: course.id, sections: sections),
+            siteID: site.id
+        )
 
         syncProgress[course.id]?.processedItems = allItems.count
         syncProgress[course.id]?.state = .synced
 
         // Auto-download pinned items that aren't yet materialized
-        await downloadPinnedItems(site: site, token: token)
+        try await downloadPinnedItems(site: site, token: token)
 
         logger.info("Course \(course.id) sync complete: \(allItems.count) items")
     }
 
     /// Download all pinned items that are not yet materialized.
-    private func downloadPinnedItems(site: MoodleSite, token: AuthToken) async {
+    private func downloadPinnedItems(site: MoodleSite, token: AuthToken) async throws {
         do {
             let pinnedItems = try database.fetchPinnedItems(siteID: site.id)
             let pending = pinnedItems.filter { $0.syncState != .materialized }
@@ -212,6 +217,7 @@ public actor SyncEngine {
             logger.info("Downloading \(pending.count) pinned items")
 
             for item in pending {
+                try Task.checkCancellation()
                 guard item.remoteURL != nil else { continue }
                 // Use item.id as the temp filename to avoid collisions between
                 // different items that share a basename (e.g. "Slides.pdf").
@@ -227,11 +233,19 @@ public actor SyncEngine {
                         token: token,
                         destination: destination
                     )
+                } catch is CancellationError {
+                    throw CancellationError()
                 } catch {
+                    if Task.isCancelled {
+                        throw CancellationError()
+                    }
                     logger.error("Failed to download pinned item \(item.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 }
             }
         } catch {
+            if error is CancellationError || Task.isCancelled {
+                throw CancellationError()
+            }
             logger.error("Failed to fetch pinned items: \(error.localizedDescription, privacy: .public)")
         }
     }
@@ -414,8 +428,13 @@ public actor SyncEngine {
 
         do {
             try await provider.downloadFile(url: remoteURL, token: token, destination: destination)
+            try Task.checkCancellation()
             try database.updateItemSyncState(id: itemID, state: .materialized, localPath: destination.path)
             logger.info("Downloaded item \(itemID, privacy: .public)")
+        } catch is CancellationError {
+            try? FileManager.default.removeItem(at: destination)
+            try? database.updateItemSyncState(id: itemID, state: .placeholder)
+            throw CancellationError()
         } catch {
             // Don't leave a half-written file behind for the next download to trip on.
             try? FileManager.default.removeItem(at: destination)
@@ -438,6 +457,24 @@ public actor SyncEngine {
             syncProgress[id]?.state = .stale
         }
         activeTasks.removeAll()
+    }
+
+    /// Cancel and await every in-flight course task before callers replace or
+    /// delete the database those tasks may still be writing.
+    public func stopAllSyncs() async {
+        isStopping = true
+        let tasks = Array(activeTasks.values)
+        for task in tasks {
+            task.cancel()
+        }
+        for task in tasks {
+            _ = try? await task.value
+        }
+        for id in activeTasks.keys {
+            syncProgress[id]?.state = .stale
+        }
+        activeTasks.removeAll()
+        isStopping = false
     }
 
     // MARK: - Progress

@@ -56,10 +56,6 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             let stateDirectoryURL = try Self.stateDirectoryURL(for: domain)
             let databaseURL = Self.databaseURL(in: stateDirectoryURL)
 
-            guard FileManager.default.fileExists(atPath: databaseURL.path) else {
-                return nil
-            }
-
             let didStart = stateDirectoryURL.startAccessingSecurityScopedResource()
             var adoptedScope = false
             defer {
@@ -68,8 +64,15 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                 }
             }
 
+            // The state directory may be security-scoped. Checking the file
+            // before acquiring that scope can report a false negative and make
+            // Finder treat a healthy domain as disconnected.
+            guard FileManager.default.fileExists(atPath: databaseURL.path) else {
+                return nil
+            }
+
             let db = try Database(path: databaseURL.path)
-            guard try databaseIsReady(db) else {
+            guard try db.isSeedComplete(), try databaseIsReady(db) else {
                 logger.info("Database exists but is not seeded yet for domain: \(self.domain.identifier.rawValue, privacy: .public)")
                 return nil
             }
@@ -176,12 +179,16 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
         return ItemEnumerator(
             containerIdentifier: containerItemIdentifier,
-            database: db
+            database: db,
+            siteID: siteID
         )
     }
 
     private func isAuthenticated(using database: Database) -> Bool {
-        guard let account = try? database.fetchAccounts().last(where: { $0.state.isConnected }) else {
+        guard let siteID,
+              let account = try? database.fetchAccounts().last(where: {
+                  $0.siteID == siteID && $0.state.isConnected
+              }) else {
             return false
         }
 
@@ -203,6 +210,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         guard let db = database,
               let localItem = try? db.fetchItem(id: itemIdentifier.rawValue) else {
             completionHandler(nil, nil, NSFileProviderError(.noSuchItem))
+            progress.cancel()
             return progress
         }
 
@@ -219,17 +227,27 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         // Local items have no remote — if their content is missing, report an error.
         if localItem.isLocal {
             completionHandler(nil, nil, NSFileProviderError(.noSuchItem))
+            progress.cancel()
             return progress
         }
 
         do {
+            let providerTemporaryDirectory: URL?
+            if #available(macOS 15.0, *),
+               let manager = NSFileProviderManager(for: domain) {
+                providerTemporaryDirectory = try? manager.temporaryDirectoryURL()
+            } else {
+                providerTemporaryDirectory = nil
+            }
             try FileDownloader.startDownload(
                 item: localItem,
                 database: db,
                 progress: progress,
+                temporaryDirectory: providerTemporaryDirectory,
                 completionHandler: completionHandler
             )
         } catch {
+            progress.cancel()
             completionHandler(nil, nil, error)
         }
 
@@ -280,7 +298,15 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
         // Infer courseID from parent item (local items inherit their parent's course).
         let courseID: Int
-        if let parentID, let parentItem = try? db.fetchItem(id: parentID) {
+        if let parentID {
+            guard let parentItem = try? db.fetchItem(id: parentID) else {
+                completionHandler(nil, [], false, NSFileProviderError(.noSuchItem))
+                return Progress()
+            }
+            guard parentItem.isLocal else {
+                completionHandler(nil, [], false, NSFileProviderError(.cannotSynchronize))
+                return Progress()
+            }
             courseID = parentItem.courseID
         } else {
             courseID = 0 // Root-level local item
@@ -484,6 +510,12 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     private func isReparentAllowed(itemID: String, newParentID: String?, db: Database) -> Bool {
         guard let newParentID else { return true }
         if newParentID == itemID { return false }
+
+        // Keep user-created content in the provider's local workspace. Remote
+        // Moodle folders are read-only and may disappear on a later sync.
+        guard let newParent = try? db.fetchItem(id: newParentID), newParent.isLocal else {
+            return false
+        }
 
         // Walk the ancestor chain of the proposed parent. If it leads back to
         // the item being moved, the move would create a cycle. A missing

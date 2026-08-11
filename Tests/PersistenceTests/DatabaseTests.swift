@@ -120,6 +120,27 @@ final class DatabaseTests: XCTestCase {
         XCTAssertNil(result)
     }
 
+    func testSaveFetchCourseOutline() throws {
+        let outline = CourseOutlineSnapshot(
+            courseID: 101,
+            sections: [
+                CourseOutlineSection(
+                    id: 4,
+                    name: "Week 1",
+                    summary: "Introduction",
+                    sectionNumber: 1,
+                    modules: [CourseOutlineModule(id: 8, name: "Reading", type: "resource")]
+                )
+            ]
+        )
+
+        try database.saveCourseOutline(outline, siteID: "site-1")
+
+        let fetched = try database.fetchCourseOutline(courseID: 101, siteID: "site-1")
+        XCTAssertEqual(fetched, outline)
+        XCTAssertEqual(try database.fetchCourseOutlines(siteID: "site-1").count, 1)
+    }
+
     // MARK: - Schema v3 Fields (wwwroot, httpswwwroot, showLoginForm)
 
     func testSaveFetchSiteWithDiscoveredRoots() throws {
@@ -270,6 +291,21 @@ final class DatabaseTests: XCTestCase {
         XCTAssertNil(notFound)
     }
 
+    func testFetchItemPreservesLocalFlagOnCurrentSchema() throws {
+        let item = LocalItem(
+            id: "local-flag",
+            siteID: "site-1",
+            courseID: 101,
+            remoteID: 0,
+            filename: "workspace",
+            isDirectory: true,
+            isLocal: true
+        )
+        try database.saveItems([item])
+
+        XCTAssertTrue(try database.fetchItem(id: item.id)?.isLocal == true)
+    }
+
     func testUpdateItemSyncState() throws {
         let item = LocalItem(
             id: "item-state",
@@ -323,6 +359,16 @@ final class DatabaseTests: XCTestCase {
         XCTAssertTrue(fetched.isEmpty)
     }
 
+    func testSeedCompletionIsExplicitAndResetByDeleteAllData() throws {
+        XCTAssertFalse(try database.isSeedComplete())
+        try database.setSeedComplete(true)
+        XCTAssertTrue(try database.isSeedComplete())
+
+        try database.deleteAllData()
+
+        XCTAssertFalse(try database.isSeedComplete())
+    }
+
     // MARK: - Change Counter / Sync Anchor
 
     func testOpeningVersion10DatabaseMigratesChangeCounterColumns() throws {
@@ -352,11 +398,11 @@ final class DatabaseTests: XCTestCase {
         XCTAssertEqual(try database.fetchItem(id: "materialized-item")?.syncState, .materialized)
     }
 
-    private func makeItem(id: String, parentID: String? = nil, courseID: Int = 1) -> LocalItem {
+    private func makeItem(id: String, parentID: String? = nil, courseID: Int = 1, siteID: String = "site-1") -> LocalItem {
         LocalItem(
             id: id,
             parentID: parentID,
-            siteID: "site-1",
+            siteID: siteID,
             courseID: courseID,
             remoteID: 0,
             filename: id,
@@ -505,6 +551,29 @@ final class DatabaseTests: XCTestCase {
         XCTAssertEqual(changedIDs, Set(["new-1", "new-2"]))
     }
 
+    func testFetchItemsChangedSinceCanBeBoundToCapturedCounter() throws {
+        try database.saveItems([makeItem(id: "old-1")])
+        let anchor = try database.currentChangeCounter()
+        try database.saveItems([makeItem(id: "new-1")])
+        let upperBound = try database.currentChangeCounter()
+        try database.saveItems([makeItem(id: "late-1")])
+
+        let changed = try database.fetchItemsChangedSince(anchor: anchor, siteID: "site-1", through: upperBound)
+        XCTAssertEqual(Set(changed.map(\.id)), Set(["new-1"]))
+    }
+
+    func testPreservingChangeCounterKeepsRestoredRowsAfterExistingAnchor() throws {
+        try database.saveItems([makeItem(id: "before-reset")])
+        let oldAnchor = try database.currentChangeCounter()
+
+        try database.deleteAllData()
+        try database.preserveChangeCounter(atLeast: oldAnchor)
+        try database.saveItems([makeItem(id: "restored")])
+
+        let changed = try database.fetchItemsChangedSince(anchor: oldAnchor, siteID: "site-1")
+        XCTAssertEqual(changed.map(\.id), ["restored"])
+    }
+
     func testFetchPendingDeletionsSinceFiltersByAnchor() throws {
         try database.saveItems([
             makeItem(id: "to-keep"),
@@ -522,5 +591,47 @@ final class DatabaseTests: XCTestCase {
         // An anchor newer than both deletions should return nothing.
         let nowAnchor = try database.currentChangeCounter()
         XCTAssertTrue(try database.fetchPendingDeletionsSince(anchor: nowAnchor).isEmpty)
+    }
+
+    func testPendingDeletionsAreScopedBySite() throws {
+        try database.saveItems([
+            makeItem(id: "site-a-item", siteID: "site-a"),
+            makeItem(id: "site-b-item", siteID: "site-b"),
+        ])
+
+        try database.deleteItemsWithTombstone(ids: ["site-a-item", "site-b-item"])
+
+        let anchor: Int64 = 0
+        XCTAssertEqual(
+            try database.fetchPendingDeletionsSince(anchor: anchor, siteID: "site-a", through: nil),
+            ["site-a-item"]
+        )
+        XCTAssertEqual(
+            try database.fetchPendingDeletions(siteID: "site-b"),
+            ["site-b-item"]
+        )
+    }
+
+    func testReintroducedItemClearsItsOldTombstone() throws {
+        try database.saveItems([makeItem(id: "reintroduced")])
+        let anchor = try database.currentChangeCounter()
+
+        try database.deleteItemsWithTombstone(ids: ["reintroduced"])
+        try database.saveItems([makeItem(id: "reintroduced")])
+
+        XCTAssertTrue(try database.fetchPendingDeletionsSince(anchor: anchor).isEmpty)
+    }
+
+    func testRemoteDeletionPreservesLocalDescendantsAtSurvivingParent() throws {
+        let root = LocalItem(id: "remote-root", siteID: "site-1", courseID: 1, remoteID: 1, filename: "Course", isDirectory: true)
+        let section = LocalItem(id: "remote-section", parentID: root.id, siteID: "site-1", courseID: 1, remoteID: 2, filename: "Section", isDirectory: true)
+        let local = LocalItem(id: "local-work", parentID: section.id, siteID: "site-1", courseID: 1, remoteID: 0, filename: "Project", isDirectory: true, isLocal: true)
+        try database.saveItems([root, section, local])
+
+        try database.deleteItemsWithTombstone(ids: [root.id])
+
+        XCTAssertEqual(try database.fetchItem(id: local.id)?.parentID, nil)
+        XCTAssertNotNil(try database.fetchItem(id: local.id))
+        XCTAssertEqual(Set(try database.fetchPendingDeletions()), Set([root.id, section.id]))
     }
 }

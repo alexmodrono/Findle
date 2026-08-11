@@ -5,6 +5,7 @@
 
 import SwiftUI
 import AppKit
+import SharedDomain
 
 /// A dedicated, reusable window for connecting Findle's bundled MCP server to
 /// assistants — one-click for Claude (Desktop/Code), and a friendly, guided

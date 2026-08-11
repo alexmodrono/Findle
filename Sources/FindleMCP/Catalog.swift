@@ -37,6 +37,10 @@ struct Catalog {
             let tagsByCourse = (try? database.fetchAllCourseTags(siteID: siteID)) ?? [:]
             let cursors = (try? database.fetchAllSyncCursors(siteID: siteID)) ?? []
             let cursorByCourse = Dictionary(uniqueKeysWithValues: cursors.map { ($0.courseID, $0) })
+            let fileCounts = Dictionary(
+                grouping: try database.fetchAllItems(siteID: siteID).filter { !$0.isDirectory },
+                by: \.courseID
+            ).mapValues(\.count)
 
             let out = courses.map { course -> CourseOut in
                 let cursor = cursorByCourse[course.id]
@@ -47,11 +51,120 @@ struct Catalog {
                     folderName: course.effectiveFolderName,
                     syncEnabled: course.isSyncEnabled,
                     tags: (tagsByCourse[course.id] ?? []).map(\.name),
-                    fileCount: cursor?.itemCount ?? 0,
+                    fileCount: fileCounts[course.id] ?? 0,
                     lastSynced: cursor.map { $0.lastSyncDate.ISO8601Format() }
                 )
             }
             return Self.encode(out)
+        } catch {
+            return Self.errorJSON(error)
+        }
+    }
+
+    /// Return the small amount of context an agent usually needs before it
+    /// asks for a specific document. The limits are deliberate: course
+    /// orientation should not require loading an entire Finder tree into the
+    /// model context.
+    func getCourseBrief(courseID: Int, maxSections: Int, maxFilesPerSection: Int, maxChars: Int) -> String {
+        guard let siteID else { return Self.noAccountJSON }
+        do {
+            guard let course = try database.fetchCourses(siteID: siteID).first(where: { $0.id == courseID }) else {
+                return Self.errorJSON(message: "No course with id \(courseID)")
+            }
+
+            let items = try database.fetchItems(courseID: courseID, siteID: siteID)
+            guard let root = items.first(where: { $0.parentID == nil }) else {
+                return Self.errorJSON(message: "No synced contents for course \(courseID). It may not be sync-enabled.")
+            }
+
+            let childrenByParent = Dictionary(grouping: items, by: { $0.parentID })
+            // Older shared databases predate the outline table. The Finder
+            // projection remains useful even before the next sync backfills it.
+            let persistedOutline = try? database.fetchCourseOutline(courseID: courseID, siteID: siteID)
+            let outlineBySectionID = Dictionary(
+                uniqueKeysWithValues: (persistedOutline?.sections ?? [])
+                    .map { ($0.id, $0) }
+            )
+            let sectionLimit = max(1, min(maxSections, 50))
+            let fileLimit = max(1, min(maxFilesPerSection, 25))
+            let summaryLimit = max(200, min(maxChars, 8_000))
+            let upcomingCutoff = Date().addingTimeInterval(-86_400)
+            let sections = (childrenByParent[root.id] ?? [])
+                .filter(\.isDirectory)
+                .sorted(by: Self.itemOrder)
+
+            var truncated = sections.count > sectionLimit
+            let sectionOut = sections.prefix(sectionLimit).map { section in
+                let descendants = Self.descendants(of: section.id, childrenByParent: childrenByParent)
+                let files = descendants
+                    .filter { !$0.isDirectory }
+                    .sorted(by: Self.itemOrder)
+                truncated = truncated || files.count > fileLimit
+                let activities = (outlineBySectionID[section.remoteID]?.modules ?? [])
+                    .filter(\.visible)
+                    .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+                truncated = truncated || activities.count > 20
+                return BriefSection(
+                    id: section.id,
+                    name: section.filename,
+                    summary: outlineBySectionID[section.remoteID].flatMap { Self.compactText($0.summary ?? "", maxCharacters: 600) },
+                    fileCount: files.count,
+                    files: files.prefix(fileLimit).map(BriefFile.init),
+                    activities: activities.prefix(20).map(BriefActivity.init)
+                )
+            }
+
+            let assignments = try database.fetchAssignments(siteID: siteID)
+                .filter { $0.courseID == courseID && ($0.dueDate ?? .distantPast) >= upcomingCutoff }
+                .sorted { ($0.dueDate ?? .distantFuture) < ($1.dueDate ?? .distantFuture) }
+                .prefix(5)
+                .map {
+                    BriefDeadline(
+                        type: "assignment",
+                        id: $0.id,
+                        name: $0.name,
+                        due: $0.dueDate?.ISO8601Format() ?? "",
+                        submitted: $0.submitted
+                    )
+                }
+
+            let quizzes = try database.fetchQuizzes(siteID: siteID)
+                .filter { $0.courseID == courseID && ($0.closeDate ?? .distantPast) >= upcomingCutoff }
+                .sorted { ($0.closeDate ?? .distantFuture) < ($1.closeDate ?? .distantFuture) }
+                .prefix(5)
+                .map {
+                    BriefDeadline(
+                        type: "quiz",
+                        id: $0.id,
+                        name: $0.name,
+                        due: $0.closeDate?.ISO8601Format() ?? "",
+                        submitted: nil
+                    )
+                }
+
+            let deadlines = (Array(assignments) + Array(quizzes))
+                .sorted { $0.due < $1.due }
+                .prefix(5)
+
+            let cursor = try database.fetchSyncCursor(courseID: courseID, siteID: siteID)
+            let fileCount = items.filter { !$0.isDirectory }.count
+            let downloadedCount = items.filter { !$0.isDirectory && $0.syncState == .materialized }.count
+            return Self.encode(CourseBriefOut(
+                course: BriefCourse(
+                    id: course.id,
+                    name: course.fullName,
+                    shortName: course.shortName,
+                    summary: Self.compactText(course.summary ?? "", maxCharacters: summaryLimit),
+                    visible: course.visible,
+                    syncEnabled: course.isSyncEnabled,
+                    lastSynced: cursor?.lastSyncDate.ISO8601Format(),
+                    fileCount: fileCount,
+                    downloadedCount: downloadedCount
+                ),
+                sections: Array(sectionOut),
+                upcomingDeadlines: Array(deadlines),
+                truncated: truncated
+            ))
         } catch {
             return Self.errorJSON(error)
         }
@@ -131,7 +244,7 @@ struct Catalog {
         }
     }
 
-    func readItem(id: String, maxChars: Int) -> String {
+    func readItem(id: String, maxChars: Int, offset: Int) -> String {
         do {
             guard let item = try database.fetchItem(id: id) else {
                 return Self.errorJSON(message: "No item with id \(id)")
@@ -144,16 +257,22 @@ struct Catalog {
             case .failure(let message):
                 return Self.errorJSON(message: message)
             case .success(let full):
-                let cap = max(1_000, maxChars)
-                let truncated = full.count > cap
-                let text = truncated ? String(full.prefix(cap)) : full
+                let characters = Array(full)
+                let cap = max(256, min(maxChars, 20_000))
+                let start = max(0, min(offset, characters.count))
+                let end = min(characters.count, start + cap)
+                let truncated = end < characters.count
+                let text = String(characters[start..<end])
                 return Self.encode(ReadItemOut(
                     id: id,
                     filename: item.filename,
                     courseID: item.courseID,
                     characters: full.count,
+                    offset: start,
+                    nextOffset: truncated ? end : nil,
                     truncated: truncated,
-                    text: text
+                    text: text,
+                    path: itemPath(for: item)
                 ))
             }
         } catch {
@@ -170,7 +289,14 @@ struct Catalog {
 
         let hits = indexStore.search(query: trimmed, courseID: courseID, limit: limit)
         let out = hits.map {
-            SearchHit(id: $0.itemID, courseID: $0.courseID, filename: $0.filename, snippet: $0.snippet)
+            SearchHit(
+                id: $0.itemID,
+                courseID: $0.courseID,
+                filename: $0.filename,
+                snippet: $0.snippet,
+                contentVersion: $0.contentVersion,
+                path: pathForItemID($0.itemID)
+            )
         }
         // An empty result over a sparse index is ambiguous, so hint at indexing.
         if out.isEmpty {
@@ -208,7 +334,9 @@ struct Catalog {
                     courseID: scored.hit.courseID,
                     filename: scored.hit.filename,
                     score: (scored.score * 1000).rounded() / 1000,
-                    passage: String(scored.hit.chunkText.prefix(400))
+                    passage: String(scored.hit.chunkText.prefix(400)),
+                    contentVersion: scored.hit.contentVersion,
+                    path: pathForItemID(scored.hit.itemID)
                 )
             }
         return Self.encode(SemanticResult(matches: ranked, note: nil))
@@ -467,6 +595,23 @@ struct Catalog {
         return entries.first { $0.lastPathComponent.hasPrefix("Findle") }
     }
 
+    private func itemPath(for item: LocalItem) -> String {
+        var names: [String] = []
+        var current: LocalItem? = item
+        var hops = 0
+        while let node = current, hops < 64 {
+            names.insert(node.filename, at: 0)
+            current = node.parentID.flatMap { try? database.fetchItem(id: $0) }
+            hops += 1
+        }
+        return names.joined(separator: "/")
+    }
+
+    private func pathForItemID(_ itemID: String) -> String? {
+        guard let item = try? database.fetchItem(id: itemID) else { return nil }
+        return itemPath(for: item)
+    }
+
     static func bestChildMatch(in directory: URL, name: String) -> URL? {
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else {
@@ -537,6 +682,70 @@ struct Catalog {
     }
 
     // MARK: - Output types
+
+    private struct CourseBriefOut: Codable {
+        let course: BriefCourse
+        let sections: [BriefSection]
+        let upcomingDeadlines: [BriefDeadline]
+        let truncated: Bool
+    }
+
+    private struct BriefCourse: Codable {
+        let id: Int
+        let name: String
+        let shortName: String
+        let summary: String
+        let visible: Bool
+        let syncEnabled: Bool
+        let lastSynced: String?
+        let fileCount: Int
+        let downloadedCount: Int
+    }
+
+    private struct BriefSection: Codable {
+        let id: String
+        let name: String
+        let summary: String?
+        let fileCount: Int
+        let files: [BriefFile]
+        let activities: [BriefActivity]
+    }
+
+    private struct BriefActivity: Codable {
+        let id: Int
+        let name: String
+        let type: String
+        let fileCount: Int
+
+        init(_ module: CourseOutlineModule) {
+            id = module.id
+            name = module.name
+            type = module.type
+            fileCount = module.files.count
+        }
+    }
+
+    private struct BriefFile: Codable {
+        let id: String
+        let name: String
+        let size: Int64
+        let downloaded: Bool
+
+        init(_ item: LocalItem) {
+            id = item.id
+            name = item.filename
+            size = item.fileSize
+            downloaded = item.syncState == .materialized
+        }
+    }
+
+    private struct BriefDeadline: Codable {
+        let type: String
+        let id: Int
+        let name: String
+        let due: String
+        let submitted: Bool?
+    }
 
     private struct CourseOut: Codable {
         let id: Int
@@ -613,6 +822,8 @@ struct Catalog {
         let filename: String
         let score: Float
         let passage: String
+        let contentVersion: String?
+        let path: String?
     }
 
     private struct SearchHit: Codable {
@@ -620,6 +831,8 @@ struct Catalog {
         let courseID: Int
         let filename: String
         let snippet: String
+        let contentVersion: String?
+        let path: String?
     }
 
     private struct CourseContentsOut: Codable {
@@ -642,8 +855,11 @@ struct Catalog {
         let filename: String
         let courseID: Int
         let characters: Int
+        let offset: Int
+        let nextOffset: Int?
         let truncated: Bool
         let text: String
+        let path: String
     }
 
     private struct ItemOut: Codable {
@@ -674,11 +890,34 @@ struct Catalog {
         return a.filename.localizedCaseInsensitiveCompare(b.filename) == .orderedAscending
     }
 
+    private static func descendants(
+        of parentID: String,
+        childrenByParent: [String?: [LocalItem]]
+    ) -> [LocalItem] {
+        var result: [LocalItem] = []
+        var frontier = childrenByParent[parentID] ?? []
+        while !frontier.isEmpty {
+            result.append(contentsOf: frontier)
+            frontier = frontier.flatMap { childrenByParent[$0.id] ?? [] }
+        }
+        return result
+    }
+
+    private static func compactText(_ text: String, maxCharacters: Int) -> String {
+        let withoutTags = text.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+        let compact = withoutTags
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        return String(compact.prefix(maxCharacters))
+    }
+
     // MARK: - Encoding helpers
 
     private static func encode<T: Encodable>(_ value: T) -> String {
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        // MCP responses are model input. Compact JSON avoids spending context
+        // on indentation while keeping deterministic key ordering for tests.
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return (try? encoder.encode(value)).flatMap { String(data: $0, encoding: .utf8) }
             ?? #"{"error":"Failed to encode response"}"#
     }
@@ -703,38 +942,67 @@ struct ArgReader {
 }
 
 extension Catalog {
+    static func toolResult(_ text: String) -> (text: String, isError: Bool) {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
+            return (text, false)
+        }
+        return (text, object["error"] != nil)
+    }
+
+    static func missingArgument(_ name: String) -> (text: String, isError: Bool) {
+        (Self.errorJSON(message: "Missing required argument: \(name)"), true)
+    }
+
     /// Run a tool by name. Shared by both transports; returns the JSON text and
     /// whether it represents an error.
     func callTool(named name: String, args: ArgReader) -> (text: String, isError: Bool) {
         switch name {
         case "list_courses":
-            return (listCourses(), false)
+            return Self.toolResult(listCourses())
+        case "get_course_brief":
+            guard let course = args.int("course") else { return Self.missingArgument("course") }
+            return Self.toolResult(getCourseBrief(
+                courseID: course,
+                maxSections: args.int("max_sections") ?? 12,
+                maxFilesPerSection: args.int("max_files_per_section") ?? 8,
+                maxChars: args.int("max_chars") ?? 2_000
+            ))
         case "get_course_contents":
-            return (getCourseContents(courseID: args.int("course") ?? -1), false)
+            guard let course = args.int("course") else { return Self.missingArgument("course") }
+            return Self.toolResult(getCourseContents(courseID: course))
         case "search_items":
-            return (searchItems(query: args.string("query") ?? "", courseID: args.int("course"), limit: args.int("limit") ?? 20), false)
+            guard let query = args.string("query") else { return Self.missingArgument("query") }
+            return Self.toolResult(searchItems(query: query, courseID: args.int("course"), limit: args.int("limit") ?? 20))
         case "search_text":
-            return (searchText(query: args.string("query") ?? "", courseID: args.int("course"), limit: args.int("limit") ?? 10), false)
+            guard let query = args.string("query") else { return Self.missingArgument("query") }
+            return Self.toolResult(searchText(query: query, courseID: args.int("course"), limit: args.int("limit") ?? 10))
         case "semantic_search":
-            return (semanticSearch(query: args.string("query") ?? "", courseID: args.int("course"), k: args.int("k") ?? 6), false)
+            guard let query = args.string("query") else { return Self.missingArgument("query") }
+            return Self.toolResult(semanticSearch(query: query, courseID: args.int("course"), k: args.int("k") ?? 6))
         case "index_course":
-            return (indexCourse(courseID: args.int("course") ?? -1), false)
+            guard let course = args.int("course") else { return Self.missingArgument("course") }
+            return Self.toolResult(indexCourse(courseID: course))
         case "read_item":
-            return (readItem(id: args.string("id") ?? "", maxChars: args.int("max_chars") ?? 100_000), false)
+            guard let id = args.string("id") else { return Self.missingArgument("id") }
+            return Self.toolResult(readItem(id: id, maxChars: args.int("max_chars") ?? 8_000, offset: args.int("offset") ?? 0))
         case "get_item":
-            return (getItem(id: args.string("id") ?? ""), false)
+            guard let id = args.string("id") else { return Self.missingArgument("id") }
+            return Self.toolResult(getItem(id: id))
         case "get_moodle_url":
-            return (getMoodleURL(id: args.string("id") ?? ""), false)
+            guard let id = args.string("id") else { return Self.missingArgument("id") }
+            return Self.toolResult(getMoodleURL(id: id))
         case "trigger_sync":
-            return (triggerSync(courseID: args.int("course")), false)
+            return Self.toolResult(triggerSync(courseID: args.int("course")))
         case "list_deadlines":
-            return (listDeadlines(courseID: args.int("course"), withinDays: args.int("within_days")), false)
+            return Self.toolResult(listDeadlines(courseID: args.int("course"), withinDays: args.int("within_days")))
         case "get_submission_status":
-            return (getSubmissionStatus(assignmentID: args.int("assignment_id") ?? -1), false)
+            guard let assignmentID = args.int("assignment_id") else { return Self.missingArgument("assignment_id") }
+            return Self.toolResult(getSubmissionStatus(assignmentID: assignmentID))
         case "get_grades":
-            return (getGrades(courseID: args.int("course")), false)
+            return Self.toolResult(getGrades(courseID: args.int("course")))
         case "get_quiz_attempts":
-            return (getQuizAttempts(quizID: args.int("quiz_id") ?? -1), false)
+            guard let quizID = args.int("quiz_id") else { return Self.missingArgument("quiz_id") }
+            return Self.toolResult(getQuizAttempts(quizID: quizID))
         default:
             return ("Unknown tool: \(name)", true)
         }

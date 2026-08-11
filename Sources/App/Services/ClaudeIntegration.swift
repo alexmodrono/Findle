@@ -7,9 +7,10 @@ import Foundation
 import AppKit
 import OSLog
 import Security
+import SharedDomain
 
 /// Registers Findle's bundled MCP server with Claude Desktop and Claude Code by
-/// merging a `findle` entry into their JSON config files.
+/// merging this build's entry into their JSON config files.
 ///
 /// The app is sandboxed, so two things matter: writes to these well-known paths
 /// are permitted by a temporary-exception home-relative-path entitlement, and
@@ -84,7 +85,7 @@ enum ClaudeIntegration {
         return parts.joined(separator: " ")
     }
 
-    /// Whether a `findle` MCP server is already registered with `target`. Returns
+    /// Whether this build's MCP server is already registered with `target`. Returns
     /// `false` if the config is missing or unreadable.
     static func isInstalled(_ target: Target) -> Bool {
         guard let data = try? Data(contentsOf: target.configURL),
@@ -123,7 +124,7 @@ enum ClaudeIntegration {
         return entry
     }
 
-    /// Read the existing config (if any), set `mcpServers.findle`, and write back
+    /// Read the existing config (if any), set this build's `mcpServers` entry, and write back
     /// atomically — preserving every other key. Never overwrites a config that
     /// exists but can't be parsed.
     private static func merge(entry: [String: Any], into url: URL) throws {

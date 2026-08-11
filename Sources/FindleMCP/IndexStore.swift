@@ -23,6 +23,7 @@ final class IndexStore: @unchecked Sendable {
         let courseID: Int
         let filename: String
         let snippet: String
+        let contentVersion: String?
     }
 
     /// Opens the index database. `path` is injectable for tests; production uses
@@ -87,6 +88,7 @@ final class IndexStore: @unchecked Sendable {
         let filename: String
         let chunkText: String
         let vector: [Float]
+        let contentVersion: String?
     }
 
     /// Whether `itemID` already has embeddings stored at the given content version.
@@ -127,7 +129,7 @@ final class IndexStore: @unchecked Sendable {
     /// for brute-force cosine ranking.
     func fetchEmbeddings(language: String, courseID: Int?) -> [EmbeddingHit] {
         queue.sync {
-            var sql = "SELECT item_id, course_id, filename, chunk_text, vector FROM embeddings WHERE language = ?"
+            var sql = "SELECT item_id, course_id, filename, chunk_text, vector, content_version FROM embeddings WHERE language = ?"
             if courseID != nil { sql += " AND course_id = ?" }
 
             var stmt: OpaquePointer?
@@ -149,7 +151,8 @@ final class IndexStore: @unchecked Sendable {
                     courseID: Int(sqlite3_column_int64(stmt, 1)),
                     filename: sqlite3_column_text(stmt, 2).map { String(cString: $0) } ?? "",
                     chunkText: sqlite3_column_text(stmt, 3).map { String(cString: $0) } ?? "",
-                    vector: vector
+                    vector: vector,
+                    contentVersion: sqlite3_column_text(stmt, 5).map { String(cString: $0) }
                 ))
             }
             return hits
@@ -194,7 +197,7 @@ final class IndexStore: @unchecked Sendable {
         guard !match.isEmpty else { return [] }
 
         return queue.sync {
-            var sql = "SELECT item_id, course_id, filename, snippet(item_text, 3, '«', '»', '…', 14) FROM item_text WHERE item_text MATCH ?"
+            var sql = "SELECT item_id, course_id, filename, snippet(item_text, 3, '«', '»', '…', 14), content_version FROM item_text WHERE item_text MATCH ?"
             // CAST: course_id is an FTS5 UNINDEXED column; its stored affinity is
             // unreliable, so compare as an integer to keep scoped search correct.
             if courseID != nil { sql += " AND CAST(course_id AS INTEGER) = ?" }
@@ -215,7 +218,8 @@ final class IndexStore: @unchecked Sendable {
                     itemID: sqlite3_column_text(stmt, 0).map { String(cString: $0) } ?? "",
                     courseID: Int(sqlite3_column_int64(stmt, 1)),
                     filename: sqlite3_column_text(stmt, 2).map { String(cString: $0) } ?? "",
-                    snippet: sqlite3_column_text(stmt, 3).map { String(cString: $0) } ?? ""
+                    snippet: sqlite3_column_text(stmt, 3).map { String(cString: $0) } ?? "",
+                    contentVersion: sqlite3_column_text(stmt, 4).map { String(cString: $0) }
                 ))
             }
             return hits

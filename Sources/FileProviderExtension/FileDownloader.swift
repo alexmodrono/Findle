@@ -30,6 +30,7 @@ enum FileDownloader {
         item: LocalItem,
         database: Database,
         progress: Progress,
+        temporaryDirectory: URL? = nil,
         completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void
     ) throws {
         let completionBridge = FileDownloadCompletionBridge(
@@ -54,7 +55,7 @@ enum FileDownloader {
         authenticatedRequest.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         authenticatedRequest.httpBody = formEncodeToken(tokenString)
 
-        let destinationURL = makeTemporaryDestinationURL(for: item)
+        let destinationURL = makeTemporaryDestinationURL(for: item, in: temporaryDirectory)
         try database.updateItemSyncState(id: item.id, state: .downloading)
 
         let task = URLSession.shared.downloadTask(with: authenticatedRequest) { downloadedURL, response, error in
@@ -112,10 +113,10 @@ enum FileDownloader {
         return "token=\(encoded)".data(using: .utf8)
     }
 
-    private static func makeTemporaryDestinationURL(for item: LocalItem) -> URL {
+    private static func makeTemporaryDestinationURL(for item: LocalItem, in directory: URL?) -> URL {
         let pathExtension = (item.filename as NSString).pathExtension
         let baseName = item.id.replacingOccurrences(of: "/", with: "_")
-        let tempDir = FileManager.default.temporaryDirectory
+        let tempDir = directory ?? FileManager.default.temporaryDirectory
         let fileName = pathExtension.isEmpty ? baseName : "\(baseName).\(pathExtension)"
         return tempDir.appendingPathComponent(fileName)
     }
@@ -135,20 +136,42 @@ final class FileDownloadCompletionBridge: @unchecked Sendable {
     }
 
     func succeed(url: URL, item: NSFileProviderItem) {
-        progress.completedUnitCount = progress.totalUnitCount
-        takeCompletionHandler()?(url, item, nil)
+        finish(progressState: .succeeded) { handler in
+            handler(url, item, nil)
+        }
     }
 
     func fail(_ error: Error) {
-        takeCompletionHandler()?(nil, nil, error)
+        // A failed materialization must leave a terminal Progress state. An
+        // incomplete progress object makes Finder keep showing the item as
+        // downloading even though its completion handler already failed.
+        finish(progressState: .failed) { handler in
+            handler(nil, nil, error)
+        }
     }
 
-    private func takeCompletionHandler() -> ((URL?, NSFileProviderItem?, Error?) -> Void)? {
-        lock.lock()
-        defer { lock.unlock() }
+    private enum TerminalProgressState {
+        case succeeded
+        case failed
+    }
 
-        let handler = completionHandler
+    private func finish(
+        progressState: TerminalProgressState,
+        calling callback: (((URL?, NSFileProviderItem?, Error?) -> Void) -> Void)
+    ) {
+        lock.lock()
+        guard let handler = completionHandler else {
+            lock.unlock()
+            return
+        }
         completionHandler = nil
-        return handler
+        switch progressState {
+        case .succeeded:
+            progress.completedUnitCount = progress.totalUnitCount
+        case .failed:
+            progress.cancel()
+        }
+        lock.unlock()
+        callback(handler)
     }
 }

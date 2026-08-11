@@ -61,6 +61,7 @@ final class FileDownloadCompletionBridgeTests: XCTestCase {
 
         XCTAssertEqual(state.invocationCount, 1)
         XCTAssertEqual(progress.completedUnitCount, 0)
+        XCTAssertTrue(progress.isCancelled)
         XCTAssertNotNil(state.lastError)
         XCTAssertNil(state.lastURL)
     }

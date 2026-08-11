@@ -33,6 +33,25 @@ enum TestDB {
         let file2 = LocalItem(id: "f2", parentID: section.id, siteID: siteID, courseID: 100, remoteID: 3, filename: "Tema 1 Derivadas.pdf", fileSize: 2000, syncState: .placeholder)
         try db.saveItems([root, section, file1, file2])
         try db.saveSyncCursor(SyncCursor(courseID: 100, siteID: siteID, lastSyncDate: Date(timeIntervalSince1970: 1_700_000_000), itemCount: 2))
+        try db.saveCourseOutline(
+            CourseOutlineSnapshot(
+                courseID: 100,
+                sections: [
+                    CourseOutlineSection(
+                        id: 1,
+                        name: "Exámenes",
+                        summary: "Evaluación final y material de repaso.",
+                        sectionNumber: 1,
+                        modules: [
+                            CourseOutlineModule(id: 2, name: "Examen Final", type: "resource", files: [
+                                CourseOutlineFile(name: "Examen Final.pdf", type: "file", size: 1000)
+                            ])
+                        ]
+                    )
+                ]
+            ),
+            siteID: siteID
+        )
 
         try db.saveAssignments([
             MoodleAssignment(id: 901, courseID: 100, name: "Entrega 1", dueDate: Date().addingTimeInterval(3 * 86400)),

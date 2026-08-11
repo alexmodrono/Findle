@@ -57,6 +57,8 @@ final class AppState: ObservableObject {
     private var automaticSyncTask: Task<Void, Never>?
     private var lastAppliedSyncInterval: Double = -1
     private var sessionBootstrapTask: Task<Void, Error>?
+    private var trackingRefreshTask: Task<Void, Never>?
+    private var isDatabaseTransitioning = false
     private var syncSettingsObserver: NSObjectProtocol?
     private let logger = Logger(subsystem: "es.amodrono.findle", category: "AppState")
     private let userDefaults: UserDefaults
@@ -177,6 +179,37 @@ final class AppState: ObservableObject {
         return sharedDatabase
     }
 
+    /// fileproviderd can take a few seconds to expose a new state directory.
+    /// Keep the app on its bootstrap database only until that window is
+    /// exhausted, rather than starting a sync against a database Finder cannot
+    /// see.
+    private func adoptSharedDatabaseWithRetry(siteID: String, seedFrom sourceDatabase: Database?) async -> Database? {
+        let wasTransitioning = isDatabaseTransitioning
+        isDatabaseTransitioning = true
+        defer { isDatabaseTransitioning = wasTransitioning }
+
+        for attempt in 1...5 {
+            do {
+                try Task.checkCancellation()
+                if let sharedDatabase = try openSharedDatabase(siteID: siteID, seedFrom: sourceDatabase) {
+                    return sharedDatabase
+                }
+            } catch is CancellationError {
+                return nil
+            } catch {
+                logger.warning("Shared database adoption attempt \(attempt) failed: \(error.localizedDescription, privacy: .public)")
+            }
+
+            guard attempt < 5 else { break }
+            do {
+                try await Task.sleep(for: .seconds(TimeInterval(attempt)))
+            } catch {
+                return nil
+            }
+        }
+        return nil
+    }
+
     private func sharedDatabaseLocation(siteID: String) throws -> SharedDatabaseLocation? {
         let domainID = NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: siteID))
         let domain = NSFileProviderDomain(identifier: domainID, displayName: siteID)
@@ -200,6 +233,7 @@ final class AppState: ObservableObject {
         guard FileManager.default.fileExists(atPath: databaseURL.path) else { return true }
 
         let sharedDatabase = try Database(path: databaseURL.path)
+        guard try sharedDatabase.isSeedComplete() else { return true }
         let hasSite = try sharedDatabase.fetchSite(id: siteID) != nil
         let hasConnectedAccount = try sharedDatabase.fetchAccounts().contains {
             $0.siteID == siteID && $0.state.isConnected
@@ -214,32 +248,88 @@ final class AppState: ObservableObject {
             withIntermediateDirectories: true
         )
 
+        // Snapshot before touching the destination. During recovery the source
+        // can already be the state-directory database; deleting it first would
+        // erase the only copy and leave Finder permanently empty.
+        let sourcePath = URL(fileURLWithPath: sourceDatabase.filePath).standardizedFileURL.path
+        let destinationPath = URL(fileURLWithPath: destinationURL.path).standardizedFileURL.path
         let sharedDatabase = try Database(path: destinationURL.path)
-        try sharedDatabase.deleteAllData()
+        let destinationCounter = try sharedDatabase.currentChangeCounter()
+        try sharedDatabase.setSeedComplete(false)
 
-        if let site = try sourceDatabase.fetchSite(id: siteID) {
+        // If recovery is asked to seed a database from itself, prefer the
+        // bootstrap snapshot. If that snapshot is unavailable, fail closed
+        // rather than marking an unknown partial state as ready.
+        let snapshotSource: Database
+        if sourcePath == destinationPath {
+            guard let bootstrap = try? Database(),
+                  URL(fileURLWithPath: bootstrap.filePath).standardizedFileURL.path != destinationPath,
+                  try bootstrap.isSeedComplete(),
+                  try bootstrap.fetchSite(id: siteID) != nil,
+                  try bootstrap.fetchAccounts().contains(where: { $0.siteID == siteID && $0.state.isConnected }) else {
+                throw FindleError.databaseError(detail: "Cannot safely reseed the active File Provider database")
+            }
+            snapshotSource = bootstrap
+        } else {
+            guard try sourceDatabase.isSeedComplete() else {
+                throw FindleError.databaseError(detail: "Cannot seed from an incomplete database snapshot")
+            }
+            snapshotSource = sourceDatabase
+        }
+        let seedCounter = max(destinationCounter, try snapshotSource.currentChangeCounter())
+
+        let site = try snapshotSource.fetchSite(id: siteID)
+        let siteAccounts = try snapshotSource.fetchAccounts().filter { $0.siteID == siteID }
+        let courses = try snapshotSource.fetchCourses(siteID: siteID)
+        let outlines = try snapshotSource.fetchCourseOutlines(siteID: siteID)
+        let sourceItems = try snapshotSource.fetchAllItems(siteID: siteID)
+        let cursors = try snapshotSource.fetchAllSyncCursors(siteID: siteID)
+        let pendingDeletions = try snapshotSource.fetchPendingDeletions(siteID: siteID)
+        let tags = try snapshotSource.fetchAllCourseTags(siteID: siteID)
+        let assignments = try snapshotSource.fetchAssignments(siteID: siteID)
+        let grades = try snapshotSource.fetchGradeItems(siteID: siteID)
+        let quizzes = try snapshotSource.fetchQuizzes(siteID: siteID)
+        let attempts = try snapshotSource.fetchQuizAttempts(siteID: siteID)
+
+        try sharedDatabase.deleteAllData()
+        try sharedDatabase.preserveChangeCounter(atLeast: seedCounter)
+
+        if let site {
             try sharedDatabase.saveSite(site)
         }
 
-        let siteAccounts = try sourceDatabase.fetchAccounts().filter { $0.siteID == siteID }
         for account in siteAccounts {
             try sharedDatabase.saveAccount(account)
         }
 
-        let courses = try sourceDatabase.fetchCourses(siteID: siteID)
         if !courses.isEmpty {
             try sharedDatabase.saveCourses(courses)
         }
 
-        let items = try sourceDatabase.fetchAllItems(siteID: siteID)
+        let items = try remapLocalContent(
+            in: sourceItems,
+            toDatabaseURL: destinationURL
+        )
         if !items.isEmpty {
             try sharedDatabase.saveItems(items)
         }
 
-        let cursors = try sourceDatabase.fetchAllSyncCursors(siteID: siteID)
         for cursor in cursors {
             try sharedDatabase.saveSyncCursor(cursor)
         }
+        for outline in outlines {
+            try sharedDatabase.saveCourseOutline(outline, siteID: siteID)
+        }
+        try sharedDatabase.savePendingDeletions(pendingDeletions, siteID: siteID)
+
+        for (courseID, courseTags) in tags {
+            try sharedDatabase.saveCourseTags(courseTags, courseID: courseID, siteID: siteID)
+        }
+        try sharedDatabase.saveAssignments(assignments, siteID: siteID)
+        try sharedDatabase.saveGradeItems(grades, siteID: siteID)
+        try sharedDatabase.saveQuizzes(quizzes, siteID: siteID)
+        try sharedDatabase.saveQuizAttempts(attempts, siteID: siteID)
+        try sharedDatabase.setSeedComplete(true)
 
         logger.info("Seeded File Provider state database for site \(siteID, privacy: .public)")
     }
@@ -393,6 +483,7 @@ final class AppState: ObservableObject {
             state: .authenticated(userID: user.id)
         )
         try db.saveAccount(account)
+        try db.setSeedComplete(true)
         accounts = [account]
         sites = [site]
 
@@ -411,8 +502,10 @@ final class AppState: ObservableObject {
         // should still succeed so the user can access courses in the app.
         do {
             try await setupFileProviderDomain(site: site)
-            if let sharedDatabase = try openSharedDatabase(siteID: site.id, seedFrom: db) {
+            if let sharedDatabase = await adoptSharedDatabaseWithRetry(siteID: site.id, seedFrom: db) {
                 database = sharedDatabase
+            } else {
+                logger.warning("File Provider domain was added but its shared database was not ready; continuing with bootstrap storage")
             }
             await resolveFileProviderAuthentication(for: site)
             await pinToFinderSidebar(site: site)
@@ -479,18 +572,30 @@ final class AppState: ObservableObject {
     /// is to call `pluginkit -e use` to re-enable the extension, then re-seed the
     /// shared database so the extension has up-to-date state.
     private func reregisterFileProviderDomain(site: MoodleSite) async {
+        let wasTransitioning = isDatabaseTransitioning
+        isDatabaseTransitioning = true
+        defer { isDatabaseTransitioning = wasTransitioning }
+
         logger.info("App version changed — re-registering File Provider domain for \(site.displayName, privacy: .public)")
 
         // Re-enable the extension — macOS disables it when Sparkle replaces the bundle.
         reenableFileProviderExtension()
 
+        if let engine = syncEngine {
+            await engine.stopAllSyncs()
+        }
+        await cancelTrackingRefresh()
+
         // 1. Snapshot current data so re-seeding restores everything.
-        if let sourceDatabase = database {
-            do {
-                try snapshotCurrentDataToBootstrap(from: sourceDatabase, siteID: site.id)
-            } catch {
-                logger.error("Snapshot before re-registration failed: \(error.localizedDescription, privacy: .public)")
-            }
+        guard let sourceDatabase = database else {
+            logger.error("Cannot re-register File Provider without an active database")
+            return
+        }
+        do {
+            try snapshotCurrentDataToBootstrap(from: sourceDatabase, siteID: site.id)
+        } catch {
+            logger.error("Snapshot before re-registration failed: \(error.localizedDescription, privacy: .public)")
+            return
         }
 
         // 2. Re-store the keychain token under the current signing context.
@@ -538,7 +643,13 @@ final class AppState: ObservableObject {
         //    need time to initialize the new extension and state directory.
         var seeded = false
         for attempt in 1...5 {
-            try? await Task.sleep(for: .seconds(TimeInterval(attempt)))
+            do {
+                try await Task.sleep(for: .seconds(TimeInterval(attempt)))
+                try Task.checkCancellation()
+            } catch {
+                logger.info("Cancelled File Provider re-registration")
+                return
+            }
 
             do {
                 let bootstrapDatabase = try Database()
@@ -795,6 +906,7 @@ final class AppState: ObservableObject {
             // Remove items from the File Provider and Spotlight when disabling sync
             if !enabled {
                 try db.deleteItems(courseID: course.id, siteID: site.id)
+                try db.deleteCourseOutline(courseID: course.id, siteID: site.id)
                 SpotlightIndexer.shared.removeItems(forCourse: course.id, siteID: course.siteID)
                 signalFileProviderChanges()
             }
@@ -911,6 +1023,10 @@ final class AppState: ObservableObject {
     // MARK: - Sync
 
     func syncAll() async {
+        guard !isDatabaseTransitioning else {
+            logger.info("Skipping sync while the shared database is transitioning")
+            return
+        }
         guard let site = currentSite, let token = currentToken, let engine = syncEngine else { return }
 
         errorMessage = nil
@@ -962,7 +1078,10 @@ final class AppState: ObservableObject {
             notifySyncCompletedIfEnabled(courseCount: enabledCourses.count)
             // Refresh deadlines/grades/quizzes in the background so it doesn't
             // delay the content sync's completion. Best-effort.
-            Task { await refreshTracking() }
+            trackingRefreshTask?.cancel()
+            trackingRefreshTask = Task { [weak self] in
+                await self?.refreshTracking()
+            }
         } catch let error as FindleError where error.requiresReauthentication {
             progressTask.cancel()
             handleSessionExpired()
@@ -979,8 +1098,21 @@ final class AppState: ObservableObject {
         }
     }
 
-    func syncCourse(_ course: MoodleCourse) async {
-        guard let site = currentSite, let token = currentToken, let engine = syncEngine else { return }
+    private func cancelTrackingRefresh() async {
+        if let task = trackingRefreshTask {
+            task.cancel()
+            await task.value
+        }
+        trackingRefreshTask = nil
+    }
+
+    @discardableResult
+    func syncCourse(_ course: MoodleCourse) async -> Bool {
+        guard !isDatabaseTransitioning else {
+            logger.info("Skipping course sync while the shared database is transitioning")
+            return false
+        }
+        guard let site = currentSite, let token = currentToken, let engine = syncEngine else { return false }
 
         errorMessage = nil
         syncStatus = .syncing(progress: 0)
@@ -992,15 +1124,19 @@ final class AppState: ObservableObject {
             syncStatus = .completed
             lastSyncDate = Date()
             signalFileProviderChanges()
+            return true
         } catch let error as FindleError where error.requiresReauthentication {
             handleSessionExpired()
+            return false
         } catch is CancellationError {
             courseSyncStates[course.id] = .stale
             syncStatus = .idle
+            return false
         } catch {
             courseSyncStates[course.id] = .error
             syncStatus = .error(error.localizedDescription)
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -1211,9 +1347,19 @@ final class AppState: ObservableObject {
         guard let account = accounts.first else { return }
 
         // Cancel all background work before touching shared resources
-        automaticSyncTask?.cancel()
+        if let engine = syncEngine {
+            await engine.stopAllSyncs()
+        }
+        await cancelTrackingRefresh()
+        if let task = automaticSyncTask {
+            task.cancel()
+            await task.value
+        }
         automaticSyncTask = nil
-        sessionBootstrapTask?.cancel()
+        if let task = sessionBootstrapTask {
+            task.cancel()
+            _ = try? await task.value
+        }
         sessionBootstrapTask = nil
         syncEngine = nil
 
@@ -1307,14 +1453,31 @@ final class AppState: ObservableObject {
     func resetProvider() async {
         guard let site = currentSite else { return }
 
+        let wasTransitioning = isDatabaseTransitioning
+        isDatabaseTransitioning = true
+        defer { isDatabaseTransitioning = wasTransitioning }
+
         reenableFileProviderExtension()
 
-        if let sourceDatabase = database {
-            do {
-                try snapshotCurrentDataToBootstrap(from: sourceDatabase, siteID: site.id)
-            } catch {
-                logger.error("Snapshot before reset failed: \(error.localizedDescription, privacy: .public)")
-            }
+        if let engine = syncEngine {
+            await engine.stopAllSyncs()
+        }
+        await cancelTrackingRefresh()
+        if let task = automaticSyncTask {
+            task.cancel()
+            await task.value
+        }
+        automaticSyncTask = nil
+
+        guard let sourceDatabase = database else {
+            logger.error("Cannot reset File Provider without an active database")
+            return
+        }
+        do {
+            try snapshotCurrentDataToBootstrap(from: sourceDatabase, siteID: site.id)
+        } catch {
+            logger.error("Snapshot before reset failed: \(error.localizedDescription, privacy: .public)")
+            return
         }
 
         // Re-store the keychain token to guarantee accessibility after reset.
@@ -1353,7 +1516,13 @@ final class AppState: ObservableObject {
         // Retry seeding with backoff — fileproviderd needs time to initialize.
         var seeded = false
         for attempt in 1...5 {
-            try? await Task.sleep(for: .seconds(TimeInterval(attempt)))
+            do {
+                try await Task.sleep(for: .seconds(TimeInterval(attempt)))
+                try Task.checkCancellation()
+            } catch {
+                logger.info("Cancelled File Provider reset")
+                return
+            }
 
             do {
                 let bootstrapDatabase = try Database()
@@ -1433,9 +1602,19 @@ final class AppState: ObservableObject {
                 await self.ensureFileProviderDomain(site: site)
             }
 
+            // Re-adopt after registration, including the normal relaunch path.
+            // The initial synchronous attempt can race fileproviderd while it
+            // restores the domain, so do not let the first sync use bootstrap
+            // storage when the state database becomes available moments later.
+            if let sourceDatabase = self.database,
+               let sharedDatabase = await self.adoptSharedDatabaseWithRetry(siteID: site.id, seedFrom: sourceDatabase) {
+                self.database = sharedDatabase
+                self.syncEngine = SyncEngine(provider: self.moodleClient, database: sharedDatabase)
+            }
+
             // Clear any downloads left mid-flight by a previous run so they
             // don't appear stuck in-progress.
-            try? self.database?.resetStaleDownloads(siteID: site.id)
+            _ = try? self.database?.resetStaleDownloads(siteID: site.id)
 
             try Task.checkCancellation()
             await self.resolveFileProviderAuthentication(for: site)
@@ -1452,30 +1631,100 @@ final class AppState: ObservableObject {
         }
     }
 
+    private func localContentDirectory(for databaseURL: URL) -> URL {
+        let databaseDirectory = databaseURL.deletingLastPathComponent()
+        if databaseDirectory.lastPathComponent == "Findle",
+           databaseDirectory.deletingLastPathComponent().lastPathComponent == ".FindleState" {
+            return databaseDirectory
+                .deletingLastPathComponent()
+                .appendingPathComponent("LocalContent", isDirectory: true)
+        }
+        return databaseDirectory.appendingPathComponent("LocalContent", isDirectory: true)
+    }
+
+    /// Copy provider-owned local bytes while a database is being moved. The
+    /// metadata path is absolute, so copying rows without remapping it would
+    /// leave local project files pointing into a deleted File Provider state
+    /// directory after reset or update.
+    private func remapLocalContent(in items: [LocalItem], toDatabaseURL databaseURL: URL) throws -> [LocalItem] {
+        let destinationDirectory = localContentDirectory(for: databaseURL)
+        try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
+
+        var remapped = items
+        for index in remapped.indices {
+            guard remapped[index].isLocal, let sourcePath = remapped[index].localPath else { continue }
+
+            let sourceURL = URL(fileURLWithPath: sourcePath)
+            let destinationURL = destinationDirectory.appendingPathComponent(remapped[index].id)
+            guard FileManager.default.fileExists(atPath: sourceURL.path) else {
+                logger.warning("Local content missing during database move: \(sourcePath, privacy: .public)")
+                remapped[index].localPath = nil
+                remapped[index].syncState = .error
+                continue
+            }
+
+            let source = sourceURL.standardizedFileURL.path
+            let destination = destinationURL.standardizedFileURL.path
+            if source != destination {
+                try? FileManager.default.removeItem(at: destinationURL)
+                try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+            }
+            remapped[index].localPath = destinationURL.path
+        }
+        return remapped
+    }
+
     private func snapshotCurrentDataToBootstrap(from sourceDatabase: Database, siteID: String) throws {
         let bootstrapDatabase = try Database()
-        try bootstrapDatabase.deleteAllData()
+        let sourcePath = URL(fileURLWithPath: sourceDatabase.filePath).standardizedFileURL.path
+        let bootstrapPath = URL(fileURLWithPath: bootstrapDatabase.filePath).standardizedFileURL.path
 
-        if let site = try sourceDatabase.fetchSite(id: siteID) {
+        // The bootstrap database can already be the active handle when a
+        // provider update races state-directory recovery. Never clear the
+        // source before taking a snapshot in that case.
+        guard sourcePath != bootstrapPath else { return }
+
+        let snapshotCounter = max(
+            try bootstrapDatabase.currentChangeCounter(),
+            try sourceDatabase.currentChangeCounter()
+        )
+
+        let site = try sourceDatabase.fetchSite(id: siteID)
+        let siteAccounts = try sourceDatabase.fetchAccounts().filter { $0.siteID == siteID }
+        let courses = try sourceDatabase.fetchCourses(siteID: siteID)
+        let outlines = try sourceDatabase.fetchCourseOutlines(siteID: siteID)
+        let sourceItems = try sourceDatabase.fetchAllItems(siteID: siteID)
+        let cursors = try sourceDatabase.fetchAllSyncCursors(siteID: siteID)
+        let pendingDeletions = try sourceDatabase.fetchPendingDeletions(siteID: siteID)
+        let tags = try sourceDatabase.fetchAllCourseTags(siteID: siteID)
+        let assignments = try sourceDatabase.fetchAssignments(siteID: siteID)
+        let grades = try sourceDatabase.fetchGradeItems(siteID: siteID)
+        let quizzes = try sourceDatabase.fetchQuizzes(siteID: siteID)
+        let attempts = try sourceDatabase.fetchQuizAttempts(siteID: siteID)
+
+        try bootstrapDatabase.deleteAllData()
+        try bootstrapDatabase.preserveChangeCounter(atLeast: snapshotCounter)
+
+        if let site {
             try bootstrapDatabase.saveSite(site)
         }
 
-        let siteAccounts = try sourceDatabase.fetchAccounts().filter { $0.siteID == siteID }
         for account in siteAccounts {
             try bootstrapDatabase.saveAccount(account)
         }
 
-        let courses = try sourceDatabase.fetchCourses(siteID: siteID)
         if !courses.isEmpty {
             try bootstrapDatabase.saveCourses(courses)
         }
 
-        let items = try sourceDatabase.fetchAllItems(siteID: siteID)
+        let items = try remapLocalContent(
+            in: sourceItems,
+            toDatabaseURL: URL(fileURLWithPath: bootstrapDatabase.filePath)
+        )
         if !items.isEmpty {
             try bootstrapDatabase.saveItems(items)
         }
 
-        let cursors = try sourceDatabase.fetchAllSyncCursors(siteID: siteID)
         for cursor in cursors {
             try bootstrapDatabase.saveSyncCursor(cursor)
         }
