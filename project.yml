@@ -249,6 +249,9 @@ targets:
           NSExtensionFileProviderDocumentGroup: "$(APP_GROUP_IDENTIFIER)"
           NSExtensionFileProviderSupportsEnumeration: true
           NSExtensionFileProviderActions:
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.sync-now
+              NSExtensionFileProviderActionName: Sync Now
+              NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
             - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.open-in-moodle
               NSExtensionFileProviderActionName: Open in Moodle
               NSExtensionFileProviderActionActivationRule: TRUEPREDICATE

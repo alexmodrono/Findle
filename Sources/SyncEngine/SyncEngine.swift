@@ -38,13 +38,37 @@ public actor SyncEngine {
 
     // MARK: - Course Sync
 
+    /// How many courses may be fetched from the server at once. Course syncs are
+    /// independent, so running them serially made a full sync cost the sum of
+    /// every round trip. The cap keeps us from opening an unbounded number of
+    /// connections to a shared institutional Moodle.
+    public static let defaultCourseConcurrency = 4
+
+    /// The terminal outcome of a `syncAllCourses` run.
+    private enum RunOutcome {
+        case ok
+        case authenticationFailed(Error)
+        case cancelled
+    }
+
     /// Sync all subscribed courses for a site.
+    ///
+    /// Courses are fetched with bounded concurrency. `onCourseSynced` fires as
+    /// soon as each individual course lands in the database, so callers can
+    /// publish that course's files immediately instead of waiting for the whole
+    /// run — a slow course no longer hides the ones that already finished.
     ///
     /// Throws if a course fails with an authentication error (`tokenExpired`
     /// etc.) — such failures affect every course, so we stop early and let the
     /// caller prompt the user to reconnect. Per-course non-auth failures are
     /// logged and the sync continues with the remaining courses.
-    public func syncAllCourses(site: MoodleSite, token: AuthToken, courses: [MoodleCourse]) async throws {
+    public func syncAllCourses(
+        site: MoodleSite,
+        token: AuthToken,
+        courses: [MoodleCourse],
+        maxConcurrentCourses: Int = SyncEngine.defaultCourseConcurrency,
+        onCourseSynced: (@Sendable (Int) -> Void)? = nil
+    ) async throws {
         logger.info("Starting sync for \(courses.count) courses on \(site.displayName, privacy: .public)")
 
         // Reset progress up front so a re-sync doesn't briefly report the
@@ -58,40 +82,126 @@ public actor SyncEngine {
             )
         }
 
-        for course in courses {
-            guard activeTasks[course.id] == nil else {
-                logger.debug("Skipping course \(course.id) - sync already in progress")
-                continue
+        guard !courses.isEmpty else { return }
+        let limit = max(1, min(maxConcurrentCourses, courses.count))
+
+        let outcome = await withTaskGroup(
+            of: (Int, Error?).self,
+            returning: RunOutcome.self
+        ) { group in
+            var outcome = RunOutcome.ok
+            var next = 0
+
+            while next < limit {
+                let course = courses[next]
+                group.addTask { [self] in
+                    await syncCourseCapturingError(site: site, token: token, course: course)
+                }
+                next += 1
             }
 
-            let task = Task {
-                try await syncCourse(site: site, token: token, course: course)
-            }
-            activeTasks[course.id] = task
+            while let (courseID, error) = await group.next() {
+                switch error {
+                case nil:
+                    logger.info("Sync completed for course \(courseID, privacy: .public)")
+                    onCourseSynced?(courseID)
 
-            do {
-                try await task.value
-                logger.info("Sync completed for course \(course.id, privacy: .public)")
-            } catch let error as FindleError where error.requiresReauthentication {
-                logger.error("Authentication failed during sync of course \(course.id, privacy: .public) — aborting")
-                syncProgress[course.id]?.state = .stale
-                activeTasks[course.id] = nil
-                throw error
-            } catch is CancellationError {
-                activeTasks[course.id] = nil
-                throw CancellationError()
-            } catch {
-                logger.error("Sync failed for course \(course.id): \(error.localizedDescription, privacy: .public)")
-                // Mark as no-longer-syncing so progress observers advance past it.
-                syncProgress[course.id]?.state = .stale
+                case let authError as FindleError where authError.requiresReauthentication:
+                    logger.error("Authentication failed during sync of course \(courseID, privacy: .public) — aborting")
+                    syncProgress[courseID]?.state = .stale
+                    // An auth failure affects every course, so stop scheduling
+                    // more work. It also outranks the cancellations it causes.
+                    if case .ok = outcome { outcome = .authenticationFailed(authError) }
+                    group.cancelAll()
+
+                case is CancellationError:
+                    if case .ok = outcome { outcome = .cancelled }
+                    group.cancelAll()
+
+                case .some(let error):
+                    logger.error("Sync failed for course \(courseID): \(error.localizedDescription, privacy: .public)")
+                    // Mark as no-longer-syncing so progress observers advance past it.
+                    syncProgress[courseID]?.state = .stale
+                }
+
+                // Only refill the window while the run is still healthy.
+                guard case .ok = outcome, next < courses.count else { continue }
+                let course = courses[next]
+                group.addTask { [self] in
+                    await syncCourseCapturingError(site: site, token: token, course: course)
+                }
+                next += 1
             }
 
-            activeTasks[course.id] = nil
+            return outcome
+        }
+
+        switch outcome {
+        case .authenticationFailed(let error): throw error
+        case .cancelled: throw CancellationError()
+        case .ok: break
+        }
+
+        try Task.checkCancellation()
+
+        // Download pinned items once for the whole run. Doing this per course
+        // re-scanned and re-downloaded the site's entire pinned set N times.
+        try await downloadPinnedItems(site: site, token: token)
+    }
+
+    /// Run one course sync and surface its failure as a value so a task group
+    /// can decide how the run as a whole should react.
+    private func syncCourseCapturingError(
+        site: MoodleSite,
+        token: AuthToken,
+        course: MoodleCourse
+    ) async -> (Int, Error?) {
+        do {
+            try await syncCourseTracked(site: site, token: token, course: course)
+            return (course.id, nil)
+        } catch {
+            return (course.id, error)
         }
     }
 
-    /// Sync a single course: enumerate content, diff against local state, update database.
+    /// Sync a single course, then materialize any pinned items that still need
+    /// downloading. Batch runs use `syncCourseTracked` directly and download
+    /// pinned items once at the end instead.
     public func syncCourse(site: MoodleSite, token: AuthToken, course: MoodleCourse) async throws {
+        try await syncCourseTracked(site: site, token: token, course: course)
+        try await downloadPinnedItems(site: site, token: token)
+    }
+
+    /// Sync a single course: enumerate content, diff against local state, update database.
+    private func syncCourseTracked(site: MoodleSite, token: AuthToken, course: MoodleCourse) async throws {
+        if isStopping {
+            throw CancellationError()
+        }
+
+        if let activeTask = activeTasks[course.id] {
+            try await activeTask.value
+            return
+        }
+
+        let task = Task { [self] in
+            try await performSyncCourse(site: site, token: token, course: course)
+        }
+        activeTasks[course.id] = task
+
+        do {
+            try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+        } catch {
+            activeTasks[course.id] = nil
+            throw error
+        }
+        activeTasks[course.id] = nil
+    }
+
+    private func performSyncCourse(site: MoodleSite, token: AuthToken, course: MoodleCourse) async throws {
         logger.info("Syncing course: \(course.fullName, privacy: .public)")
 
         syncProgress[course.id] = SyncProgress(
@@ -165,8 +275,10 @@ public actor SyncEngine {
 
         try Task.checkCancellation()
 
-        // Diff against existing items
-        let existingItems = try database.fetchAllItems(siteID: site.id).filter { $0.courseID == course.id && !$0.isLocal }
+        // Diff against existing items. Scope the query to this course so the
+        // `idx_items_course` index does the filtering — loading every row for
+        // the site and filtering in memory made a full sync quadratic.
+        let existingItems = try database.fetchItems(courseID: course.id, siteID: site.id).filter { !$0.isLocal }
 
         let changes = diffItems(existing: existingItems, incoming: allItems)
 
@@ -200,10 +312,6 @@ public actor SyncEngine {
 
         syncProgress[course.id]?.processedItems = allItems.count
         syncProgress[course.id]?.state = .synced
-
-        // Auto-download pinned items that aren't yet materialized
-        try await downloadPinnedItems(site: site, token: token)
-
         logger.info("Course \(course.id) sync complete: \(allItems.count) items")
     }
 

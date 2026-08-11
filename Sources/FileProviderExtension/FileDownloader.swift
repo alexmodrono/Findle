@@ -58,49 +58,18 @@ enum FileDownloader {
         let destinationURL = makeTemporaryDestinationURL(for: item, in: temporaryDirectory)
         try database.updateItemSyncState(id: item.id, state: .downloading)
 
-        let task = URLSession.shared.downloadTask(with: authenticatedRequest) { downloadedURL, response, error in
-            if let error {
-                resetToPlaceholder(itemID: item.id, database: database)
-                completionBridge.fail(error)
-                return
-            }
+        DownloadCoordinator.shared.start(
+            request: authenticatedRequest,
+            item: item,
+            database: database,
+            destination: destinationURL,
+            progress: progress,
+            bridge: completionBridge
+        )
+    }
 
-            guard let downloadedURL,
-                  let httpResponse = response as? HTTPURLResponse,
-                  (200...299).contains(httpResponse.statusCode) else {
-                resetToPlaceholder(itemID: item.id, database: database)
-                completionBridge.fail(FindleError.downloadFailed(itemID: item.id, reason: "Download failed"))
-                return
-            }
-
-            do {
-                if FileManager.default.fileExists(atPath: destinationURL.path) {
-                    try FileManager.default.removeItem(at: destinationURL)
-                }
-                try FileManager.default.moveItem(at: downloadedURL, to: destinationURL)
-                try database.updateItemSyncState(
-                    id: item.id,
-                    state: .materialized,
-                    localPath: destinationURL.path
-                )
-
-                var updatedItem = item
-                updatedItem.syncState = .materialized
-                updatedItem.localPath = destinationURL.path
-                completionBridge.succeed(
-                    url: destinationURL,
-                    item: FileProviderItem(localItem: updatedItem)
-                )
-            } catch {
-                resetToPlaceholder(itemID: item.id, database: database)
-                completionBridge.fail(error)
-            }
-        }
-
-        progress.cancellationHandler = {
-            task.cancel()
-        }
-        task.resume()
+    fileprivate static func resetToPlaceholderIfNeeded(itemID: String, database: Database) {
+        resetToPlaceholder(itemID: itemID, database: database)
     }
 
     /// Form-encode just the token value for the download body. Using a
@@ -119,6 +88,162 @@ enum FileDownloader {
         let tempDir = directory ?? FileManager.default.temporaryDirectory
         let fileName = pathExtension.isEmpty ? baseName : "\(baseName).\(pathExtension)"
         return tempDir.appendingPathComponent(fileName)
+    }
+}
+
+/// Runs File Provider materializations on one shared delegate-backed session.
+///
+/// A delegate is what makes byte-level progress observable: the completion-handler
+/// form of `downloadTask` reports nothing until it finishes, so Finder showed an
+/// indeterminate spinner for the whole transfer — a 75 MB lecture PDF looked
+/// identical to a hung download. Sharing a single session (rather than creating
+/// one per file) preserves connection reuse to the Moodle host.
+private final class DownloadCoordinator: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    static let shared = DownloadCoordinator()
+
+    private struct Context {
+        let item: LocalItem
+        let database: Database
+        let destination: URL
+        let progress: Progress
+        let bridge: FileDownloadCompletionBridge
+        /// Moodle reports each file's size in the course contents, so we can
+        /// still show a real bar when a response omits `Content-Length`.
+        let expectedSize: Int64
+    }
+
+    private let logger = Logger(subsystem: "es.amodrono.findle.file-provider", category: "Download")
+    private let lock = NSLock()
+    private var contexts: [Int: Context] = [:]
+
+    private lazy var session: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.waitsForConnectivity = true
+        return URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+    }()
+
+    func start(
+        request: URLRequest,
+        item: LocalItem,
+        database: Database,
+        destination: URL,
+        progress: Progress,
+        bridge: FileDownloadCompletionBridge
+    ) {
+        let task = session.downloadTask(with: request)
+        let context = Context(
+            item: item,
+            database: database,
+            destination: destination,
+            progress: progress,
+            bridge: bridge,
+            expectedSize: item.fileSize
+        )
+
+        // Register before `resume()` so no delegate callback can arrive first.
+        lock.lock()
+        contexts[task.taskIdentifier] = context
+        lock.unlock()
+
+        progress.cancellationHandler = { task.cancel() }
+        task.resume()
+    }
+
+    private func context(for taskIdentifier: Int) -> Context? {
+        lock.lock()
+        defer { lock.unlock() }
+        return contexts[taskIdentifier]
+    }
+
+    @discardableResult
+    private func removeContext(for taskIdentifier: Int) -> Context? {
+        lock.lock()
+        defer { lock.unlock() }
+        return contexts.removeValue(forKey: taskIdentifier)
+    }
+
+    // MARK: - URLSessionDownloadDelegate
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didWriteData bytesWritten: Int64,
+        totalBytesWritten: Int64,
+        totalBytesExpectedToWrite: Int64
+    ) {
+        guard let context = context(for: downloadTask.taskIdentifier) else { return }
+
+        let expected = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : context.expectedSize
+        // With no size from either source, leave the caller's placeholder units
+        // alone rather than reporting a fraction we'd be inventing.
+        guard expected > 0 else { return }
+
+        context.progress.totalUnitCount = expected
+        context.progress.completedUnitCount = min(totalBytesWritten, expected)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        guard let context = context(for: downloadTask.taskIdentifier) else { return }
+
+        guard let httpResponse = downloadTask.response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            removeContext(for: downloadTask.taskIdentifier)
+            FileDownloader.resetToPlaceholderIfNeeded(itemID: context.item.id, database: context.database)
+            context.bridge.fail(
+                FindleError.downloadFailed(itemID: context.item.id, reason: "Download failed")
+            )
+            return
+        }
+
+        // The temporary file is deleted as soon as this method returns, so the
+        // move has to happen here rather than in didCompleteWithError.
+        do {
+            if FileManager.default.fileExists(atPath: context.destination.path) {
+                try FileManager.default.removeItem(at: context.destination)
+            }
+            try FileManager.default.moveItem(at: location, to: context.destination)
+            try context.database.updateItemSyncState(
+                id: context.item.id,
+                state: .materialized,
+                localPath: context.destination.path
+            )
+
+            var updatedItem = context.item
+            updatedItem.syncState = .materialized
+            updatedItem.localPath = context.destination.path
+
+            removeContext(for: downloadTask.taskIdentifier)
+            context.bridge.succeed(
+                url: context.destination,
+                item: FileProviderItem(localItem: updatedItem)
+            )
+        } catch {
+            removeContext(for: downloadTask.taskIdentifier)
+            FileDownloader.resetToPlaceholderIfNeeded(itemID: context.item.id, database: context.database)
+            context.bridge.fail(error)
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        // A successful download already consumed its context in
+        // didFinishDownloadingTo, so reaching here with one means a failure.
+        guard let context = removeContext(for: task.taskIdentifier) else { return }
+
+        let failure = error ?? FindleError.downloadFailed(
+            itemID: context.item.id,
+            reason: "Download ended without producing a file"
+        )
+        logger.error("Download failed for \(context.item.id, privacy: .public): \(failure.localizedDescription, privacy: .public)")
+        FileDownloader.resetToPlaceholderIfNeeded(itemID: context.item.id, database: context.database)
+        context.bridge.fail(failure)
     }
 }
 

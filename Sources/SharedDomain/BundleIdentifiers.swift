@@ -42,4 +42,13 @@ public enum BundleIdentifiers {
     public static let actionOpenCoursePage = "\(prefix).action.open-course-page"
     public static let actionKeepDownloaded = "\(prefix).action.keep-downloaded"
     public static let actionRemoveDownload = "\(prefix).action.remove-download"
+    public static let actionSyncNow = "\(prefix).action.sync-now"
+
+    // MARK: - Cross-Process Notifications
+
+    /// Darwin notification the File Provider extension posts to ask the main app
+    /// to sync immediately. Darwin notifications carry no payload and cross
+    /// sandbox boundaries without any shared-container or entitlement setup,
+    /// which the extension's XPC-hosted process needs.
+    public static let syncNowRequestNotification = "\(prefix).sync-now-requested"
 }

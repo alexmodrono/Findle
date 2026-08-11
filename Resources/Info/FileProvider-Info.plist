@@ -34,6 +34,14 @@
 				<key>NSExtensionFileProviderActionActivationRule</key>
 				<string>TRUEPREDICATE</string>
 				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).action.sync-now</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Sync Now</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>TRUEPREDICATE</string>
+				<key>NSExtensionFileProviderActionIdentifier</key>
 				<string>$(FINDLE_BUNDLE_PREFIX).action.open-in-moodle</string>
 				<key>NSExtensionFileProviderActionName</key>
 				<string>Open in Moodle</string>

@@ -60,6 +60,10 @@ final class AppState: ObservableObject {
     private var trackingRefreshTask: Task<Void, Never>?
     private var isDatabaseTransitioning = false
     private var syncSettingsObserver: NSObjectProtocol?
+    private var syncNowObserver: DarwinNotification.Token?
+    /// Guards against a burst of "Sync Now" requests (the extension posts twice
+    /// when it has to cold-launch the app) turning into overlapping syncs.
+    private var lastSyncNowRequest: Date?
     private let logger = Logger(subsystem: "es.amodrono.findle", category: "AppState")
     private let userDefaults: UserDefaults
 
@@ -109,6 +113,11 @@ final class AppState: ObservableObject {
 
     private static let syncOnLaunchKey = "syncOnLaunch"
     private static let syncIntervalMinutesKey = "syncIntervalMinutes"
+    /// The File Provider extension cannot fetch on its own — it only reads rows
+    /// this app writes — so this interval is the upper bound on how stale Finder
+    /// can be. Keep it short enough that new coursework shows up on its own, and
+    /// pair it with the "Sync Now" Finder action for an immediate refresh.
+    static let defaultSyncIntervalMinutes = 5.0
     private static let currentSiteIDKey = "currentSiteID"
     private static let lastKnownAppVersionKey = "lastKnownAppVersion"
 
@@ -116,12 +125,13 @@ final class AppState: ObservableObject {
         self.userDefaults = userDefaults
         userDefaults.register(defaults: [
             Self.syncOnLaunchKey: true,
-            Self.syncIntervalMinutesKey: 30.0
+            Self.syncIntervalMinutesKey: Self.defaultSyncIntervalMinutes
         ])
 
         do {
             try configureInitialDatabase()
             observeSyncSettings()
+            observeSyncNowRequests()
             loadAccounts()
         } catch {
             logger.error("Failed to initialize database: \(error.localizedDescription, privacy: .public)")
@@ -1064,8 +1074,28 @@ final class AppState: ObservableObject {
         }
         defer { syncProgressDetail = nil }
 
+        // Publish each course to Finder the moment it lands in the database.
+        // Signalling only after the whole run meant the first course's files
+        // stayed invisible until the last course finished.
+        let signalDomainID = BundleIdentifiers.fileProviderDomainID(siteID: site.id)
+        let signalDisplayName = site.displayName
+        let signalLogger = logger
+
         do {
-            try await engine.syncAllCourses(site: site, token: token, courses: enabledCourses)
+            try await engine.syncAllCourses(
+                site: site,
+                token: token,
+                courses: enabledCourses,
+                onCourseSynced: { _ in
+                    Task.detached {
+                        await Self.performSignalEnumerators(
+                            domainID: signalDomainID,
+                            displayName: signalDisplayName,
+                            logger: signalLogger
+                        )
+                    }
+                }
+            )
             progressTask.cancel()
             let finalProgress = await engine.allProgress()
             for course in enabledCourses {
@@ -1728,6 +1758,67 @@ final class AppState: ObservableObject {
         for cursor in cursors {
             try bootstrapDatabase.saveSyncCursor(cursor)
         }
+        for outline in outlines {
+            try bootstrapDatabase.saveCourseOutline(outline, siteID: siteID)
+        }
+        try bootstrapDatabase.savePendingDeletions(pendingDeletions, siteID: siteID)
+
+        for (courseID, courseTags) in tags {
+            try bootstrapDatabase.saveCourseTags(courseTags, courseID: courseID, siteID: siteID)
+        }
+        try bootstrapDatabase.saveAssignments(assignments, siteID: siteID)
+        try bootstrapDatabase.saveGradeItems(grades, siteID: siteID)
+        try bootstrapDatabase.saveQuizzes(quizzes, siteID: siteID)
+        try bootstrapDatabase.saveQuizAttempts(attempts, siteID: siteID)
+        try bootstrapDatabase.setSeedComplete(true)
+    }
+
+    /// Listen for the "Sync Now" action the File Provider extension exposes in
+    /// Finder. The extension can't sync by itself, so it posts a Darwin
+    /// notification and we do the work here.
+    private func observeSyncNowRequests() {
+        syncNowObserver = DarwinNotification.addObserver(
+            for: BundleIdentifiers.syncNowRequestNotification
+        ) { [weak self] in
+            Task { @MainActor in
+                self?.handleSyncNowRequest()
+            }
+        }
+    }
+
+    private func handleSyncNowRequest() {
+        // The extension posts a second time after cold-launching the app, and
+        // Finder lets the user invoke the action repeatedly. Collapse those.
+        let now = Date()
+        if let last = lastSyncNowRequest, now.timeIntervalSince(last) < 5 {
+            logger.debug("Ignoring duplicate Sync Now request")
+            return
+        }
+        lastSyncNowRequest = now
+
+        if case .syncing = syncStatus {
+            logger.info("Sync Now requested while a sync is already running — ignoring")
+            return
+        }
+
+        logger.info("Sync Now requested from Finder")
+        Task { await performRequestedSync() }
+    }
+
+    /// Run a user-requested sync, tolerating the case where the app was
+    /// cold-launched by the request itself and is still restoring its session.
+    private func performRequestedSync() async {
+        for attempt in 0..<10 {
+            if currentSite != nil, currentToken != nil, syncEngine != nil {
+                await syncAll()
+                return
+            }
+            if attempt == 0 {
+                logger.info("Sync Now: waiting for the session to finish loading")
+            }
+            try? await Task.sleep(for: .seconds(1))
+        }
+        logger.warning("Sync Now: no active session after waiting — skipping")
     }
 
     private func observeSyncSettings() {

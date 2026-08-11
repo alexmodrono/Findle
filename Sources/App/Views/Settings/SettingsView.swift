@@ -12,7 +12,7 @@ struct SettingsView: View {
     @StateObject private var loginItem = LoginItemController()
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
     @AppStorage("notifyOnSyncComplete") private var notifyOnSyncComplete = false
-    @AppStorage("syncIntervalMinutes") private var syncInterval: Double = 30
+    @AppStorage("syncIntervalMinutes") private var syncInterval: Double = AppState.defaultSyncIntervalMinutes
     @AppStorage("syncOnLaunch") private var syncOnLaunch = true
     @AppStorage("enableVerboseLogging") private var verboseLogging = false
 
@@ -119,6 +119,7 @@ struct SettingsView: View {
                 Toggle("Sync when Findle launches", isOn: $syncOnLaunch)
 
                 Picker("Sync cadence", selection: $syncInterval) {
+                    Text("5 minutes").tag(5.0)
                     Text("15 minutes").tag(15.0)
                     Text("30 minutes").tag(30.0)
                     Text("1 hour").tag(60.0)
