@@ -6,7 +6,7 @@
 import Foundation
 import PDFKit
 import SharedDomain
-import FoodlePersistence
+import FindlePersistence
 
 /// Read-only data access for the MCP catalog tools. Wraps the shared Findle
 /// database (opened read-only) and renders results as JSON text for agents.

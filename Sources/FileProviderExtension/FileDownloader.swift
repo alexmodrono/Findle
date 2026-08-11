@@ -6,15 +6,15 @@
 import Foundation
 import FileProvider
 import SharedDomain
-import FoodleNetworking
-import FoodlePersistence
+import FindleNetworking
+import FindlePersistence
 import OSLog
 
 /// Handles file downloads for the File Provider extension.
 /// Uses URLSession's callback API so File Provider completion handlers stay in the
 /// framework's callback world instead of crossing Swift concurrency executors.
 enum FileDownloader {
-    private static let logger = Logger(subsystem: "es.amodrono.foodle.file-provider", category: "Download")
+    private static let logger = Logger(subsystem: "es.amodrono.findle.file-provider", category: "Download")
 
     /// Reset an item to `.placeholder` after a failed download so the next
     /// fetch retries cleanly. A failure here would otherwise strand the item in
@@ -38,12 +38,12 @@ enum FileDownloader {
         )
 
         guard let remoteURL = item.remoteURL else {
-            throw FoodleError.downloadFailed(itemID: item.id, reason: "No remote URL available")
+            throw FindleError.downloadFailed(itemID: item.id, reason: "No remote URL available")
         }
 
         let tokenAccountID = try database.fetchAccounts().first(where: { $0.siteID == item.siteID })?.id ?? item.siteID
         guard let tokenString = try KeychainManager.shared.retrieveToken(forAccount: tokenAccountID) else {
-            throw FoodleError.authenticationRequired
+            throw FindleError.authenticationRequired
         }
 
         // Send the token in the POST body instead of the URL query so it
@@ -68,7 +68,7 @@ enum FileDownloader {
                   let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {
                 resetToPlaceholder(itemID: item.id, database: database)
-                completionBridge.fail(FoodleError.downloadFailed(itemID: item.id, reason: "Download failed"))
+                completionBridge.fail(FindleError.downloadFailed(itemID: item.id, reason: "Download failed"))
                 return
             }
 

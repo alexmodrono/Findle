@@ -5,9 +5,9 @@
 
 import XCTest
 @testable import SharedDomain
-@testable import FoodleNetworking
-@testable import FoodlePersistence
-@testable import FoodleSyncEngine
+@testable import FindleNetworking
+@testable import FindlePersistence
+@testable import FindleSyncEngine
 
 final class SyncEngineReauthTests: XCTestCase {
     var database: Database!
@@ -26,7 +26,7 @@ final class SyncEngineReauthTests: XCTestCase {
     private let token = AuthToken(token: "token")
 
     override func setUp() async throws {
-        tempPath = NSTemporaryDirectory() + "foodle_reauth_test_\(UUID().uuidString).db"
+        tempPath = NSTemporaryDirectory() + "findle_reauth_test_\(UUID().uuidString).db"
         database = try Database(path: tempPath)
     }
 
@@ -43,7 +43,7 @@ final class SyncEngineReauthTests: XCTestCase {
         do {
             try await engine.syncAllCourses(site: site, token: token, courses: courses)
             XCTFail("Expected syncAllCourses to rethrow the authentication failure")
-        } catch let error as FoodleError {
+        } catch let error as FindleError {
             XCTAssertTrue(error.requiresReauthentication)
         }
     }
@@ -63,7 +63,7 @@ final class SyncEngineReauthTests: XCTestCase {
 }
 
 private struct ThrowingLMSProvider: LMSProvider {
-    let error: FoodleError
+    let error: FindleError
 
     func validateSite(url: URL) async throws -> MoodleSite {
         MoodleSite(displayName: url.host ?? "Test", baseURL: url)

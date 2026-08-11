@@ -18,7 +18,7 @@ final class HTTPServer: @unchecked Sendable {
     private let token: String
     private let handler: @Sendable (Data) -> Data?
     private var listener: NWListener?
-    private let queue = DispatchQueue(label: "es.amodrono.foodle.mcp.http", attributes: .concurrent)
+    private let queue = DispatchQueue(label: "es.amodrono.findle.mcp.http", attributes: .concurrent)
 
     init(port: UInt16, token: String, handler: @escaping @Sendable (Data) -> Data?) {
         self.port = NWEndpoint.Port(rawValue: port) ?? 8080

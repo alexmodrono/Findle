@@ -5,7 +5,7 @@
 
 import Foundation
 import MCP
-import FoodlePersistence
+import FindlePersistence
 
 /// Findle's MCP server: a local, stdio, read-only bridge that lets an agent
 /// query the user's synced Moodle coursework without manual uploads.

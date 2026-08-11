@@ -56,7 +56,7 @@ public struct MoodleSite: Sendable, Codable, Equatable, Identifiable {
     /// navigation delegate intercepts them instead of the system URL handler.
     public static let acceptedCallbackSchemes: Set<String> = [
         "findle",
-        "foodle",
+        "findle",
         "moodlemobile",
         "openlms",
         "ltgopenlmsapp",

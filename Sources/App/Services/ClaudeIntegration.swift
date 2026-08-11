@@ -18,7 +18,7 @@ import Security
 /// copying a ready-to-paste snippet to the clipboard and revealing the config.
 @MainActor
 enum ClaudeIntegration {
-    private static let logger = Logger(subsystem: "es.amodrono.foodle", category: "ClaudeIntegration")
+    private static let logger = Logger(subsystem: "es.amodrono.findle", category: "ClaudeIntegration")
 
     enum Target: CaseIterable, Hashable {
         case desktop

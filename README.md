@@ -91,25 +91,25 @@ brew install --cask findle
 
 3. **Open the project:**
    ```bash
-   open Foodle.xcodeproj
+   open Findle.xcodeproj
    ```
 
 4. **Configure Code Signing:**
    The File Provider extension requires code signing with a valid Apple Development Team. Go into the Xcode project settings and select your own Development Team for all targets before building.
 
-5. Select the `Foodle` scheme, build, and run.
+5. Select the `Findle` scheme, build, and run.
 
-> **Note:** The Xcode project and scheme are named `Foodle` for historical reasons, but the built app is called **Findle**.
+> **Note:** The Xcode project and scheme are named `Findle` for historical reasons, but the built app is called **Findle**.
 
 ### Nightly Validation
 
-Before shipping, use the Release-like `Foodle-Nightly` scheme. It keeps optimization and hardened runtime behavior close to Release while still allowing tests to run, and produces a separate "Findle Nightly" app that can be installed side-by-side with the production build.
+Before shipping, use the Release-like `Findle-Nightly` scheme. It keeps optimization and hardened runtime behavior close to Release while still allowing tests to run, and produces a separate "Findle Nightly" app that can be installed side-by-side with the production build.
 
 ```bash
 xcodegen generate
 xcodebuild build \
-  -project Foodle.xcodeproj \
-  -scheme Foodle-Nightly \
+  -project Findle.xcodeproj \
+  -scheme Findle-Nightly \
   -configuration Nightly \
   CODE_SIGN_IDENTITY="-" \
   CODE_SIGNING_ALLOWED=NO
@@ -117,12 +117,12 @@ xcodebuild build \
 
 This builds an unsigned optimized app suitable for fast validation of optimized code paths. It is not suitable for File Provider registration or end-to-end SSO/Finder checks because the extension is not code signed.
 
-For real pre-ship runtime validation, build a signed Nightly app from Xcode by selecting the `Foodle-Nightly` scheme with your Development Team configured, or pass it from the command line:
+For real pre-ship runtime validation, build a signed Nightly app from Xcode by selecting the `Findle-Nightly` scheme with your Development Team configured, or pass it from the command line:
 
 ```bash
 xcodebuild build \
-  -project Foodle.xcodeproj \
-  -scheme Foodle-Nightly \
+  -project Findle.xcodeproj \
+  -scheme Findle-Nightly \
   -configuration Nightly \
   DEVELOPMENT_TEAM=ABCDE12345
 ```
@@ -138,10 +138,10 @@ Findle is split into a modular set of frameworks and targets. This keeps the sep
 | Module | Purpose |
 |--------|---------|
 | `SharedDomain` | Core types, models, state machines, and shared error handling. |
-| `FoodleNetworking` | The Moodle API client, authentication logic, and Keychain integration. |
-| `FoodlePersistence` | The SQLite database layer, metadata cache, and sync cursors. |
-| `FoodleSyncEngine` | Orchestrates the sync process, computes diffs, and manages downloads. |
-| `FoodleFileProvider`| The Apple File Provider extension that hooks directly into Finder. |
+| `FindleNetworking` | The Moodle API client, authentication logic, and Keychain integration. |
+| `FindlePersistence` | The SQLite database layer, metadata cache, and sync cursors. |
+| `FindleSyncEngine` | Orchestrates the sync process, computes diffs, and manages downloads. |
+| `FindleFileProvider`| The Apple File Provider extension that hooks directly into Finder. |
 | `Findle` (App) | The main SwiftUI app shell, handling onboarding, diagnostics, and settings. |
 
 ### Data Flow Overview
@@ -159,8 +159,8 @@ graph LR
 Reliability is maintained with unit and integration tests. You can run the test suites directly in Xcode using `Cmd+U`, or via the command line:
 
 ```bash
-xcodebuild test -project Foodle.xcodeproj -scheme SharedDomainTests
-xcodebuild test -project Foodle.xcodeproj -scheme PersistenceTests
+xcodebuild test -project Findle.xcodeproj -scheme SharedDomainTests
+xcodebuild test -project Findle.xcodeproj -scheme PersistenceTests
 ```
 
 Mock API responses and test fixtures can be found in the `Fixtures/` directory.

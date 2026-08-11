@@ -5,7 +5,7 @@
 
 import XCTest
 import AuthenticationServices
-@testable import FoodleNetworking
+@testable import FindleNetworking
 @testable import SharedDomain
 
 @MainActor

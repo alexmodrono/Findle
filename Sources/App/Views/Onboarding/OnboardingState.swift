@@ -5,7 +5,7 @@
 
 import SwiftUI
 import SharedDomain
-import FoodleNetworking
+import FindleNetworking
 
 @MainActor
 final class OnboardingState: ObservableObject {

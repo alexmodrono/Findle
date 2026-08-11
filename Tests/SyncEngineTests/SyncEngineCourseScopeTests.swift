@@ -5,16 +5,16 @@
 
 import XCTest
 @testable import SharedDomain
-@testable import FoodleNetworking
-@testable import FoodlePersistence
-@testable import FoodleSyncEngine
+@testable import FindleNetworking
+@testable import FindlePersistence
+@testable import FindleSyncEngine
 
 final class SyncEngineCourseScopeTests: XCTestCase {
     var database: Database!
     var tempPath: String!
 
     override func setUp() async throws {
-        tempPath = NSTemporaryDirectory() + "foodle_sync_test_\(UUID().uuidString).db"
+        tempPath = NSTemporaryDirectory() + "findle_sync_test_\(UUID().uuidString).db"
         database = try Database(path: tempPath)
     }
 

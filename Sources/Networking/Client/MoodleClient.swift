@@ -11,7 +11,7 @@ import CommonCrypto
 /// Native Moodle web services client implementing the LMSProvider protocol.
 public final class MoodleClient: LMSProvider, Sendable {
     private let session: URLSession
-    private let logger = Logger(subsystem: "es.amodrono.foodle.networking", category: "MoodleClient")
+    private let logger = Logger(subsystem: "es.amodrono.findle.networking", category: "MoodleClient")
 
     public init(session: URLSession = .shared) {
         self.session = session
@@ -38,7 +38,7 @@ public final class MoodleClient: LMSProvider, Sendable {
             return try await fetchSiteInfo(baseURL: normalizedURL, requestPolicy: .interactiveValidation)
         } catch is CancellationError {
             throw CancellationError()
-        } catch let error as FoodleError {
+        } catch let error as FindleError {
             guard shouldAttemptCompatibilityProbe(after: error) else {
                 throw error
             }
@@ -79,11 +79,11 @@ public final class MoodleClient: LMSProvider, Sendable {
         let (data, response) = try await performRequest(request, policy: requestPolicy)
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw FoodleError.siteUnreachable(url: baseURL)
+            throw FindleError.siteUnreachable(url: baseURL)
         }
 
         guard (200...299).contains(httpResponse.statusCode) else {
-            throw FoodleError.requestFailed(
+            throw FindleError.requestFailed(
                 statusCode: httpResponse.statusCode,
                 detail: String(data: data, encoding: .utf8) ?? "Unknown"
             )
@@ -93,11 +93,11 @@ public final class MoodleClient: LMSProvider, Sendable {
            let first = responses.first {
             if let exception = first["exception"] as? [String: Any] {
                 let detail = exception["message"] as? String ?? "Missing public site configuration."
-                throw FoodleError.siteIncompatible(reason: detail)
+                throw FindleError.siteIncompatible(reason: detail)
             }
 
             guard let resultData = first["data"] as? [String: Any] else {
-                throw FoodleError.invalidResponse(detail: "Missing public site configuration.")
+                throw FindleError.invalidResponse(detail: "Missing public site configuration.")
             }
 
             let siteName = resultData["sitename"] as? String
@@ -177,7 +177,7 @@ public final class MoodleClient: LMSProvider, Sendable {
             )
         }
 
-        throw FoodleError.invalidResponse(detail: "Could not decode Moodle public site configuration.")
+        throw FindleError.invalidResponse(detail: "Could not decode Moodle public site configuration.")
     }
 
     private func probeTokenEndpointCompatibility(
@@ -194,20 +194,20 @@ public final class MoodleClient: LMSProvider, Sendable {
         let (data, response) = try await performRequest(request, policy: requestPolicy)
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw FoodleError.siteUnreachable(url: baseURL)
+            throw FindleError.siteUnreachable(url: baseURL)
         }
 
         guard httpResponse.statusCode == 200 else {
-            throw FoodleError.siteIncompatible(reason: "Could not verify Moodle web services at this URL.")
+            throw FindleError.siteIncompatible(reason: "Could not verify Moodle web services at this URL.")
         }
 
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw FoodleError.siteIncompatible(reason: "Could not verify Moodle web services at this URL.")
+            throw FindleError.siteIncompatible(reason: "Could not verify Moodle web services at this URL.")
         }
 
         let errorCode = json["errorcode"] as? String
         if errorCode == "enablewsdescription" {
-            throw FoodleError.webServicesDisabled
+            throw FindleError.webServicesDisabled
         }
 
         let isValidMoodle = errorCode == "invalidlogin"
@@ -215,7 +215,7 @@ public final class MoodleClient: LMSProvider, Sendable {
             || json["token"] != nil
 
         guard isValidMoodle else {
-            throw FoodleError.siteIncompatible(reason: "Could not verify Moodle web services at this URL.")
+            throw FindleError.siteIncompatible(reason: "Could not verify Moodle web services at this URL.")
         }
 
         logger.info("Token endpoint compatibility probe succeeded")
@@ -230,7 +230,7 @@ public final class MoodleClient: LMSProvider, Sendable {
         )
     }
 
-    private func shouldAttemptCompatibilityProbe(after error: FoodleError) -> Bool {
+    private func shouldAttemptCompatibilityProbe(after error: FindleError) -> Bool {
         switch error {
         case .networkUnavailable, .timeout, .siteUnreachable, .webServicesDisabled:
             return false
@@ -261,13 +261,13 @@ public final class MoodleClient: LMSProvider, Sendable {
 
         if let error = tokenResponse.error {
             if error.contains("invalidlogin") || tokenResponse.errorcode == "invalidlogin" {
-                throw FoodleError.invalidCredentials
+                throw FindleError.invalidCredentials
             }
-            throw FoodleError.siteIncompatible(reason: error)
+            throw FindleError.siteIncompatible(reason: error)
         }
 
         guard let token = tokenResponse.token else {
-            throw FoodleError.invalidResponse(detail: "No token in authentication response.")
+            throw FindleError.invalidResponse(detail: "No token in authentication response.")
         }
 
         return AuthToken(token: token, privateToken: tokenResponse.privatetoken)
@@ -279,7 +279,7 @@ public final class MoodleClient: LMSProvider, Sendable {
         logger.info("Parsing SSO callback")
 
         guard let base64String = Self.extractTokenParam(from: callbackURLString) else {
-            throw FoodleError.invalidResponse(detail: "SSO callback URL has unexpected format.")
+            throw FindleError.invalidResponse(detail: "SSO callback URL has unexpected format.")
         }
 
         return try decodeTokenPayload(base64String, site: site, passport: passport)
@@ -287,7 +287,7 @@ public final class MoodleClient: LMSProvider, Sendable {
 
     /// Extract the base64 token parameter from a raw callback URL string.
     /// Handles both `scheme://token=<base64>` and `scheme://token?token=<base64>` formats,
-    /// and accepts any URL scheme (foodle, moodlemobile, openlms, etc.).
+    /// and accepts any URL scheme (findle, moodlemobile, openlms, etc.).
     static func extractTokenParam(from urlString: String) -> String? {
         // Format 1: scheme://token=<base64> — the token is everything after "://token="
         if let range = urlString.range(of: "://token=") {
@@ -321,13 +321,13 @@ public final class MoodleClient: LMSProvider, Sendable {
 
         guard let data = Data(base64Encoded: base64),
               let decoded = String(data: data, encoding: .utf8) else {
-            throw FoodleError.invalidResponse(detail: "Could not decode SSO token payload.")
+            throw FindleError.invalidResponse(detail: "Could not decode SSO token payload.")
         }
 
         // Moodle payload format: md5(siteURL + passport):::token[:::privatetoken]
         let parts = decoded.components(separatedBy: ":::")
         guard parts.count >= 2 else {
-            throw FoodleError.invalidResponse(detail: "SSO token payload has unexpected format.")
+            throw FindleError.invalidResponse(detail: "SSO token payload has unexpected format.")
         }
 
         let signature = parts[0]
@@ -345,7 +345,7 @@ public final class MoodleClient: LMSProvider, Sendable {
 
         guard matched else {
             logger.error("SSO signature mismatch - none of the candidate URLs matched")
-            throw FoodleError.invalidResponse(detail: "SSO security verification failed.")
+            throw FindleError.invalidResponse(detail: "SSO security verification failed.")
         }
 
         logger.info("SSO token obtained successfully")
@@ -619,7 +619,7 @@ public final class MoodleClient: LMSProvider, Sendable {
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-            throw FoodleError.downloadFailed(itemID: url.lastPathComponent, reason: "HTTP \(statusCode)")
+            throw FindleError.downloadFailed(itemID: url.lastPathComponent, reason: "HTTP \(statusCode)")
         }
 
         let fileManager = FileManager.default
@@ -671,11 +671,11 @@ public final class MoodleClient: LMSProvider, Sendable {
         let (data, response) = try await performRequest(request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw FoodleError.invalidResponse(detail: "Non-HTTP response.")
+            throw FindleError.invalidResponse(detail: "Non-HTTP response.")
         }
 
         guard (200...299).contains(httpResponse.statusCode) else {
-            throw FoodleError.requestFailed(
+            throw FindleError.requestFailed(
                 statusCode: httpResponse.statusCode,
                 detail: String(data: data, encoding: .utf8) ?? "Unknown"
             )
@@ -685,9 +685,9 @@ public final class MoodleClient: LMSProvider, Sendable {
         if let errorResponse = try? Self.makeDecoder().decode(MoodleErrorResponse.self, from: data) {
             if errorResponse.errorcode != nil {
                 if errorResponse.errorcode == "invalidtoken" || errorResponse.errorcode == "accessexception" {
-                    throw FoodleError.tokenExpired
+                    throw FindleError.tokenExpired
                 }
-                throw FoodleError.requestFailed(
+                throw FindleError.requestFailed(
                     statusCode: httpResponse.statusCode,
                     detail: errorResponse.message ?? errorResponse.errorcode ?? "Unknown Moodle error"
                 )
@@ -774,14 +774,14 @@ public final class MoodleClient: LMSProvider, Sendable {
             }
         }
 
-        throw lastError ?? FoodleError.networkUnavailable
+        throw lastError ?? FindleError.networkUnavailable
     }
 
     private func mapTransportError(
         _ error: URLError,
         requestURL: URL?,
         policy: RequestPolicy
-    ) -> FoodleError? {
+    ) -> FindleError? {
         switch error.code {
         case .notConnectedToInternet, .networkConnectionLost:
             return .networkUnavailable

@@ -5,7 +5,7 @@
 
 import XCTest
 import SQLite3
-@testable import FoodlePersistence
+@testable import FindlePersistence
 @testable import SharedDomain
 
 final class DatabaseTests: XCTestCase {
@@ -13,7 +13,7 @@ final class DatabaseTests: XCTestCase {
     var tempPath: String!
 
     override func setUp() async throws {
-        tempPath = NSTemporaryDirectory() + "foodle_test_\(UUID().uuidString).db"
+        tempPath = NSTemporaryDirectory() + "findle_test_\(UUID().uuidString).db"
         database = try Database(path: tempPath)
     }
 

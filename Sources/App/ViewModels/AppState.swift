@@ -10,13 +10,13 @@ import AppKit
 import CoreSpotlight
 import UserNotifications
 import SharedDomain
-import FoodleNetworking
-import FoodlePersistence
-import FoodleSyncEngine
+import FindleNetworking
+import FindlePersistence
+import FindleSyncEngine
 @preconcurrency import FileProvider
 import OSLog
 
-/// The central observable state for the Foodle app.
+/// The central observable state for the Findle app.
 @MainActor
 final class AppState: ObservableObject {
     @Published var currentScreen: AppScreen = .onboarding
@@ -58,14 +58,14 @@ final class AppState: ObservableObject {
     private var lastAppliedSyncInterval: Double = -1
     private var sessionBootstrapTask: Task<Void, Error>?
     private var syncSettingsObserver: NSObjectProtocol?
-    private let logger = Logger(subsystem: "es.amodrono.foodle", category: "AppState")
+    private let logger = Logger(subsystem: "es.amodrono.findle", category: "AppState")
     private let userDefaults: UserDefaults
 
     #if DEBUG
     /// When `true`, sign-in completes normally but the token is not persisted,
     /// so the next launch always shows the onboarding flow.
     /// Enable only when you explicitly want ephemeral debug sessions.
-    static let skipTokenPersistence = ProcessInfo.processInfo.environment["FOODLE_SKIP_TOKEN_PERSISTENCE"] == "1"
+    static let skipTokenPersistence = ProcessInfo.processInfo.environment["FINDLE_SKIP_TOKEN_PERSISTENCE"] == "1"
     #endif
 
     enum AppScreen: Hashable {
@@ -186,9 +186,9 @@ final class AppState: ObservableObject {
         let storageRootURL = try manager.stateDirectoryURL()
 
         let databaseURL = storageRootURL
-            .appendingPathComponent(".FoodleState", isDirectory: true)
-            .appendingPathComponent("Foodle", isDirectory: true)
-            .appendingPathComponent("foodle.db")
+            .appendingPathComponent(".FindleState", isDirectory: true)
+            .appendingPathComponent("Findle", isDirectory: true)
+            .appendingPathComponent("findle.db")
 
         return SharedDatabaseLocation(
             securityScopedDirectoryURL: storageRootURL,
@@ -283,7 +283,7 @@ final class AppState: ObservableObject {
         onProgress: @escaping @MainActor (SiteValidationProgress) -> Void
     ) async throws -> MoodleSite {
         guard let normalizedURL = normalizedValidationURL(from: urlString) else {
-            throw FoodleError.siteUnreachable(url: URL(string: "https://invalid")!)
+            throw FindleError.siteUnreachable(url: URL(string: "https://invalid")!)
         }
 
         let cacheKey = normalizedURL.absoluteString
@@ -598,7 +598,7 @@ final class AppState: ObservableObject {
         } catch let error as NSError {
             logger.error("Failed to add File Provider domain: \(error.localizedDescription, privacy: .public) [\(error.domain, privacy: .public):\(error.code)]")
             let detail = "\(error.localizedDescription) (\(error.domain):\(error.code))"
-            throw FoodleError.domainSetupFailed(detail: detail)
+            throw FindleError.domainSetupFailed(detail: detail)
         }
     }
 
@@ -645,7 +645,7 @@ final class AppState: ObservableObject {
             seedCourseSyncStatesFromCursors(siteID: site.id)
             loadCourseCovers()
             logger.info("Loaded \(self.courses.count) courses")
-        } catch let error as FoodleError where error.requiresReauthentication {
+        } catch let error as FindleError where error.requiresReauthentication {
             logger.error("Failed to load courses: session expired")
             handleSessionExpired()
         } catch {
@@ -963,7 +963,7 @@ final class AppState: ObservableObject {
             // Refresh deadlines/grades/quizzes in the background so it doesn't
             // delay the content sync's completion. Best-effort.
             Task { await refreshTracking() }
-        } catch let error as FoodleError where error.requiresReauthentication {
+        } catch let error as FindleError where error.requiresReauthentication {
             progressTask.cancel()
             handleSessionExpired()
         } catch is CancellationError {
@@ -992,7 +992,7 @@ final class AppState: ObservableObject {
             syncStatus = .completed
             lastSyncDate = Date()
             signalFileProviderChanges()
-        } catch let error as FoodleError where error.requiresReauthentication {
+        } catch let error as FindleError where error.requiresReauthentication {
             handleSessionExpired()
         } catch is CancellationError {
             courseSyncStates[course.id] = .stale
@@ -1091,7 +1091,7 @@ final class AppState: ObservableObject {
     private func handleSessionExpired() {
         logger.warning("Session expired — prompting user to reconnect")
         sessionExpired = true
-        syncStatus = .error(FoodleError.tokenExpired.localizedDescription)
+        syncStatus = .error(FindleError.tokenExpired.localizedDescription)
         automaticSyncTask?.cancel()
         automaticSyncTask = nil
         lastAppliedSyncInterval = -1

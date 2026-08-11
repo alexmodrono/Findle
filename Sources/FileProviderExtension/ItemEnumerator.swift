@@ -6,7 +6,7 @@
 import FileProvider
 import Foundation
 import SharedDomain
-import FoodlePersistence
+import FindlePersistence
 import OSLog
 
 /// Sync anchors are opaque to the system, but we use them as a decimal-encoded
@@ -31,7 +31,7 @@ enum SyncAnchorCoding {
 final class ItemEnumerator: NSObject, NSFileProviderEnumerator {
     private let containerIdentifier: NSFileProviderItemIdentifier
     private let database: Database
-    private let logger = Logger(subsystem: "es.amodrono.foodle.file-provider", category: "Enumerator")
+    private let logger = Logger(subsystem: "es.amodrono.findle.file-provider", category: "Enumerator")
 
     init(containerIdentifier: NSFileProviderItemIdentifier, database: Database) {
         self.containerIdentifier = containerIdentifier
@@ -115,7 +115,7 @@ final class ItemEnumerator: NSObject, NSFileProviderEnumerator {
 final class WorkingSetEnumerator: NSObject, NSFileProviderEnumerator {
     private let database: Database
     private let siteID: String?
-    private let logger = Logger(subsystem: "es.amodrono.foodle.file-provider", category: "WorkingSet")
+    private let logger = Logger(subsystem: "es.amodrono.findle.file-provider", category: "WorkingSet")
 
     init(database: Database, siteID: String? = nil) {
         self.database = database

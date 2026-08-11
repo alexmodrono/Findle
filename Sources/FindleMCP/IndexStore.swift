@@ -16,7 +16,7 @@ private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.sel
 /// so repeat reads don't re-open the PDF.
 final class IndexStore: @unchecked Sendable {
     private var db: OpaquePointer?
-    private let queue = DispatchQueue(label: "es.amodrono.foodle.mcp.index")
+    private let queue = DispatchQueue(label: "es.amodrono.findle.mcp.index")
 
     struct Hit {
         let itemID: String

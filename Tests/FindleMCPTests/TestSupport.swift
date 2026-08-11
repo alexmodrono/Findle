@@ -4,7 +4,7 @@
 // You may obtain a copy of the License in the LICENSE file at the root of this repository.
 
 import Foundation
-import FoodlePersistence
+import FindlePersistence
 import SharedDomain
 
 /// Builds a throwaway database seeded with a small, known fixture, so the MCP

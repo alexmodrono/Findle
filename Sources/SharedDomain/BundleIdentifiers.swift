@@ -11,9 +11,9 @@ import Foundation
 /// correct values are used automatically based on which scheme built the app.
 public enum BundleIdentifiers {
 
-    /// Base identifier prefix (e.g., `es.amodrono.foodle` or `es.amodrono.foodle.nightly`).
+    /// Base identifier prefix (e.g., `es.amodrono.findle` or `es.amodrono.findle.nightly`).
     public static let prefix: String = {
-        guard let id = Bundle.main.bundleIdentifier else { return "es.amodrono.foodle" }
+        guard let id = Bundle.main.bundleIdentifier else { return "es.amodrono.findle" }
         // In the File Provider extension process, strip the ".file-provider" suffix.
         if id.hasSuffix(".file-provider") {
             return String(id.dropLast(".file-provider".count))

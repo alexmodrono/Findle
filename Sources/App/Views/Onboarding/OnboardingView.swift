@@ -6,7 +6,7 @@
 import SwiftUI
 import Airlock
 import SharedDomain
-import FoodleNetworking
+import FindleNetworking
 
 struct OnboardingView: View {
     @EnvironmentObject private var appState: AppState

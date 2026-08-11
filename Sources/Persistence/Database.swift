@@ -14,12 +14,12 @@ import SharedDomain
 // autoreleased NSString.utf8String buffer or a transient Swift String.
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-/// SQLite database manager for Foodle's local persistence.
+/// SQLite database manager for Findle's local persistence.
 public final class Database: @unchecked Sendable {
     private static let appGroupIdentifier = BundleIdentifiers.appGroup
     private var db: OpaquePointer?
-    private let queue = DispatchQueue(label: "es.amodrono.foodle.persistence.db", qos: .userInitiated)
-    private let logger = Logger(subsystem: "es.amodrono.foodle.persistence", category: "Database")
+    private let queue = DispatchQueue(label: "es.amodrono.findle.persistence.db", qos: .userInitiated)
+    private let logger = Logger(subsystem: "es.amodrono.findle.persistence", category: "Database")
     private let path: String
     public var filePath: String { path }
 
@@ -28,7 +28,7 @@ public final class Database: @unchecked Sendable {
     /// (the MCP server) can locate it without the App Group entitlement.
     public static var sharedContainerDatabasePath: String {
         URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
-            .appendingPathComponent("Library/Group Containers/\(appGroupIdentifier)/Application Support/Foodle/foodle.db")
+            .appendingPathComponent("Library/Group Containers/\(appGroupIdentifier)/Application Support/Findle/findle.db")
             .path
     }
 
@@ -70,9 +70,9 @@ public final class Database: @unchecked Sendable {
                     .appendingPathComponent("Library", isDirectory: true)
                     .appendingPathComponent("Application Support", isDirectory: true)
             }
-            let dbDir = appSupport.appendingPathComponent("Foodle", isDirectory: true)
+            let dbDir = appSupport.appendingPathComponent("Findle", isDirectory: true)
             try FileManager.default.createDirectory(at: dbDir, withIntermediateDirectories: true)
-            self.path = dbDir.appendingPathComponent("foodle.db").path
+            self.path = dbDir.appendingPathComponent("findle.db").path
         }
 
         var dbPointer: OpaquePointer?
@@ -82,7 +82,7 @@ public final class Database: @unchecked Sendable {
         let status = sqlite3_open_v2(self.path, &dbPointer, flags, nil)
         guard status == SQLITE_OK, let pointer = dbPointer else {
             let message = dbPointer.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "Unknown error"
-            throw FoodleError.databaseError(detail: "Could not open database: \(message)")
+            throw FindleError.databaseError(detail: "Could not open database: \(message)")
         }
         self.db = pointer
 
@@ -117,11 +117,11 @@ public final class Database: @unchecked Sendable {
     }
 
     private static func databaseDirectory(in appSupport: URL) -> URL {
-        appSupport.appendingPathComponent("Foodle", isDirectory: true)
+        appSupport.appendingPathComponent("Findle", isDirectory: true)
     }
 
     private static func databaseURL(in appSupport: URL) -> URL {
-        databaseDirectory(in: appSupport).appendingPathComponent("foodle.db")
+        databaseDirectory(in: appSupport).appendingPathComponent("findle.db")
     }
 
     private static func migrateLegacyDatabaseIfNeeded(
@@ -140,8 +140,8 @@ public final class Database: @unchecked Sendable {
 
         for suffix in ["", "-wal", "-shm"] {
             let sourceURL = legacyDatabaseURL.deletingLastPathComponent()
-                .appendingPathComponent("foodle.db\(suffix)")
-            let destinationURL = preferredDirectory.appendingPathComponent("foodle.db\(suffix)")
+                .appendingPathComponent("findle.db\(suffix)")
+            let destinationURL = preferredDirectory.appendingPathComponent("findle.db\(suffix)")
 
             guard fileManager.fileExists(atPath: sourceURL.path) else { continue }
             guard !fileManager.fileExists(atPath: destinationURL.path) else { continue }
@@ -608,7 +608,7 @@ public final class Database: @unchecked Sendable {
         if status != SQLITE_OK {
             let message = errorMessage.map { String(cString: $0) } ?? "Unknown error"
             sqlite3_free(errorMessage)
-            throw FoodleError.databaseError(detail: message)
+            throw FindleError.databaseError(detail: message)
         }
     }
 
@@ -618,7 +618,7 @@ public final class Database: @unchecked Sendable {
         let status = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
         guard status == SQLITE_OK, let statement = stmt else {
             let message = String(cString: sqlite3_errmsg(db))
-            throw FoodleError.databaseError(detail: "Prepare failed: \(message)")
+            throw FindleError.databaseError(detail: "Prepare failed: \(message)")
         }
         return statement
     }
@@ -655,7 +655,7 @@ extension Database {
 
             let status = sqlite3_step(stmt)
             guard status == SQLITE_DONE else {
-                throw FoodleError.databaseError(detail: "Failed to save site: \(String(cString: sqlite3_errmsg(db)))")
+                throw FindleError.databaseError(detail: "Failed to save site: \(String(cString: sqlite3_errmsg(db)))")
             }
         }
     }
@@ -720,7 +720,7 @@ extension Database {
 
             let status = sqlite3_step(stmt)
             guard status == SQLITE_DONE else {
-                throw FoodleError.databaseError(detail: "Failed to save account")
+                throw FindleError.databaseError(detail: "Failed to save account")
             }
         }
     }
@@ -832,7 +832,7 @@ extension Database {
                     }
 
                     guard sqlite3_step(stmt) == SQLITE_DONE else {
-                        throw FoodleError.databaseError(detail: "saveCourses step failed: \(String(cString: sqlite3_errmsg(db)))")
+                        throw FindleError.databaseError(detail: "saveCourses step failed: \(String(cString: sqlite3_errmsg(db)))")
                     }
                 }
                 try executeUnsafe("COMMIT")
@@ -924,7 +924,7 @@ extension Database {
 
             let status = sqlite3_step(stmt)
             guard status == SQLITE_DONE else {
-                throw FoodleError.databaseError(detail: "Failed to update custom folder name")
+                throw FindleError.databaseError(detail: "Failed to update custom folder name")
             }
         }
     }
@@ -944,7 +944,7 @@ extension Database {
 
             let status = sqlite3_step(stmt)
             guard status == SQLITE_DONE else {
-                throw FoodleError.databaseError(detail: "Failed to update custom icon name")
+                throw FindleError.databaseError(detail: "Failed to update custom icon name")
             }
         }
     }
@@ -963,7 +963,7 @@ extension Database {
                 sqlite3_bind_int64(deleteStmt, 1, Int64(courseID))
                 sqlite3_bind_text(deleteStmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
                 guard sqlite3_step(deleteStmt) == SQLITE_DONE else {
-                    throw FoodleError.databaseError(detail: "saveCourseTags delete failed: \(String(cString: sqlite3_errmsg(db)))")
+                    throw FindleError.databaseError(detail: "saveCourseTags delete failed: \(String(cString: sqlite3_errmsg(db)))")
                 }
 
                 let insertSQL = "INSERT INTO course_tags (course_id, site_id, tag_name, tag_color) VALUES (?, ?, ?, ?)"
@@ -975,7 +975,7 @@ extension Database {
                     sqlite3_bind_text(stmt, 3, (tag.name as NSString).utf8String, -1, SQLITE_TRANSIENT)
                     sqlite3_bind_int(stmt, 4, Int32(tag.color.rawValue))
                     guard sqlite3_step(stmt) == SQLITE_DONE else {
-                        throw FoodleError.databaseError(detail: "saveCourseTags insert failed: \(String(cString: sqlite3_errmsg(db)))")
+                        throw FindleError.databaseError(detail: "saveCourseTags insert failed: \(String(cString: sqlite3_errmsg(db)))")
                     }
                 }
 
@@ -1067,7 +1067,7 @@ extension Database {
                     sqlite3_bind_int(stmt, 18, item.isLocal ? 1 : 0)
 
                     guard sqlite3_step(stmt) == SQLITE_DONE else {
-                        throw FoodleError.databaseError(detail: "saveItems step failed: \(String(cString: sqlite3_errmsg(db)))")
+                        throw FindleError.databaseError(detail: "saveItems step failed: \(String(cString: sqlite3_errmsg(db)))")
                     }
                 }
                 try executeUnsafe("COMMIT")
@@ -1134,7 +1134,7 @@ extension Database {
             sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
             let status = sqlite3_step(stmt)
             guard status == SQLITE_DONE else {
-                throw FoodleError.databaseError(detail: "Failed to update item filename")
+                throw FindleError.databaseError(detail: "Failed to update item filename")
             }
         }
     }
@@ -1152,7 +1152,7 @@ extension Database {
             sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
             let status = sqlite3_step(stmt)
             guard status == SQLITE_DONE else {
-                throw FoodleError.databaseError(detail: "Failed to update item tag data")
+                throw FindleError.databaseError(detail: "Failed to update item tag data")
             }
         }
     }
@@ -1193,7 +1193,7 @@ extension Database {
             sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
             sqlite3_bind_text(stmt, 3, (ItemSyncState.downloading.rawValue as NSString).utf8String, -1, SQLITE_TRANSIENT)
             guard sqlite3_step(stmt) == SQLITE_DONE else {
-                throw FoodleError.databaseError(detail: "Failed to reset stale downloads")
+                throw FindleError.databaseError(detail: "Failed to reset stale downloads")
             }
             return Int(sqlite3_changes(db))
         }
@@ -1208,7 +1208,7 @@ extension Database {
             sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
             let status = sqlite3_step(stmt)
             guard status == SQLITE_DONE else {
-                throw FoodleError.databaseError(detail: "Failed to update item pinned state")
+                throw FindleError.databaseError(detail: "Failed to update item pinned state")
             }
         }
     }
@@ -1243,7 +1243,7 @@ extension Database {
                 sqlite3_bind_int(insertStmt, 1, Int32(courseID))
                 sqlite3_bind_text(insertStmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
                 guard sqlite3_step(insertStmt) == SQLITE_DONE else {
-                    throw FoodleError.databaseError(detail: "deleteItems pending insert failed")
+                    throw FindleError.databaseError(detail: "deleteItems pending insert failed")
                 }
 
                 let deleteStmt = try prepareStatement("DELETE FROM items WHERE course_id = ? AND site_id = ? AND is_local = 0")
@@ -1251,7 +1251,7 @@ extension Database {
                 sqlite3_bind_int(deleteStmt, 1, Int32(courseID))
                 sqlite3_bind_text(deleteStmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
                 guard sqlite3_step(deleteStmt) == SQLITE_DONE else {
-                    throw FoodleError.databaseError(detail: "deleteItems delete failed")
+                    throw FindleError.databaseError(detail: "deleteItems delete failed")
                 }
                 try executeUnsafe("COMMIT")
             } catch {
@@ -1269,14 +1269,14 @@ extension Database {
                 defer { sqlite3_finalize(insertStmt) }
                 sqlite3_bind_text(insertStmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
                 guard sqlite3_step(insertStmt) == SQLITE_DONE else {
-                    throw FoodleError.databaseError(detail: "deleteAllItems pending insert failed")
+                    throw FindleError.databaseError(detail: "deleteAllItems pending insert failed")
                 }
 
                 let deleteStmt = try prepareStatement("DELETE FROM items WHERE site_id = ? AND is_local = 0")
                 defer { sqlite3_finalize(deleteStmt) }
                 sqlite3_bind_text(deleteStmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
                 guard sqlite3_step(deleteStmt) == SQLITE_DONE else {
-                    throw FoodleError.databaseError(detail: "deleteAllItems delete failed")
+                    throw FindleError.databaseError(detail: "deleteAllItems delete failed")
                 }
                 try executeUnsafe("COMMIT")
             } catch {
@@ -1324,12 +1324,12 @@ extension Database {
                     sqlite3_reset(tombstoneStmt)
                     sqlite3_bind_text(tombstoneStmt, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
                     guard sqlite3_step(tombstoneStmt) == SQLITE_DONE else {
-                        throw FoodleError.databaseError(detail: "deleteItemsWithTombstone tombstone failed")
+                        throw FindleError.databaseError(detail: "deleteItemsWithTombstone tombstone failed")
                     }
                     sqlite3_reset(deleteStmt)
                     sqlite3_bind_text(deleteStmt, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
                     guard sqlite3_step(deleteStmt) == SQLITE_DONE else {
-                        throw FoodleError.databaseError(detail: "deleteItemsWithTombstone delete failed")
+                        throw FindleError.databaseError(detail: "deleteItemsWithTombstone delete failed")
                     }
                 }
                 try executeUnsafe("COMMIT")
@@ -1587,7 +1587,7 @@ extension Database {
                     sqlite3_bind_int(stmt, 8, a.graded ? 1 : 0)
                     bindOptionalText(stmt, 9, a.grade)
                     guard sqlite3_step(stmt) == SQLITE_DONE else {
-                        throw FoodleError.databaseError(detail: "saveAssignments: \(String(cString: sqlite3_errmsg(db)))")
+                        throw FindleError.databaseError(detail: "saveAssignments: \(String(cString: sqlite3_errmsg(db)))")
                     }
                 }
                 try executeUnsafe("COMMIT")
@@ -1640,7 +1640,7 @@ extension Database {
                     bindOptionalText(stmt, 6, g.percentage)
                     bindOptionalText(stmt, 7, g.feedback)
                     guard sqlite3_step(stmt) == SQLITE_DONE else {
-                        throw FoodleError.databaseError(detail: "saveGradeItems: \(String(cString: sqlite3_errmsg(db)))")
+                        throw FindleError.databaseError(detail: "saveGradeItems: \(String(cString: sqlite3_errmsg(db)))")
                     }
                 }
                 try executeUnsafe("COMMIT")
@@ -1691,7 +1691,7 @@ extension Database {
                     bindOptionalDate(stmt, 6, q.closeDate)
                     if let t = q.timeLimit { sqlite3_bind_int64(stmt, 7, Int64(t)) } else { sqlite3_bind_null(stmt, 7) }
                     guard sqlite3_step(stmt) == SQLITE_DONE else {
-                        throw FoodleError.databaseError(detail: "saveQuizzes: \(String(cString: sqlite3_errmsg(db)))")
+                        throw FindleError.databaseError(detail: "saveQuizzes: \(String(cString: sqlite3_errmsg(db)))")
                     }
                 }
                 try executeUnsafe("COMMIT")
@@ -1743,7 +1743,7 @@ extension Database {
                     bindOptionalDate(stmt, 7, a.startTime)
                     bindOptionalDate(stmt, 8, a.finishTime)
                     guard sqlite3_step(stmt) == SQLITE_DONE else {
-                        throw FoodleError.databaseError(detail: "saveQuizAttempts: \(String(cString: sqlite3_errmsg(db)))")
+                        throw FindleError.databaseError(detail: "saveQuizAttempts: \(String(cString: sqlite3_errmsg(db)))")
                     }
                 }
                 try executeUnsafe("COMMIT")
@@ -1782,7 +1782,7 @@ extension Database {
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
         guard sqlite3_step(stmt) == SQLITE_DONE else {
-            throw FoodleError.databaseError(detail: "deleteForSite(\(table)): \(String(cString: sqlite3_errmsg(db)))")
+            throw FindleError.databaseError(detail: "deleteForSite(\(table)): \(String(cString: sqlite3_errmsg(db)))")
         }
     }
 

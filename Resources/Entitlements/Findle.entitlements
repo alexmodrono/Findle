@@ -14,7 +14,7 @@
     </array>
     <key>keychain-access-groups</key>
     <array>
-        <string>$(AppIdentifierPrefix)$(FOODLE_BUNDLE_PREFIX)</string>
+        <string>$(AppIdentifierPrefix)$(FINDLE_BUNDLE_PREFIX)</string>
     </array>
     <key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
     <array>

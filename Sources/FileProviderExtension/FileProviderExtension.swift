@@ -5,15 +5,15 @@
 
 import FileProvider
 import SharedDomain
-import FoodleNetworking
-import FoodlePersistence
+import FindleNetworking
+import FindlePersistence
 import OSLog
 
 /// The File Provider extension that exposes Moodle course content in Finder.
 /// Uses the replicated extension model for modern macOS cloud-file behavior.
 final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     let domain: NSFileProviderDomain
-    let logger = Logger(subsystem: "es.amodrono.foodle.file-provider", category: "Extension")
+    let logger = Logger(subsystem: "es.amodrono.findle.file-provider", category: "Extension")
     private let stateLock = NSLock()
     private var _database: Database?
     private var databaseSecurityScopedURL: URL?
@@ -123,9 +123,9 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
     private static func databaseURL(in stateDirectoryURL: URL) -> URL {
         stateDirectoryURL
-            .appendingPathComponent(".FoodleState", isDirectory: true)
-            .appendingPathComponent("Foodle", isDirectory: true)
-            .appendingPathComponent("foodle.db")
+            .appendingPathComponent(".FindleState", isDirectory: true)
+            .appendingPathComponent("Findle", isDirectory: true)
+            .appendingPathComponent("findle.db")
     }
 
     // MARK: - Item Lookup
@@ -244,7 +244,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     private func localContentDirectory() throws -> URL {
         let stateDir = try Self.stateDirectoryURL(for: domain)
         let dir = stateDir
-            .appendingPathComponent(".FoodleState", isDirectory: true)
+            .appendingPathComponent(".FindleState", isDirectory: true)
             .appendingPathComponent("LocalContent", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir

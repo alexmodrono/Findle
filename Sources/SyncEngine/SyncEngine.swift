@@ -6,14 +6,14 @@
 import Foundation
 import OSLog
 import SharedDomain
-import FoodleNetworking
-import FoodlePersistence
+import FindleNetworking
+import FindlePersistence
 
 /// Orchestrates synchronization between Moodle servers and local state.
 public actor SyncEngine {
     private let provider: LMSProvider
     private let database: Database
-    private let logger = Logger(subsystem: "es.amodrono.foodle.sync", category: "SyncEngine")
+    private let logger = Logger(subsystem: "es.amodrono.findle.sync", category: "SyncEngine")
 
     private var activeTasks: [Int: Task<Void, Error>] = [:]
     private var syncProgress: [Int: SyncProgress] = [:]
@@ -71,7 +71,7 @@ public actor SyncEngine {
             do {
                 try await task.value
                 logger.info("Sync completed for course \(course.id, privacy: .public)")
-            } catch let error as FoodleError where error.requiresReauthentication {
+            } catch let error as FindleError where error.requiresReauthentication {
                 logger.error("Authentication failed during sync of course \(course.id, privacy: .public) — aborting")
                 syncProgress[course.id]?.state = .stale
                 activeTasks[course.id] = nil
@@ -403,11 +403,11 @@ public actor SyncEngine {
         destination: URL
     ) async throws {
         guard let item = try database.fetchItem(id: itemID) else {
-            throw FoodleError.itemNotFound(itemID: itemID)
+            throw FindleError.itemNotFound(itemID: itemID)
         }
 
         guard let remoteURL = item.remoteURL else {
-            throw FoodleError.downloadFailed(itemID: itemID, reason: "No remote URL")
+            throw FindleError.downloadFailed(itemID: itemID, reason: "No remote URL")
         }
 
         try database.updateItemSyncState(id: itemID, state: .downloading)

@@ -10,8 +10,8 @@ permissions:
 
 env:
   APP_NAME: Findle
-  SCHEME: Foodle
-  BUNDLE_ID: es.amodrono.foodle
+  SCHEME: Findle
+  BUNDLE_ID: es.amodrono.findle
 
 jobs:
   build-and-release:
@@ -95,7 +95,7 @@ jobs:
           # The bundled MCP helper (FindleMCP) ships inside the app's Contents/MacOS.
           # It must be Developer ID-signed with the same team as the embedded
           # frameworks, or the hardened runtime's library validation refuses to
-          # load SharedDomain/FoodlePersistence at runtime (and notarization
+          # load SharedDomain/FindlePersistence at runtime (and notarization
           # rejects an ad-hoc nested executable). A CLI tool needs no provisioning
           # profile. Overwrites the gitignored local include used for dev builds.
           cat > Config/MCP.xcconfig <<XCCONFIG
@@ -116,10 +116,10 @@ jobs:
       - name: Build archive
         run: |
           xcodebuild archive \
-            -project Foodle.xcodeproj \
+            -project Findle.xcodeproj \
             -scheme "$SCHEME" \
             -configuration Release \
-            -archivePath "$RUNNER_TEMP/Foodle.xcarchive"
+            -archivePath "$RUNNER_TEMP/Findle.xcarchive"
 
       - name: Export archive
         run: |
@@ -138,9 +138,9 @@ jobs:
               <string>Developer ID Application</string>
               <key>provisioningProfiles</key>
               <dict>
-                  <key>es.amodrono.foodle</key>
+                  <key>es.amodrono.findle</key>
                   <string>${APP_PROFILE_UUID}</string>
-                  <key>es.amodrono.foodle.file-provider</key>
+                  <key>es.amodrono.findle.file-provider</key>
                   <string>${FP_PROFILE_UUID}</string>
               </dict>
           </dict>
@@ -148,7 +148,7 @@ jobs:
           EOF
 
           xcodebuild -exportArchive \
-            -archivePath "$RUNNER_TEMP/Foodle.xcarchive" \
+            -archivePath "$RUNNER_TEMP/Findle.xcarchive" \
             -exportPath "$RUNNER_TEMP/export" \
             -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
 
@@ -301,9 +301,9 @@ jobs:
             app "Findle.app"
 
             zap trash: [
-              "~/Library/Group Containers/group.es.amodrono.foodle",
-              "~/Library/Containers/es.amodrono.foodle",
-              "~/Library/Containers/es.amodrono.foodle.file-provider",
+              "~/Library/Group Containers/group.es.amodrono.findle",
+              "~/Library/Containers/es.amodrono.findle",
+              "~/Library/Containers/es.amodrono.findle.file-provider",
             ]
           end
           CASK

@@ -98,12 +98,12 @@ final class ModelTests: XCTestCase {
     }
 
     func testRequiresReauthentication() {
-        XCTAssertTrue(FoodleError.tokenExpired.requiresReauthentication)
-        XCTAssertTrue(FoodleError.tokenRefreshFailed(underlying: "x").requiresReauthentication)
-        XCTAssertTrue(FoodleError.authenticationRequired.requiresReauthentication)
+        XCTAssertTrue(FindleError.tokenExpired.requiresReauthentication)
+        XCTAssertTrue(FindleError.tokenRefreshFailed(underlying: "x").requiresReauthentication)
+        XCTAssertTrue(FindleError.authenticationRequired.requiresReauthentication)
 
-        XCTAssertFalse(FoodleError.networkUnavailable.requiresReauthentication)
-        XCTAssertFalse(FoodleError.timeout.requiresReauthentication)
-        XCTAssertFalse(FoodleError.invalidCredentials.requiresReauthentication)
+        XCTAssertFalse(FindleError.networkUnavailable.requiresReauthentication)
+        XCTAssertFalse(FindleError.timeout.requiresReauthentication)
+        XCTAssertFalse(FindleError.invalidCredentials.requiresReauthentication)
     }
 }

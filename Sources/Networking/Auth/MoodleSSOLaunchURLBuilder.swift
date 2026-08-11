@@ -26,7 +26,7 @@ public struct MoodleSSOLaunchURLBuildResult: Sendable {
 public enum MoodleSSOLaunchURLBuilder {
 
     private static let logger = Logger(
-        subsystem: "es.amodrono.foodle.networking",
+        subsystem: "es.amodrono.findle.networking",
         category: "SSOLaunchURLBuilder"
     )
 
@@ -37,9 +37,9 @@ public enum MoodleSSOLaunchURLBuilder {
     /// - Parameters:
     ///   - site: The Moodle site requiring SSO.
     ///   - passport: The random passport nonce for callback verification.
-    ///   - callbackScheme: The URL scheme registered for the SSO callback (default: `foodle`).
+    ///   - callbackScheme: The URL scheme registered for the SSO callback (default: `findle`).
     /// - Returns: A build result containing the validated URL and its source.
-    /// - Throws: `FoodleError.ssoLaunchURLUnavailable` if no valid URL can be formed.
+    /// - Throws: `FindleError.ssoLaunchURLUnavailable` if no valid URL can be formed.
     public static func build(
         for site: MoodleSite,
         passport: String,
@@ -71,7 +71,7 @@ public enum MoodleSSOLaunchURLBuilder {
         }
 
         logger.error("Could not build any valid SSO launch URL for \(site.displayName, privacy: .public)")
-        throw FoodleError.ssoLaunchURLUnavailable(
+        throw FindleError.ssoLaunchURLUnavailable(
             detail: "Neither the site-advertised launch URL nor the default endpoint could produce a valid URL."
         )
     }

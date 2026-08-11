@@ -6,7 +6,7 @@
 import SwiftUI
 import Airlock
 import SharedDomain
-import FoodleNetworking
+import FindleNetworking
 
 struct SignInStepView: View {
     @EnvironmentObject private var appState: AppState
@@ -201,7 +201,7 @@ struct SignInStepView: View {
             onboardingState.showEmbeddedSSO = false
             onboardingState.embeddedAuthCoordinator = nil
             navigator?.setContinueEnabled(true)
-        } catch let error as FoodleError where error.isCancelled {
+        } catch let error as FindleError where error.isCancelled {
             onboardingState.showEmbeddedSSO = false
             onboardingState.embeddedAuthCoordinator = nil
             navigator?.setContinueEnabled(true)
@@ -214,8 +214,8 @@ struct SignInStepView: View {
     }
 
     private func handleSSOError(_ error: Error) {
-        if let foodleError = error as? FoodleError {
-            switch foodleError {
+        if let findleError = error as? FindleError {
+            switch findleError {
             case .ssoLaunchURLUnavailable:
                 onboardingState.errorMessage = "This site requires sign-in through its identity provider, but Findle could not build a valid launch URL."
             case .ssoLaunchURLInvalid:
@@ -225,7 +225,7 @@ struct SignInStepView: View {
             case .ssoCallbackInvalid:
                 onboardingState.errorMessage = "The sign-in callback from the site was invalid or incomplete. Please try again."
             default:
-                onboardingState.errorMessage = foodleError.localizedDescription
+                onboardingState.errorMessage = findleError.localizedDescription
             }
         } else {
             onboardingState.errorMessage = error.localizedDescription

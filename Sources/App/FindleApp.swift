@@ -8,10 +8,10 @@ import CoreSpotlight
 import Sparkle
 import OSLog
 
-private let logger = Logger(subsystem: "es.amodrono.foodle", category: "App")
+private let logger = Logger(subsystem: "es.amodrono.findle", category: "App")
 
 @main
-struct FoodleApp: App {
+struct FindleApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var appState = AppState()
     @StateObject private var updateController = UpdateController()

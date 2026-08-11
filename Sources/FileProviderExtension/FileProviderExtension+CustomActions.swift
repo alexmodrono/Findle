@@ -6,7 +6,7 @@
 import FileProvider
 import AppKit
 import SharedDomain
-import FoodlePersistence
+import FindlePersistence
 import OSLog
 
 extension FileProviderExtension: NSFileProviderCustomAction {
