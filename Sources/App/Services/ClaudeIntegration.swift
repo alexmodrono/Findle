@@ -93,7 +93,7 @@ enum ClaudeIntegration {
               let servers = root["mcpServers"] as? [String: Any] else {
             return false
         }
-        return servers["findle"] != nil
+        return servers[BundleIdentifiers.mcpServerKey] != nil
     }
 
     /// Register the bundled MCP server with `target`, passing the app's actual
@@ -113,6 +113,40 @@ enum ClaudeIntegration {
                 NSWorkspace.shared.activateFileViewerSelecting([target.configURL])
             }
             return .copiedToClipboard
+        }
+    }
+
+    /// Remove this build's MCP server entry from `target`, leaving every other
+    /// server untouched.
+    ///
+    /// Because the key is build-specific, uninstalling Nightly cannot disturb
+    /// the release app's registration (or vice versa) — which is what makes a
+    /// side-by-side Nightly safe to remove at any time.
+    @discardableResult
+    static func uninstall(_ target: Target) -> Bool {
+        let url = target.configURL
+        guard FileManager.default.fileExists(atPath: url.path),
+              let data = try? Data(contentsOf: url),
+              var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              var servers = root["mcpServers"] as? [String: Any],
+              servers[BundleIdentifiers.mcpServerKey] != nil else {
+            return false
+        }
+
+        servers.removeValue(forKey: BundleIdentifiers.mcpServerKey)
+        root["mcpServers"] = servers
+
+        do {
+            let output = try JSONSerialization.data(
+                withJSONObject: root,
+                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            )
+            try output.write(to: url, options: .atomic)
+            logger.info("Removed MCP server from \(target.displayName, privacy: .public)")
+            return true
+        } catch {
+            logger.warning("Failed to remove MCP server from \(target.displayName, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return false
         }
     }
 
@@ -140,7 +174,7 @@ enum ClaudeIntegration {
         }
 
         var servers = root["mcpServers"] as? [String: Any] ?? [:]
-        servers["findle"] = entry
+        servers[BundleIdentifiers.mcpServerKey] = entry
         root["mcpServers"] = servers
 
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
@@ -149,7 +183,7 @@ enum ClaudeIntegration {
 
     /// A standalone `mcpServers` snippet for the clipboard fallback.
     private static func snippet(entry: [String: Any]) -> String {
-        let wrapper: [String: Any] = ["mcpServers": ["findle": entry]]
+        let wrapper: [String: Any] = ["mcpServers": [BundleIdentifiers.mcpServerKey: entry]]
         let data = (try? JSONSerialization.data(withJSONObject: wrapper, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? Data()
         return String(data: data, encoding: .utf8) ?? "{}"
     }

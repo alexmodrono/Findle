@@ -18,7 +18,8 @@ struct MCPConnectView: View {
     @State private var token = ClaudeIntegration.generateToken()
     @State private var toast: String?
 
-    private let port = 8765
+    // Release and Nightly bind different loopback ports so both can run at once.
+    private let port = Int(BundleIdentifiers.mcpPort)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -90,7 +91,7 @@ struct MCPConnectView: View {
             switch ClaudeIntegration.install(target, databasePath: appState.databaseFilePath) {
             case .installed:
                 installed.insert(target)
-                showToast("\(wasAdded ? "Updated" : "Added to") \(target.displayName) — restart it to load Findle.")
+                showToast("\(wasAdded ? "Updated" : "Added to") \(target.displayName) — restart it to load \(BundleIdentifiers.appDisplayName).")
             case .copiedToClipboard:
                 showToast("Couldn't write the config — it's copied to your clipboard.")
             }
@@ -105,6 +106,18 @@ struct MCPConnectView: View {
         .tint(isAdded ? .green : .accentColor)
         .disabled(!target.isLikelyInstalled)
         .help(target.isLikelyInstalled ? "" : "\(target.displayName) doesn't appear to be installed")
+        // Removal only touches this build's own entry, so a Nightly install can
+        // be undone without disturbing the release app's registration.
+        .contextMenu {
+            if isAdded {
+                Button("Remove from \(target.displayName)", role: .destructive) {
+                    if ClaudeIntegration.uninstall(target) {
+                        installed.remove(target)
+                        showToast("Removed from \(target.displayName) — restart it to apply.")
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - ChatGPT

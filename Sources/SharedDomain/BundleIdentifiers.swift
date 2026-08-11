@@ -21,8 +21,29 @@ public enum BundleIdentifiers {
         return id
     }()
 
+    /// Whether this is a Nightly build.
+    ///
+    /// Nightly and Release are separate applications that must coexist without
+    /// touching each other's data. Everything below that could otherwise collide
+    /// — the Finder mount name, the MCP port, the Claude config key — is keyed
+    /// off this rather than off a build flag, so the File Provider extension
+    /// (whose `prefix` is derived the same way) agrees with the app it ships in.
+    public static let isNightly = prefix.hasSuffix(".nightly")
+
+    /// User-facing product name, matching `PRODUCT_NAME` for each config.
+    public static let appDisplayName = isNightly ? "Findle Nightly" : "Findle"
+
     /// App group identifier for shared container access.
     public static let appGroup = "group.\(prefix)"
+
+    /// Loopback port for the MCP helper's HTTP transport. Release and Nightly
+    /// need different ports or whichever launches second fails to bind.
+    public static let mcpPort: UInt16 = isNightly ? 8766 : 8765
+
+    /// Key this build uses under `mcpServers` in an assistant's JSON config.
+    /// Distinct per build so installing Nightly can't clobber the entry that
+    /// points at the release app — and so removing one leaves the other intact.
+    public static let mcpServerKey = isNightly ? "findle-nightly" : "findle"
 
     /// Keychain service name for credential storage.
     public static let keychainService = prefix

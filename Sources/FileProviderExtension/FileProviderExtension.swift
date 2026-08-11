@@ -17,8 +17,11 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     private let stateLock = NSLock()
     private var _database: Database?
     private var databaseSecurityScopedURL: URL?
+    /// Name of the folder this domain mounts as under `~/Library/CloudStorage`.
+    /// Built from the product name so a Nightly domain for the same Moodle site
+    /// can't collide with the release one.
     private var rootContainerName: String {
-        "Findle-\(FileNameSanitizer.sanitize(domain.displayName))"
+        "\(BundleIdentifiers.appDisplayName)-\(FileNameSanitizer.sanitize(domain.displayName))"
     }
 
     /// Extract the site ID from the domain identifier (format: `<prefix>.domain.<siteID>`).

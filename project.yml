@@ -18,10 +18,15 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete
     FINDLE_BUNDLE_PREFIX: es.amodrono.findle
     APP_GROUP_IDENTIFIER: group.es.amodrono.findle
+    FINDLE_APPCAST_URL: https://github.com/alexmodrono/Findle/releases/latest/download/appcast.xml
   configs:
     Nightly:
       FINDLE_BUNDLE_PREFIX: es.amodrono.findle.nightly
       APP_GROUP_IDENTIFIER: group.es.amodrono.findle.nightly
+      # Nightly ships as an unsigned CI artifact and has no appcast of its own.
+      # Leaving the release feed here would let a Nightly install "update"
+      # itself into the production build. An empty feed disables Sparkle.
+      FINDLE_APPCAST_URL: ""
 
 configs:
   Debug: debug
