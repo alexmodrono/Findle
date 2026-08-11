@@ -6,7 +6,7 @@
 import SwiftUI
 import WebKit
 import SharedDomain
-import FoodleNetworking
+import FindleNetworking
 
 /// A SwiftUI wrapper around the `EmbeddedAuthCoordinator`'s WKWebView.
 /// Presented as a sheet during onboarding when the site uses `SiteLoginType.embedded`.

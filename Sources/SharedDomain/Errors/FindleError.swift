@@ -6,7 +6,7 @@
 import Foundation
 
 /// Top-level error domain for the Findle app.
-public enum FoodleError: Error, Sendable, LocalizedError {
+public enum FindleError: Error, Sendable, LocalizedError {
     // Authentication
     case invalidCredentials
     case tokenExpired

@@ -113,9 +113,9 @@ struct SetupStepView: View {
             return
         }
 
-        guard let site = appState.currentSite,
-              let token = appState.currentToken,
-              let engine = appState.syncEngine else {
+        guard appState.currentSite != nil,
+              appState.currentToken != nil,
+              appState.syncEngine != nil else {
             currentActivity = "Sync engine not available"
             errorMessage = "Could not start sync. You can sync later from the workspace."
             isComplete = true
@@ -126,10 +126,9 @@ struct SetupStepView: View {
         for course in courses {
             currentActivity = "Syncing \(course.shortName)…"
 
-            do {
-                try await engine.syncCourse(site: site, token: token, course: course)
-
-                let progress = await engine.progress(forCourse: course.id)
+            let didSync = await appState.syncCourse(course)
+            if didSync {
+                let progress = await appState.syncEngine?.progress(forCourse: course.id)
                 let itemCount = progress?.totalItems ?? 0
 
                 syncedCourses.append(SyncedCourseInfo(
@@ -137,7 +136,7 @@ struct SetupStepView: View {
                     name: course.fullName,
                     itemCount: itemCount
                 ))
-            } catch {
+            } else {
                 syncedCourses.append(SyncedCourseInfo(
                     id: course.id,
                     name: course.fullName,

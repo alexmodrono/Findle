@@ -18,7 +18,7 @@ Turn the pile of synced Moodle files into something you can _talk to_: ask quest
 flowchart LR
     claude["Claude Desktop"]
     mcp["findle-mcp<br/>(separate process)"]
-    db[("foodle.db<br/>(WAL)")]
+    db[("findle.db<br/>(WAL)")]
     app["Findle app"]
     moodle["Moodle / FP"]
 

@@ -24,7 +24,7 @@ extension ASWebAuthenticationSession: WebAuthenticationSessionProtocol {}
 /// a `WKWebView` in-app instead of opening the system browser.
 @MainActor
 public final class WebAuthSession: NSObject {
-    private let logger = Logger(subsystem: "es.amodrono.foodle.networking", category: "WebAuth")
+    private let logger = Logger(subsystem: "es.amodrono.findle.networking", category: "WebAuth")
     typealias SessionFactory = (
         URL,
         String?,
@@ -116,9 +116,9 @@ public final class WebAuthSession: NSObject {
                             let nsError = error as NSError
                             logger.error("SSO authentication session failed for \(site.displayName, privacy: .public) with \(nsError.domain, privacy: .public) (\(nsError.code, privacy: .public)): \(error.localizedDescription, privacy: .public)")
                             if nsError.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
-                                continuation.resume(throwing: FoodleError.cancelled)
+                                continuation.resume(throwing: FindleError.cancelled)
                             } else {
-                                continuation.resume(throwing: FoodleError.ssoCallbackInvalid(
+                                continuation.resume(throwing: FindleError.ssoCallbackInvalid(
                                     detail: "SSO authentication failed: \(error.localizedDescription)"
                                 ))
                             }
@@ -126,7 +126,7 @@ public final class WebAuthSession: NSObject {
                         }
 
                         guard let url else {
-                            continuation.resume(throwing: FoodleError.ssoCallbackInvalid(
+                            continuation.resume(throwing: FindleError.ssoCallbackInvalid(
                                 detail: "No callback URL received from SSO."
                             ))
                             return
@@ -150,7 +150,7 @@ public final class WebAuthSession: NSObject {
                         logger.error("Ignoring duplicate ASWebAuthenticationSession start failure for \(site.displayName, privacy: .public)")
                         return
                     }
-                    continuation.resume(throwing: FoodleError.ssoSessionStartFailed(
+                    continuation.resume(throwing: FindleError.ssoSessionStartFailed(
                         detail: "The browser authentication session could not be started for \(site.displayName)."
                     ))
                 }

@@ -11,7 +11,7 @@ permissions:
 
 env:
   APP_NAME: Findle Nightly
-  SCHEME: Foodle-Nightly
+  SCHEME: Findle-Nightly
   CONFIGURATION: Nightly
 
 jobs:
@@ -30,7 +30,7 @@ jobs:
       - name: Build
         run: |
           xcodebuild build \
-            -project Foodle.xcodeproj \
+            -project Findle.xcodeproj \
             -scheme "$SCHEME" \
             -configuration "$CONFIGURATION" \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \

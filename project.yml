@@ -1,8 +1,8 @@
-name: Foodle
+name: Findle
 options:
-  bundleIdPrefix: es.amodrono.foodle
+  bundleIdPrefix: es.amodrono.findle
   deploymentTarget:
-    macOS: "14.0"
+    macOS: "15.0"
   xcodeVersion: "16.0"
   groupSortPosition: top
   generateEmptyDirectories: true
@@ -11,17 +11,22 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
     ENABLE_HARDENED_RUNTIME: true
     CODE_SIGN_STYLE: Automatic
     CODE_SIGN_IDENTITY: "Apple Development"
     SWIFT_STRICT_CONCURRENCY: complete
-    FOODLE_BUNDLE_PREFIX: es.amodrono.foodle
-    APP_GROUP_IDENTIFIER: group.es.amodrono.foodle
+    FINDLE_BUNDLE_PREFIX: es.amodrono.findle
+    APP_GROUP_IDENTIFIER: group.es.amodrono.findle
+    FINDLE_APPCAST_URL: https://github.com/alexmodrono/Findle/releases/latest/download/appcast.xml
   configs:
     Nightly:
-      FOODLE_BUNDLE_PREFIX: es.amodrono.foodle.nightly
-      APP_GROUP_IDENTIFIER: group.es.amodrono.foodle.nightly
+      FINDLE_BUNDLE_PREFIX: es.amodrono.findle.nightly
+      APP_GROUP_IDENTIFIER: group.es.amodrono.findle.nightly
+      # Nightly ships as an unsigned CI artifact and has no appcast of its own.
+      # Leaving the release feed here would let a Nightly install "update"
+      # itself into the production build. An empty feed disables Sparkle.
+      FINDLE_APPCAST_URL: ""
 
 configs:
   Debug: debug
@@ -29,11 +34,11 @@ configs:
   Release: release
 
 schemes:
-  Foodle:
+  Findle:
     build:
       targets:
-        Foodle: all
-        FoodleFileProvider: all
+        Findle: all
+        FindleFileProvider: all
     run:
       config: Debug
     test:
@@ -57,11 +62,11 @@ schemes:
         FindleMCP: all
     run:
       config: Debug
-  Foodle-Nightly:
+  Findle-Nightly:
     build:
       targets:
-        Foodle: all
-        FoodleFileProvider: all
+        Findle: all
+        FindleFileProvider: all
     run:
       config: Nightly
     test:
@@ -95,7 +100,7 @@ packages:
     from: 0.12.1
 
 targets:
-  Foodle:
+  Findle:
     type: application
     platform: macOS
     configFiles:
@@ -112,10 +117,10 @@ targets:
         buildPhase: resources
     dependencies:
       - target: SharedDomain
-      - target: FoodleNetworking
-      - target: FoodlePersistence
-      - target: FoodleSyncEngine
-      - target: FoodleFileProvider
+      - target: FindleNetworking
+      - target: FindlePersistence
+      - target: FindleSyncEngine
+      - target: FindleFileProvider
         embed: true
         codeSign: true
       - target: FindleMCP
@@ -130,9 +135,9 @@ targets:
     settings:
       base:
         PRODUCT_NAME: Findle
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle
         INFOPLIST_FILE: Resources/Info/App-Info.plist
-        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/Foodle.entitlements
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/Findle.entitlements
         ENABLE_APP_SANDBOX: YES
         COMBINE_HIDPI_IMAGES: true
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -141,7 +146,7 @@ targets:
       configs:
         Nightly:
           PRODUCT_NAME: Findle Nightly
-          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.nightly
+          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly
 
   SharedDomain:
     type: framework
@@ -153,11 +158,11 @@ targets:
       - path: Sources/SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.shared-domain
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.shared-domain
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
         CODE_SIGN_IDENTITY: "-"
 
-  FoodleNetworking:
+  FindleNetworking:
     type: framework
     platform: macOS
     configFiles:
@@ -169,11 +174,11 @@ targets:
       - target: SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.networking
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.networking
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
         CODE_SIGN_IDENTITY: "-"
 
-  FoodlePersistence:
+  FindlePersistence:
     type: framework
     platform: macOS
     configFiles:
@@ -185,11 +190,11 @@ targets:
       - target: SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.persistence
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.persistence
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
         CODE_SIGN_IDENTITY: "-"
 
-  FoodleSyncEngine:
+  FindleSyncEngine:
     type: framework
     platform: macOS
     configFiles:
@@ -199,15 +204,15 @@ targets:
       - path: Sources/SyncEngine
     dependencies:
       - target: SharedDomain
-      - target: FoodleNetworking
-      - target: FoodlePersistence
+      - target: FindleNetworking
+      - target: FindlePersistence
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.sync-engine
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.sync-engine
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
         CODE_SIGN_IDENTITY: "-"
 
-  FoodleFileProvider:
+  FindleFileProvider:
     type: app-extension
     platform: macOS
     configFiles:
@@ -222,12 +227,12 @@ targets:
       - path: Sources/FileProviderExtension
     dependencies:
       - target: SharedDomain
-      - target: FoodleNetworking
-      - target: FoodlePersistence
-      - target: FoodleSyncEngine
+      - target: FindleNetworking
+      - target: FindlePersistence
+      - target: FindleSyncEngine
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.file-provider
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.file-provider
         INFOPLIST_FILE: Resources/Info/FileProvider-Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/FileProvider.entitlements
         ENABLE_APP_SANDBOX: YES
@@ -236,7 +241,7 @@ targets:
           - "@executable_path/../../../../Frameworks"
       configs:
         Nightly:
-          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.nightly.file-provider
+          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly.file-provider
     info:
       path: Resources/Info/FileProvider-Info.plist
       properties:
@@ -249,19 +254,22 @@ targets:
           NSExtensionFileProviderDocumentGroup: "$(APP_GROUP_IDENTIFIER)"
           NSExtensionFileProviderSupportsEnumeration: true
           NSExtensionFileProviderActions:
-            - NSExtensionFileProviderActionIdentifier: $(FOODLE_BUNDLE_PREFIX).action.open-in-moodle
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.sync-now
+              NSExtensionFileProviderActionName: Sync Now
+              NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.open-in-moodle
               NSExtensionFileProviderActionName: Open in Moodle
               NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
-            - NSExtensionFileProviderActionIdentifier: $(FOODLE_BUNDLE_PREFIX).action.copy-moodle-link
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.copy-moodle-link
               NSExtensionFileProviderActionName: Copy Moodle Link
               NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
-            - NSExtensionFileProviderActionIdentifier: $(FOODLE_BUNDLE_PREFIX).action.open-course-page
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.open-course-page
               NSExtensionFileProviderActionName: Open Course Page
               NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
-            - NSExtensionFileProviderActionIdentifier: $(FOODLE_BUNDLE_PREFIX).action.keep-downloaded
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.keep-downloaded
               NSExtensionFileProviderActionName: Keep Downloaded
               NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
-            - NSExtensionFileProviderActionIdentifier: $(FOODLE_BUNDLE_PREFIX).action.remove-download
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.remove-download
               NSExtensionFileProviderActionName: Remove Download
               NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
 
@@ -276,12 +284,12 @@ targets:
       - path: Sources/FindleMCP
     dependencies:
       - target: SharedDomain
-      - target: FoodlePersistence
+      - target: FindlePersistence
       - package: MCP
         product: MCP
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.mcp
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.mcp
         # The helper ships only as an embedded copy inside the app (via the app's
         # copy phase). Without this, the tool also installs to the archive's
         # Products/usr/local/bin, making the archive multi-product: Xcode then
@@ -307,7 +315,7 @@ targets:
       - target: SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.shared-domain-tests
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.shared-domain-tests
 
   NetworkingTests:
     type: bundle.unit-test
@@ -315,11 +323,11 @@ targets:
     sources:
       - path: Tests/NetworkingTests
     dependencies:
-      - target: FoodleNetworking
+      - target: FindleNetworking
       - target: SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.networking-tests
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.networking-tests
 
   PersistenceTests:
     type: bundle.unit-test
@@ -327,11 +335,11 @@ targets:
     sources:
       - path: Tests/PersistenceTests
     dependencies:
-      - target: FoodlePersistence
+      - target: FindlePersistence
       - target: SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.persistence-tests
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.persistence-tests
 
   FileProviderTests:
     type: bundle.unit-test
@@ -342,11 +350,11 @@ targets:
       - path: Sources/FileProviderExtension/FileProviderItem.swift
     dependencies:
       - target: SharedDomain
-      - target: FoodleNetworking
-      - target: FoodlePersistence
+      - target: FindleNetworking
+      - target: FindlePersistence
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.file-provider-tests
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.file-provider-tests
 
   SyncEngineTests:
     type: bundle.unit-test
@@ -354,13 +362,13 @@ targets:
     sources:
       - path: Tests/SyncEngineTests
     dependencies:
-      - target: FoodleSyncEngine
+      - target: FindleSyncEngine
       - target: SharedDomain
-      - target: FoodleNetworking
-      - target: FoodlePersistence
+      - target: FindleNetworking
+      - target: FindlePersistence
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.sync-engine-tests
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.sync-engine-tests
 
   FindleMCPTests:
     type: bundle.unit-test
@@ -373,7 +381,7 @@ targets:
       - path: Tests/FindleMCPTests
     dependencies:
       - target: SharedDomain
-      - target: FoodlePersistence
+      - target: FindlePersistence
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.foodle.mcp-tests
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.mcp-tests

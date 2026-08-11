@@ -5,7 +5,7 @@
 
 import Foundation
 import MCP
-import FoodlePersistence
+import FindlePersistence
 
 /// Findle's MCP server: a local, stdio, read-only bridge that lets an agent
 /// query the user's synced Moodle coursework without manual uploads.
@@ -16,10 +16,8 @@ import FoodlePersistence
 @main
 struct FindleMCP {
     static func main() async {
-        let dbPath = resolveDatabasePath()
-
-        guard FileManager.default.fileExists(atPath: dbPath) else {
-            failStartup("database not found at \(dbPath)\nOpen Findle and sign in first.")
+        guard let dbPath = resolveDatabasePath() else {
+            failStartup("no complete database found. Open Findle and sign in first.")
         }
 
         let database: Database
@@ -48,7 +46,7 @@ struct FindleMCP {
             let args = params.arguments
             let reader = ArgReader(string: { stringArg(args, $0) }, int: { intArg(args, $0) })
             let result = catalog.callTool(named: params.name, args: reader)
-            return .init(content: [.text(result.text)], isError: result.isError)
+            return .init(content: [.text(text: result.text, annotations: nil, _meta: nil)], isError: result.isError)
         }
 
         // HTTP (Streamable HTTP + bearer token) when requested, otherwise stdio.
@@ -92,6 +90,32 @@ struct FindleMCP {
             inputSchema: .object([
                 "type": .string("object"),
                 "properties": .object([:])
+            ])
+        ),
+        Tool(
+            name: "get_course_brief",
+            description: "Get a compact, bounded course overview in one call: summary, sync status, section outline, representative files, and upcoming deadlines. Prefer this over browsing the full tree.",
+            inputSchema: .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "course": .object([
+                        "type": .string("integer"),
+                        "description": .string("The course id from list_courses.")
+                    ]),
+                    "max_sections": .object([
+                        "type": .string("integer"),
+                        "description": .string("Maximum sections to return (default 12).")
+                    ]),
+                    "max_files_per_section": .object([
+                        "type": .string("integer"),
+                        "description": .string("Maximum representative files per section (default 8).")
+                    ]),
+                    "max_chars": .object([
+                        "type": .string("integer"),
+                        "description": .string("Maximum characters for the course summary (default 2000).")
+                    ])
+                ]),
+                "required": .array([.string("course")])
             ])
         ),
         Tool(
@@ -142,7 +166,11 @@ struct FindleMCP {
                     ]),
                     "max_chars": .object([
                         "type": .string("integer"),
-                        "description": .string("Maximum characters of text to return (default 100000).")
+                        "description": .string("Maximum characters in this chunk (default 8000, maximum 20000).")
+                    ]),
+                    "offset": .object([
+                        "type": .string("integer"),
+                        "description": .string("Character offset for paging through a long document (default 0).")
                     ])
                 ]),
                 "required": .array([.string("id")])
@@ -409,16 +437,36 @@ struct HTTPOptions {
 
 /// Resolve the database path: `FINDLE_DB_PATH` env, then a `--db-path` argument,
 /// then the default shared App Group container location.
-private func resolveDatabasePath() -> String {
+private func resolveDatabasePath() -> String? {
     let env = ProcessInfo.processInfo.environment
-    if let path = env["FINDLE_DB_PATH"], !path.isEmpty {
+    let args = CommandLine.arguments
+    let configuredPath = env["FINDLE_DB_PATH"].flatMap { $0.isEmpty ? nil : $0 }
+        ?? args.firstIndex(of: "--db-path").flatMap { index in
+            index + 1 < args.count ? args[index + 1] : nil
+        }
+    let defaultPath = Database.sharedContainerDatabasePath
+    let candidates = [configuredPath, defaultPath].compactMap { $0 }
+
+    for path in candidates where isUsableDatabase(at: path) {
         return path
     }
-    let args = CommandLine.arguments
-    if let index = args.firstIndex(of: "--db-path"), index + 1 < args.count {
-        return args[index + 1]
+
+    return nil
+}
+
+private func isUsableDatabase(at path: String) -> Bool {
+    guard FileManager.default.fileExists(atPath: path),
+          let database = try? Database(path: path, readOnly: true),
+          let accounts = try? database.fetchAccounts(),
+          accounts.contains(where: { $0.state.isConnected }) else {
+        return false
     }
-    return Database.sharedContainerDatabasePath
+
+    // State-directory databases are explicitly marked complete by the app.
+    // If an update/reset left the configured path stale or half-seeded, fall
+    // back to the bootstrap App Group snapshot instead of feeding an agent an
+    // empty or partial catalog.
+    return (try? database.isSeedComplete()) == true
 }
 
 private func stringArg(_ args: [String: Value]?, _ key: String) -> String? {

@@ -4,7 +4,7 @@
 // You may obtain a copy of the License in the LICENSE file at the root of this repository.
 
 import XCTest
-@testable import FoodleNetworking
+@testable import FindleNetworking
 @testable import SharedDomain
 
 final class MoodleClientTests: XCTestCase {
@@ -227,7 +227,7 @@ final class MoodleClientTests: XCTestCase {
         do {
             _ = try await client.validateSite(url: URL(string: "https://moodle.example.edu")!)
             XCTFail("Expected validation to fail")
-        } catch let error as FoodleError {
+        } catch let error as FindleError {
             guard case .webServicesDisabled = error else {
                 XCTFail("Expected webServicesDisabled, got \(error)")
                 return
@@ -252,7 +252,7 @@ final class MoodleClientTests: XCTestCase {
         do {
             _ = try await client.validateSite(url: URL(string: "https://missing.example.edu")!)
             XCTFail("Expected validation to fail")
-        } catch let error as FoodleError {
+        } catch let error as FindleError {
             guard case .siteUnreachable = error else {
                 XCTFail("Expected siteUnreachable, got \(error)")
                 return
@@ -434,8 +434,8 @@ final class MoodleClientTests: XCTestCase {
         XCTAssertThrowsError(
             try client.parseTokenFromSSOCallback(callbackURLString: callbackString, site: site, passport: "p")
         ) { error in
-            guard let foodleError = error as? FoodleError,
-                  case .invalidResponse(let detail) = foodleError else {
+            guard let findleError = error as? FindleError,
+                  case .invalidResponse(let detail) = findleError else {
                 XCTFail("Expected invalidResponse error")
                 return
             }
@@ -458,7 +458,7 @@ final class MoodleClientTests: XCTestCase {
                 passport: "rawpassport"
             )
         ) { error in
-            XCTAssertTrue(error is FoodleError)
+            XCTAssertTrue(error is FindleError)
         }
     }
 
@@ -582,7 +582,7 @@ final class MoodleClientTests: XCTestCase {
                 passport: "anypassport"
             )
         ) { error in
-            XCTAssertTrue(error is FoodleError)
+            XCTAssertTrue(error is FindleError)
         }
     }
 
@@ -597,7 +597,7 @@ final class MoodleClientTests: XCTestCase {
                 passport: "anypassport"
             )
         ) { error in
-            XCTAssertTrue(error is FoodleError)
+            XCTAssertTrue(error is FindleError)
         }
     }
 

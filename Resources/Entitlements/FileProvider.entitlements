@@ -12,7 +12,7 @@
     </array>
     <key>keychain-access-groups</key>
     <array>
-        <string>$(AppIdentifierPrefix)$(FOODLE_BUNDLE_PREFIX)</string>
+        <string>$(AppIdentifierPrefix)$(FINDLE_BUNDLE_PREFIX)</string>
     </array>
 </dict>
 </plist>

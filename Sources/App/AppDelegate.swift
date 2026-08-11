@@ -8,7 +8,7 @@ import FileProvider
 import OSLog
 
 final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
-    private let logger = Logger(subsystem: "es.amodrono.foodle", category: "AppDelegate")
+    private let logger = Logger(subsystem: "es.amodrono.findle", category: "AppDelegate")
     private var windowObservers: [NSObjectProtocol] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {

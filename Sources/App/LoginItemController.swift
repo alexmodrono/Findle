@@ -15,7 +15,7 @@ final class LoginItemController: ObservableObject {
     @Published private(set) var isEnabled: Bool = false
     @Published private(set) var lastError: String?
 
-    private let logger = Logger(subsystem: "es.amodrono.foodle", category: "LoginItem")
+    private let logger = Logger(subsystem: "es.amodrono.findle", category: "LoginItem")
 
     init() {
         refresh()

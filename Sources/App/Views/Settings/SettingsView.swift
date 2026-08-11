@@ -12,7 +12,7 @@ struct SettingsView: View {
     @StateObject private var loginItem = LoginItemController()
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
     @AppStorage("notifyOnSyncComplete") private var notifyOnSyncComplete = false
-    @AppStorage("syncIntervalMinutes") private var syncInterval: Double = 30
+    @AppStorage("syncIntervalMinutes") private var syncInterval: Double = AppState.defaultSyncIntervalMinutes
     @AppStorage("syncOnLaunch") private var syncOnLaunch = true
     @AppStorage("enableVerboseLogging") private var verboseLogging = false
 
@@ -39,17 +39,25 @@ struct SettingsView: View {
                         .foregroundStyle(.red)
                 }
                 Toggle("Show in menu bar", isOn: $showMenuBarIcon)
-                Toggle(
-                    "Automatically check for updates",
-                    isOn: Binding(
-                        get: { updateController.updater.automaticallyChecksForUpdates },
-                        set: { updateController.updater.automaticallyChecksForUpdates = $0 }
+                // Nightly builds have no appcast, so hide update controls there
+                // rather than show a toggle that can never do anything.
+                if updateController.updatesSupported {
+                    Toggle(
+                        "Automatically check for updates",
+                        isOn: Binding(
+                            get: { updateController.updater.automaticallyChecksForUpdates },
+                            set: { updateController.updater.automaticallyChecksForUpdates = $0 }
+                        )
                     )
-                )
-                Button("Check for Updates…") {
-                    updateController.checkForUpdates()
+                    Button("Check for Updates…") {
+                        updateController.checkForUpdates()
+                    }
+                    .disabled(!updateController.canCheckForUpdates)
+                } else {
+                    Text("This build updates manually — download a newer Nightly to upgrade.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .disabled(!updateController.canCheckForUpdates)
                 if showMenuBarIcon {
                     Text("Findle stays accessible from the menu bar when you close the window.")
                         .font(.caption)
@@ -119,6 +127,7 @@ struct SettingsView: View {
                 Toggle("Sync when Findle launches", isOn: $syncOnLaunch)
 
                 Picker("Sync cadence", selection: $syncInterval) {
+                    Text("5 minutes").tag(5.0)
                     Text("15 minutes").tag(15.0)
                     Text("30 minutes").tag(30.0)
                     Text("1 hour").tag(60.0)

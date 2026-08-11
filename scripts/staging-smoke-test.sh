@@ -8,8 +8,8 @@ DESTINATION="${DESTINATION:-platform=macOS}"
 
 echo "==> Building Staging (unsigned optimized validation build)"
 xcodebuild \
-  -project "$ROOT_DIR/Foodle.xcodeproj" \
-  -scheme "Foodle-Staging" \
+  -project "$ROOT_DIR/Findle.xcodeproj" \
+  -scheme "Findle-Staging" \
   -configuration Staging \
   -destination "$DESTINATION" \
   -derivedDataPath "$DERIVED_DATA_PATH" \
@@ -19,8 +19,8 @@ xcodebuild \
 
 echo "==> Running Staging tests"
 xcodebuild \
-  -project "$ROOT_DIR/Foodle.xcodeproj" \
-  -scheme "Foodle-Staging" \
+  -project "$ROOT_DIR/Findle.xcodeproj" \
+  -scheme "Findle-Staging" \
   -configuration Staging \
   -destination "$DESTINATION" \
   -derivedDataPath "$DERIVED_DATA_PATH" \

@@ -22,7 +22,7 @@ public struct EmbeddedAuthResult: Sendable {
 @MainActor
 public final class EmbeddedAuthCoordinator: NSObject {
 
-    private let logger = Logger(subsystem: "es.amodrono.foodle.networking", category: "EmbeddedAuth")
+    private let logger = Logger(subsystem: "es.amodrono.findle.networking", category: "EmbeddedAuth")
 
     /// The WKWebView managed by this coordinator. Callers embed this in their view hierarchy.
     public private(set) var webView: WKWebView!
@@ -110,7 +110,7 @@ public final class EmbeddedAuthCoordinator: NSObject {
         cleanUpWebData()
         let pending = continuation
         continuation = nil
-        pending?.resume(throwing: FoodleError.cancelled)
+        pending?.resume(throwing: FindleError.cancelled)
     }
 
     // MARK: - Private
@@ -207,7 +207,7 @@ extension EmbeddedAuthCoordinator: WKNavigationDelegate {
         cleanUpWebData()
         let pending = continuation
         continuation = nil
-        pending?.resume(throwing: FoodleError.ssoCallbackInvalid(
+        pending?.resume(throwing: FindleError.ssoCallbackInvalid(
             detail: "The embedded sign-in page failed to load: \(error.localizedDescription)"
         ))
     }

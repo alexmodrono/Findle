@@ -15,8 +15,8 @@ echo "==> Building signed Staging app"
 echo "    This build is intended for real SSO, File Provider, and Finder validation."
 
 xcodebuild \
-  -project "$ROOT_DIR/Foodle.xcodeproj" \
-  -scheme "Foodle-Staging" \
+  -project "$ROOT_DIR/Findle.xcodeproj" \
+  -scheme "Findle-Staging" \
   -configuration Staging \
   -destination "$DESTINATION" \
   -derivedDataPath "$DERIVED_DATA_PATH" \

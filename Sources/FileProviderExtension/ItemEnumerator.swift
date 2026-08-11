@@ -6,7 +6,7 @@
 import FileProvider
 import Foundation
 import SharedDomain
-import FoodlePersistence
+import FindlePersistence
 import OSLog
 
 /// Sync anchors are opaque to the system, but we use them as a decimal-encoded
@@ -31,11 +31,13 @@ enum SyncAnchorCoding {
 final class ItemEnumerator: NSObject, NSFileProviderEnumerator {
     private let containerIdentifier: NSFileProviderItemIdentifier
     private let database: Database
-    private let logger = Logger(subsystem: "es.amodrono.foodle.file-provider", category: "Enumerator")
+    private let siteID: String?
+    private let logger = Logger(subsystem: "es.amodrono.findle.file-provider", category: "Enumerator")
 
-    init(containerIdentifier: NSFileProviderItemIdentifier, database: Database) {
+    init(containerIdentifier: NSFileProviderItemIdentifier, database: Database, siteID: String? = nil) {
         self.containerIdentifier = containerIdentifier
         self.database = database
+        self.siteID = siteID
     }
 
     func invalidate() {}
@@ -54,7 +56,12 @@ final class ItemEnumerator: NSObject, NSFileProviderEnumerator {
                 parentID = containerIdentifier.rawValue
             }
 
-            let items = try database.fetchItems(parentID: parentID)
+            let items: [LocalItem]
+            if let siteID {
+                items = try database.fetchItems(parentID: parentID, siteID: siteID)
+            } else {
+                items = try database.fetchItems(parentID: parentID)
+            }
             let providerItems = items.map { FileProviderItem(localItem: $0) }
 
             logger.debug("Enumerated \(providerItems.count, privacy: .public) items for \(self.containerIdentifier.rawValue, privacy: .public)")
@@ -82,23 +89,38 @@ final class ItemEnumerator: NSObject, NSFileProviderEnumerator {
             }
 
             let fromCounter = SyncAnchorCoding.decode(anchor)
+            let upperBound = try database.currentChangeCounter()
             // Only items whose updated_at exceeds the incoming anchor; the
             // trigger on writes guarantees updated_at is strictly increasing.
-            let changedItems = try database.fetchItemsChangedSince(anchor: fromCounter, parentID: parentID)
+            let changedItems: [LocalItem]
+            if let siteID {
+                changedItems = try database.fetchItemsChangedSince(
+                    anchor: fromCounter,
+                    parentID: parentID,
+                    siteID: siteID,
+                    through: upperBound
+                )
+            } else {
+                changedItems = try database.fetchItemsChangedSince(anchor: fromCounter, parentID: parentID, through: upperBound)
+            }
             let providerItems = changedItems.map { FileProviderItem(localItem: $0) }
 
             if !providerItems.isEmpty {
                 observer.didUpdate(providerItems)
             }
 
-            let deletedIDs = try database.fetchPendingDeletionsSince(anchor: fromCounter)
+            let deletedIDs: [String]
+            if let siteID {
+                deletedIDs = try database.fetchPendingDeletionsSince(anchor: fromCounter, siteID: siteID, through: upperBound)
+            } else {
+                deletedIDs = try database.fetchPendingDeletionsSince(anchor: fromCounter, through: upperBound)
+            }
             if !deletedIDs.isEmpty {
                 let identifiers = deletedIDs.map { NSFileProviderItemIdentifier($0) }
                 observer.didDeleteItems(withIdentifiers: identifiers)
             }
 
-            let newCounter = try database.currentChangeCounter()
-            observer.finishEnumeratingChanges(upTo: SyncAnchorCoding.encode(newCounter), moreComing: false)
+            observer.finishEnumeratingChanges(upTo: SyncAnchorCoding.encode(upperBound), moreComing: false)
         } catch {
             logger.error("Change enumeration failed: \(error.localizedDescription, privacy: .public)")
             observer.finishEnumeratingWithError(error)
@@ -115,7 +137,7 @@ final class ItemEnumerator: NSObject, NSFileProviderEnumerator {
 final class WorkingSetEnumerator: NSObject, NSFileProviderEnumerator {
     private let database: Database
     private let siteID: String?
-    private let logger = Logger(subsystem: "es.amodrono.foodle.file-provider", category: "WorkingSet")
+    private let logger = Logger(subsystem: "es.amodrono.findle.file-provider", category: "WorkingSet")
 
     init(database: Database, siteID: String? = nil) {
         self.database = database
@@ -156,11 +178,12 @@ final class WorkingSetEnumerator: NSObject, NSFileProviderEnumerator {
     ) {
         do {
             let fromCounter = SyncAnchorCoding.decode(anchor)
+            let upperBound = try database.currentChangeCounter()
             let changedItems: [LocalItem]
             if let siteID {
-                changedItems = try database.fetchItemsChangedSince(anchor: fromCounter, siteID: siteID)
+                changedItems = try database.fetchItemsChangedSince(anchor: fromCounter, siteID: siteID, through: upperBound)
             } else {
-                changedItems = try database.fetchItemsChangedSince(anchor: fromCounter, parentID: nil)
+                changedItems = try database.fetchItemsChangedSince(anchor: fromCounter, parentID: nil, through: upperBound)
             }
 
             let providerItems = changedItems.map { FileProviderItem(localItem: $0) }
@@ -169,14 +192,18 @@ final class WorkingSetEnumerator: NSObject, NSFileProviderEnumerator {
                 observer.didUpdate(providerItems)
             }
 
-            let deletedIDs = try database.fetchPendingDeletionsSince(anchor: fromCounter)
+            let deletedIDs: [String]
+            if let siteID {
+                deletedIDs = try database.fetchPendingDeletionsSince(anchor: fromCounter, siteID: siteID, through: upperBound)
+            } else {
+                deletedIDs = try database.fetchPendingDeletionsSince(anchor: fromCounter, through: upperBound)
+            }
             if !deletedIDs.isEmpty {
                 let identifiers = deletedIDs.map { NSFileProviderItemIdentifier($0) }
                 observer.didDeleteItems(withIdentifiers: identifiers)
             }
 
-            let newCounter = try database.currentChangeCounter()
-            observer.finishEnumeratingChanges(upTo: SyncAnchorCoding.encode(newCounter), moreComing: false)
+            observer.finishEnumeratingChanges(upTo: SyncAnchorCoding.encode(upperBound), moreComing: false)
         } catch {
             observer.finishEnumeratingWithError(error)
         }
