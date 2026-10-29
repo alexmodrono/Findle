@@ -456,7 +456,7 @@
     {
       "id": "RR-01",
       "title": "Make release builds reproducible",
-      "state": "doing",
+      "state": "done",
       "group": "RR",
       "at": "2026-10-29T00:06:36Z",
       "by": "codex",
@@ -491,13 +491,18 @@
           "at": "2026-10-29T09:55:50Z",
           "by": "codex",
           "text": "A disposable source snapshot resolved remote Airlock b0b9026 without a sibling checkout and built an unsigned universal Release archive. Matching arm64/x86_64 dSYMs verified for app, File Provider, helper and all four owned frameworks. The archive is explicitly not a release candidate: final source changes and actual Xcode 26.6 CI remain to qualify after commit. Evidence: /tmp/findle-release-validation-path points to archive log and symbol-validation.json. Local archive retries were caused by Xcode preferences referencing an initially unavailable external volume; no project source workaround was added."
+        },
+        {
+          "at": "2026-10-29T11:05:23Z",
+          "by": "codex",
+          "text": "Clean checkout build is reproducible. Published Airlock is pinned at b0b9026 in both manifest and lockfile; actual Debug/Nightly/Release scripts and isolated preview use the correct schemes. Clean remote source a135adf built universal optimized Release without sibling dependencies or signing settings; all seven owned executables have matching two-architecture symbols. Hosted Xcode 26.6 Nightly and preview passed. README now matches the remote dependency setup.\n\nInitial report: Documentation/initial-build-qualification.md. Hosted Debug exposed a concurrent database-open failure, explicitly recorded and reopened under DS-04; RR-02 cannot be accepted until fixed. This accepts reproducible builds and the initial report, not signed runtime or release qualification."
         }
       ]
     },
     {
       "id": "RR-02",
       "title": "Require automated regression checks in CI",
-      "state": "todo",
+      "state": "doing",
       "group": "RR",
       "deps": ["RR-01"],
       "at": "2026-10-29T00:06:36Z",
@@ -513,6 +518,11 @@
           "at": "2026-10-29T00:39:36Z",
           "by": "codex",
           "text": "Final local validation: 234 tests passed in Debug and 234 in optimized Nightly, with zero failures or skipped tests; separate onboarding project passed 5 tests (7 parameterized executions) using fresh package downloads and strict canonical-lock resolution. Nine signing regressions also pass. Results are retained in build/stability-debug.xcresult, build/stability-nightly.xcresult and build/stability-onboarding.xcresult. Local toolchain is Xcode 27.1; the configured Xcode 26.6 runner still requires a real clean-CI run after Airlock is published. No signed Finder/SSO result is implied by these unsigned tests."
+        },
+        {
+          "at": "2026-10-29T11:05:23Z",
+          "by": "codex",
+          "text": "Qualify the real GitHub regression pipeline. Nightly and preview already pass; fix the captured Debug database race, then verify a fresh exact-source run and required-check enforcement."
         }
       ]
     },
@@ -588,7 +598,7 @@
     {
       "id": "DS-04",
       "title": "Make database transitions and provider reset recoverable",
-      "state": "done",
+      "state": "doing",
       "group": "DS",
       "deps": ["DS-03"],
       "at": "2026-10-29T00:06:36Z",
@@ -609,6 +619,16 @@
           "at": "2026-10-29T10:34:45Z",
           "by": "codex",
           "text": "Finder reset now drains writers and verifies a complete durable fallback before removal. It preserves original personal-file inodes and downloaded data, keeps a usable recovery handle on failures, and resumes the session only when its schema is supported.\n\nIndependent review caught and fixed one final destructive edge case: a bound bootstrap database must not replace a different saved provider database. Reset now checks the actual provider file, rejects future schemas, retired handles and divergent saved state, and stops before removal.\n\nAccepted evidence: 95 persistence tests; 30 optimized repetitions of the preceding 94-test suite; fault-injected reset stages; 52 interface tests including six actual-provider guard scenarios; and final whole-app compilation. Combined Debug/Nightly suites each passed 357 tests before the final auth follow-ups. No installed data was used for fault injection. Real signed File Provider removal, upgrades and SSO remain explicitly gated by FN-02/RR-03."
+        },
+        {
+          "at": "2026-10-29T10:58:21Z",
+          "by": "codex",
+          "text": "Reopened after the first hosted Xcode 26.6 Debug run exposed a real concurrent schema-open failure (SQLite 3850 at BEGIN). Local Debug/Nightly passed, and hosted Nightly passed, but that does not dismiss the failure. Investigating and adding evidence before accepting again."
+        },
+        {
+          "at": "2026-10-29T11:12:06Z",
+          "by": "codex",
+          "text": "Added a regression that fails on the old code while an ordinary data writer is active: opening an already-current schema unnecessarily attempts BEGIN IMMEDIATE and times out. Current-schema opens now validate the version without taking that write transaction; genuine upgrades retain the transaction and version recheck. All 96 persistence tests pass in Debug and Nightly, plus 100 repetitions of three opener scenarios per configuration (600 executions). The original hosted SQLite 3850 was not reproduced locally; keep this task open until the Xcode 26.6 rerun confirms the fix."
         }
       ]
     },
@@ -860,6 +880,11 @@
           "at": "2026-10-29T01:52:04Z",
           "by": "codex",
           "text": "Validate event-safe workflow permissions and exact dependency/toolchain prerequisites before activating CI."
+        },
+        {
+          "at": "2026-10-29T11:08:06Z",
+          "by": "codex",
+          "text": "Actual PR #26 unsigned Nightly artifact, optimized tests and preview passed with read-only build permissions and job-summary links. Debug intentionally remains red on the captured SQLite race, demonstrating required aggregate failure. Focused PR #27 rolls out fork-safe artifact reporting on current main; actual fork and dependency-bot event evidence remains outstanding."
         }
       ]
     },
@@ -914,7 +939,7 @@
     {
       "id": "GH-05",
       "title": "Add CodeRabbit reviews tailored to Findle",
-      "state": "doing",
+      "state": "done",
       "group": "GH",
       "at": "2026-10-29T00:16:50Z",
       "by": "codex",
@@ -959,6 +984,16 @@
           "at": "2026-10-29T10:44:20Z",
           "by": "codex",
           "text": "Pilot timing: PR opened 2026-10-29T10:20:55Z, first COMMENTED CodeRabbit review completed 10:23:38Z (2m43s). One useful verified configuration finding; no inline false positives in this small config-only sample. Follow-up commit 98976fd retains review throughout longer PRs. Application-code pilot remains pending."
+        },
+        {
+          "at": "2026-10-29T11:08:06Z",
+          "by": "codex",
+          "text": "Official app installation is scoped to Findle. Configuration PR #25 is merged after successful build and advisory review; the first bot review took 2m43s and found the useful default review-pause setting, corrected before merge. Focused workflow-hardening PR #27 now supplies the representative CI review pilot. Automatic approval/merge and unsolicited code generation remain disabled."
+        },
+        {
+          "at": "2026-10-29T11:12:06Z",
+          "by": "codex",
+          "text": "CodeRabbit is installed only for alexmodrono/Findle, and its schema-valid configuration is merged in PR #25. Public-repository free reviews were confirmed during installation. Quiet reviews cover data preservation, sync, File Provider, authentication, diagnostics and workflow/signing correctness. Auto-approval, auto-merge and unsolicited code generation are disabled; generated/binary files are excluded and source/tests/entitlements/workflows retained.\n\nPilot results: configuration review arrived within 2m43s of PR creation and found the useful default five-commit pause; fixed by disabling automatic pauses. The representative workflow review in PR #27 took 3m49s from review start to publication and found two valid documentation issues: the artifact-link location and unsigned first-launch guidance. Both are fixed. Three useful minor findings, no false positives observed in these small pilots. This is limited evidence, not a measurement of defect-detection accuracy. CodeRabbit remains advisory and is not a required check."
         }
       ]
     },

@@ -86,17 +86,15 @@ brew install --cask findle
 
 ### Steps
 
-This development branch resolves Airlock from `../Airlock`. Keep the
-[Airlock repository](https://github.com/alexmodrono/Airlock) alongside Findle,
-on branch `feat/appkit-onboarding`, before generating the project. This local
-dependency lets both AppKit implementations be developed together; publishing
-the Airlock branch and switching to a remote dependency is a release step.
+Airlock resolves from its [published repository](https://github.com/alexmodrono/Airlock)
+at the exact revision recorded in `project.yml`. A sibling checkout is not
+required.
 
 The generated project remains ignored, but its shared `Package.resolved` is
 versioned so builds use the same remote dependency revisions. Keep changes to
-that lockfile with the corresponding `project.yml` dependency update. Airlock's
-local AppKit changes must still be published and pinned before clean-runner CI
-can pass; a local successful build does not satisfy that release requirement.
+that lockfile with the corresponding `project.yml` dependency update. CI uses
+the committed package versions and the verified XcodeGen installer in
+`scripts/install-ci-tools.sh`.
 
 1. **Install XcodeGen** (if you haven't already):
    ```bash
@@ -117,8 +115,6 @@ can pass; a local successful build does not satisfy that release requirement.
    The File Provider extension requires code signing with a valid Apple Development Team. Go into the Xcode project settings and select your own Development Team for all targets before building.
 
 5. Select the `Findle` scheme, build, and run.
-
-> **Note:** The Xcode project and scheme are named `Findle` for historical reasons, but the built app is called **Findle**.
 
 ### Nightly Validation
 
@@ -148,7 +144,9 @@ xcodebuild build \
 
 Use the signed Nightly app for the manual checklist: SSO completion, Finder integration, restart/session restore, sync, and file materialization.
 
-> **Note:** The PR Nightly workflow builds an unsigned artifact and puts its download link in the workflow job summary. It needs no PR write permission. Clean-runner builds currently require publishing and pinning the local Airlock implementation described above.
+The PR Nightly workflow builds an unsigned artifact and puts its download link
+in the workflow job summary. It needs no PR write permission or local signing
+configuration.
 
 ### Onboarding preview
 

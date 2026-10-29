@@ -31,6 +31,10 @@ jobs:
             build-mode: none
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    env:
+      # Verified in the pinned action's feature-flags.ts and its override tests.
+      # The gate also rejects incremental SARIF if an action upgrade changes this.
+      CODEQL_ACTION_DIFF_INFORMED_QUERIES: 'false'
     permissions:
       contents: read
       security-events: write

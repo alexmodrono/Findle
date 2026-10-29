@@ -22,6 +22,28 @@ archiving source files is insufficient. SARIF is uploaded before the baseline
 gate, and artifacts retain SARIF, build logs and extracted file counts for
 14 days, including failed qualification runs.
 
+PR scans also evaluate the full source tree. The pinned action otherwise enables
+diff-informed queries, which report only findings near changed lines and cannot
+establish the initial project baseline. `CODEQL_ACTION_DIFF_INFORMED_QUERIES=false`
+uses the override verified in the pinned action's
+[feature definition](https://github.com/github/codeql-action/blob/9b3254085494b55a0f7c4c2b3d2d52cc712ce370/src/feature-flags.ts#L243-L247),
+[override handling](https://github.com/github/codeql-action/blob/9b3254085494b55a0f7c4c2b3d2d52cc712ce370/src/feature-flags.ts#L572-L579)
+and [upstream tests](https://github.com/github/codeql-action/blob/9b3254085494b55a0f7c4c2b3d2d52cc712ce370/src/feature-flags.test.ts#L234-L258).
+This is a pinned implementation setting, not a public action input: recheck it
+when updating the action. The gate independently rejects SARIF containing an
+`incrementalMode` property or the `codeql-action/pr-diff-range` extension, so a
+changed override cannot silently qualify a partial scan. Confirm their absence
+in the actual qualification artifacts; the first run's diff-informed output is
+diagnostic evidence only.
+
+CodeQL query packs place their rule metadata in `tool.extensions`, even when
+`tool.driver.rules` is empty. The gate resolves each result's component and rule
+reference within that component, following
+[SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/sarif-v2.1.0-os.html).
+A clean result still requires successful invocation metadata, a nonempty rule
+set and an explicit results array. Missing or conflicting references fail;
+identical rule IDs in different components cannot overwrite one another's severity.
+
 The pinned CodeQL action uses its linked CLI 2.27.3; the custom extraction
 query pins `codeql/swift-all` 6.8.6 from that bundle's release. Keep these
 versions together when updating the action. The supported runner uses Xcode

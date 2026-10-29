@@ -659,6 +659,22 @@ final class DatabaseTests: XCTestCase {
         XCTAssertFalse(try upgraded.isSeedComplete())
     }
 
+    func testOpeningCurrentSchemaDoesNotCompeteWithActiveDataWriter() throws {
+        let committed = MoodleSite(id: "site-1", displayName: "Committed", baseURL: URL(string: "https://example.edu")!)
+        try database.saveSite(committed)
+        try database.execute("BEGIN IMMEDIATE")
+        defer { try? database.execute("ROLLBACK") }
+        try database.execute("UPDATE sites SET display_name = 'Uncommitted' WHERE id = 'site-1'")
+
+        // A host/extension connection opening an already-current store needs no
+        // migration write lock. Ordinary data writes must not make it fail.
+        let newcomer = try Database(path: tempPath)
+        XCTAssertEqual(try newcomer.fetchSite(id: committed.id)?.displayName, "Committed")
+        XCTAssertEqual(try newcomer.currentChangeCounter(), try database.currentChangeCounter())
+        try database.execute("COMMIT")
+        XCTAssertEqual(try newcomer.fetchSite(id: committed.id)?.displayName, "Uncommitted")
+    }
+
     func testConcurrentSchemaOpenersAgreeOnVersionAndReadiness() async throws {
         let path = NSTemporaryDirectory() + "concurrent-migration-\(UUID().uuidString).db"
         defer {

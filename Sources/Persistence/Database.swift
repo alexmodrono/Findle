@@ -498,12 +498,20 @@ public final class Database: @unchecked Sendable {
         """)
     }
 
-    /// Upgrades the schema inside one `BEGIN IMMEDIATE` transaction. The write
-    /// lock is taken before `user_version` is read, so when several processes
-    /// open an outdated database the first one migrates while the others wait
-    /// on busy_timeout, then find the version already current and do nothing.
+    /// Upgrades an older schema inside one `BEGIN IMMEDIATE` transaction.
+    /// Current stores do not acquire SQLite's writer lock. The version is
+    /// rechecked under that lock before changing an older schema, so an
+    /// intervening upgrade is never repeated.
     private func migrateSchema() throws {
         try queue.sync {
+            // Initialization is already serialized by the sidecar lock. A
+            // current schema needs no write transaction: taking one can race
+            // normal writers/connection teardown even though nothing migrates.
+            let version = try scalarUnsafe("PRAGMA user_version")
+            guard version <= Self.schemaVersion else {
+                throw UnsupportedDatabaseSchemaError(version: Int(version))
+            }
+            guard version < Self.schemaVersion else { return }
             try executeUnsafe("BEGIN IMMEDIATE TRANSACTION")
             do {
                 try validateSupportedSchemaUnsafe()
