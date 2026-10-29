@@ -1,0 +1,75 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-US
+tone_instructions: "Be concise. Prioritize reproducible correctness and data-loss risks. Explain the triggering case. Avoid praise, decorative summaries, and formatting comments covered by CI."
+early_access: false
+inheritance: false
+reviews:
+  profile: quiet
+  auto_approvals:
+    enabled: false
+    allow_author_approval: false
+  request_changes_workflow: false
+  high_level_summary: false
+  changed_files_summary: false
+  sequence_diagrams: false
+  poem: false
+  in_progress_fortune: false
+  auto_apply_labels: false
+  auto_assign_reviewers: false
+  review_progress: true
+  fail_commit_status: false
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 0
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+    autofix:
+      enabled: false
+    fix_ci:
+      enabled: false
+    resolve_merge_conflict:
+      enabled: false
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+  path_filters:
+    - "!build/**"
+    - "!**/*.xcodeproj/**"
+    - "!**/*.xcworkspace/**"
+    - "!Resources/Assets.xcassets/**"
+    - "!.github/screenshots/**"
+  path_instructions:
+    - path: "Sources/Persistence/**"
+      instructions: "Check transactional publication, concurrent database readers/writers, migration replay and recovery. Never destroy the only usable copy of personal files. Distinguish an unavailable or incomplete filesystem scan from confirmed deletion. Preserve site isolation and monotonic change counters."
+    - path: "Sources/SyncEngine/**"
+      instructions: "Check that incomplete Moodle responses cannot become deletions or successful sync cursors. Scope operations by site and course. Verify cancellation and unsubscribe during suspended work; publish and signal only committed data. Partial failures must remain visible."
+    - path: "Sources/FileProviderExtension/**"
+      instructions: "Check stable item/parent identities, versions, anchors and tombstones. Distinguish transient database errors from missing items or signed-out accounts. Verify completion handlers finish exactly once and cancelled/invalid downloads never publish corrupt content."
+    - path: "Sources/Networking/**"
+      instructions: "Check token/callback validation, credential redaction and exactly-once sign-in completion. Cancellation, duplicate callbacks and a replaced session must not revive stale authentication. Do not retry credential submissions or treat temporary connectivity/Keychain failures as proof of invalid credentials."
+    - path: "Sources/App/**"
+      instructions: "Check task ownership and cancellation across login/logout/reconnect/reset. Avoid blocking the main actor with disk/network work. Preserve account/channel isolation and personal data. Review accessible error and recovery behavior; avoid cosmetic refactors unrelated to the change."
+    - path: "Sources/FindleMCP/**"
+      instructions: "Check bounded input parsing, read deadlines, concurrency and read-only database access. Hostile or incomplete requests must not trap or grow memory without bounds. Keep Release/Nightly data separate and handle retired database paths."
+    - path: ".github/workflows/**"
+      instructions: "Check least-privilege tokens, immutable action pins and fork-safe events. Untrusted PR code must not receive signing credentials. Releases must fail on missing signatures or invalid artifacts and promote only a qualified revision."
+    - path: "Tests/**"
+      instructions: "Prefer regression tests that reproduce a real failure and assert externally observable behavior. Check deterministic synchronization and failure injection; avoid sleeps that merely hope a race has happened."
+chat:
+  art: false
+  auto_reply: false
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - AGENTS.md
+      - CONTRIBUTING.md
+  learnings:
+    scope: local
