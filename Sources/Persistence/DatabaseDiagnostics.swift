@@ -6,6 +6,11 @@ import SharedDomain
 public enum DatabaseDiagnostics {
     public static func capture(path: String?, siteID: String?) -> DiagnosticDatabaseSnapshot {
         guard let path, path != ":memory:" else { return DiagnosticDatabaseSnapshot() }
+        // This true read-only transaction must finish before another connection
+        // starts writer initialization (see DatabaseConnectionGate). Keep the
+        // close inside the gate too; do not replace this probe with a writer.
+        DatabaseConnectionGate.lock.lock()
+        defer { DatabaseConnectionGate.lock.unlock() }
         var pointer: OpaquePointer?
         let status = sqlite3_open_v2(path, &pointer, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil)
         defer { if let pointer { sqlite3_close(pointer) } }

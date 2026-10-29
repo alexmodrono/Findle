@@ -15,6 +15,15 @@ import SharedDomain
 // autoreleased NSString.utf8String buffer or a transient Swift String.
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
+/// Apple SQLite can use an active read-only connection's file descriptor for
+/// another connection's OFD write lock, failing with SQLITE_IOERR_LOCK/EBADF.
+/// Keep transient read-only probes and writer initialization from overlapping
+/// within this process. Normal database operations and teardown stay concurrent;
+/// the initialization sidecar separately coordinates migrations across processes.
+enum DatabaseConnectionGate {
+    static let lock = NSLock()
+}
+
 /// An older binary must leave a newer store untouched instead of repairing or
 /// downgrading it. This distinct error must not trigger an empty fallback store.
 public struct UnsupportedDatabaseSchemaError: Error, LocalizedError, Sendable {
@@ -106,6 +115,13 @@ public final class Database: @unchecked Sendable {
             }
             self.path = resolvedDBDir.appendingPathComponent("findle.db").path
         }
+
+        // Include the read-only preflight, its statement finalization and the
+        // writer's schema/WAL setup in one process-local critical section.
+        // FULLMUTEX only protects a single SQLite connection; flock alone does
+        // not cover the independent read-only probes in this process.
+        DatabaseConnectionGate.lock.lock()
+        defer { DatabaseConnectionGate.lock.unlock() }
 
         // Inspect an existing store without opening a writer. In particular,
         // an older binary must not create tables or switch a future store to WAL.
