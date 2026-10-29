@@ -1,0 +1,5 @@
+# Use a separate generated project so preview builds do not regenerate the
+# project another Findle or Nightly build may be using.
+include:
+  - project.yml
+name: FindleOnboardingPreview

@@ -4,7 +4,7 @@
 // You may obtain a copy of the License in the LICENSE file at the root of this repository.
 
 import XCTest
-@testable import FoodleNetworking
+@testable import FindleNetworking
 @testable import SharedDomain
 
 final class MoodleSSOLaunchURLBuilderTests: XCTestCase {

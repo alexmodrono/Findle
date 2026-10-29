@@ -1,0 +1,4 @@
+#include "Release-Base.xcconfig"
+#include "MCP.xcconfig"
+
+SKIP_INSTALL = YES

@@ -1,0 +1,1338 @@
+{
+  "kanvas": 1,
+  "title": "findle-stability",
+  "groups": [
+    {
+      "id": "AR",
+      "name": "Airlock"
+    },
+    {
+      "id": "FN",
+      "name": "Findle"
+    },
+    {
+      "id": "WB",
+      "name": "Website"
+    },
+    {
+      "id": "DS",
+      "name": "Data safety"
+    },
+    {
+      "id": "RS",
+      "name": "Runtime stability"
+    },
+    {
+      "id": "RR",
+      "name": "Release readiness"
+    },
+    {
+      "id": "GH",
+      "name": "Repository automation"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "AR-01",
+      "title": "Rebuild Airlock onboarding in AppKit",
+      "state": "done",
+      "group": "AR",
+      "at": "2026-10-28T14:04:54Z",
+      "by": "codex",
+      "desc": "Create a separate AppKit branch in the Airlock repository. Replace the SwiftUI onboarding presentation with native AppKit screens and navigation. Preserve the hello animation and startup sound. Focus the onboarding app without hiding, closing, or terminating other applications. Verify navigation, asynchronous validation, cancellation, and the demo. This work was requested in the conversation before Kanvas was installed.",
+      "notes": [
+        {
+          "at": "2026-10-28T14:05:10Z",
+          "by": "codex",
+          "text": "The AppKit branch is feat/appkit-onboarding in /Users/amodrono/Developer/Airlock. Native step and navigator APIs and a regular onboarding window are being implemented. The hello resources and existing permission/check logic are retained. This rewrite was already authorized in the conversation; Kanvas was installed while it was underway. Build and runtime verification remain outstanding."
+        },
+        {
+          "at": "2026-10-28T14:26:36Z",
+          "by": "codex",
+          "text": "The AppKit Airlock package builds and 10 focused tests pass. Its window is a regular titled window at the normal window level. The SwiftUI presentation has been replaced, and the original hello.lottie and startup.wav assets are retained. Navigation rejects disabled steps, duplicate actions, and stale validation after reset. Native UI review and final integration checks are underway."
+        },
+        {
+          "at": "2026-10-28T19:22:31Z",
+          "by": "codex",
+          "text": "The AppKit implementation is available for review on feat/appkit-onboarding. All 11 Airlock tests pass and the native Xcode demo builds. The original hello animation and sound are byte-for-byte unchanged. Onboarding uses a normal window, plain step navigation, real permission controls, and cancellation-safe asynchronous navigation. Native Findle integration has been checked for layout and empty-address validation. Real institutional sign-in still needs a signed manual check. Changes remain uncommitted."
+        },
+        {
+          "at": "2026-10-28T19:38:15Z",
+          "by": "codex",
+          "text": "Reconcile the existing implementation with the board. The AppKit rewrite was completed under the earlier conversation request before its Kanvas status was updated. Verify the recorded branch and build/test results, then hand the implementation over for review without marking it accepted."
+        },
+        {
+          "at": "2026-10-28T19:38:16Z",
+          "by": "codex",
+          "text": "Airlock's AppKit implementation is ready for review on feat/appkit-onboarding in the sibling Airlock checkout. It replaces the SwiftUI presentation with native onboarding and retains the original hello animation and startup sound. It focuses its own regular window without hiding or terminating other apps.\n\nVerification: all 11 package tests pass, and the AppKit demo builds. Native Findle onboarding layout and empty-address validation were also checked.\n\nReview the native setup flow and styles. Changes remain uncommitted. Signed, real-account SSO validation remains outstanding and is tracked separately. Accepting this card unblocks FN-01 in Kanvas; Findle's implementation is already present and should be handed over for review rather than implemented again."
+        }
+      ]
+    },
+    {
+      "id": "FN-01",
+      "title": "Replace Findle with a Finder companion",
+      "state": "done",
+      "group": "FN",
+      "deps": ["AR-01"],
+      "at": "2026-10-28T14:04:54Z",
+      "by": "codex",
+      "desc": "Replace the SwiftUI application interface with AppKit. Show a companion panel only while Finder is browsing the Findle location. Present current-course information, last sync time, and shortcuts organized by Moodle sections and activities. Fade out during Finder moves or resizes; reposition and fade back in after the window settles. Provide a separate settings window for course subscriptions and configuration. Integrate the new Airlock onboarding, preserve existing sync and personal-file behavior, and verify builds and meaningful tests. This work was requested in the conversation before Kanvas was installed.",
+      "notes": [
+        {
+          "at": "2026-10-28T14:05:11Z",
+          "by": "codex",
+          "text": "Use /Users/amodrono/Developer/findle-stability on fix/stability. The existing model already stores Moodle outlines and per-course sync cursors. The agreed panel behavior is fade out on Finder movement or resizing, then reposition and fade in after settling. The 28 pre-existing feature files were backed up before starting the interface rewrite. Findle host sandbox changes are needed for Accessibility-based Finder tracking; keep the File Provider extension sandboxed."
+        },
+        {
+          "at": "2026-10-28T14:26:36Z",
+          "by": "codex",
+          "text": "The optimized AppKit Findle build passes. Course selection and configuration now live in native Settings; the companion uses persisted Moodle outlines and per-course sync timestamps. Finder movement/resizing hides the panel until geometry is stable for 300 ms. Added preference migration and access to legacy fallback account databases. Full tests and native layout checks are in progress. Findle currently resolves the new Airlock implementation from the sibling ../Airlock checkout."
+        },
+        {
+          "at": "2026-10-28T19:22:31Z",
+          "by": "codex",
+          "text": "The implementation is available for review in fix/stability. All 188 Findle tests pass; Debug and optimized builds succeed. Native checks verified Settings navigation, course search, Moodle section expansion into file shortcuts, and onboarding validation. New UI has no unslop counter matches; six remaining app-wide matches are backend log punctuation. See appkit-migration.md for setup and runtime checks. Live Finder attachment and real SSO still need a signed build with user-granted Accessibility access. The dependency on ../Airlock is local, and changes remain uncommitted. Kanvas is serving at http://127.0.0.1:8765/findle-stability/."
+        },
+        {
+          "at": "2026-10-28T19:38:16Z",
+          "by": "codex",
+          "text": "Implementation ready for review; this card remains blocked only by AR-01's pending acceptance under Kanvas's dependency rules.\n\nThe AppKit Finder companion and Settings are implemented on fix/stability. The panel uses Moodle sections and per-course sync times, hides during Finder movement/resizing, and reappears after settling. All 188 Findle tests pass, and Debug and optimized builds succeed. Native Settings navigation, course search, section expansion, and onboarding validation were checked.\n\nAfter AR-01 is accepted, reconcile this existing implementation into Review without repeating the rewrite. Changes are uncommitted, and Findle currently resolves Airlock locally from ../Airlock. Signed live Finder attachment, institutional SSO, and upgrade checks remain outstanding; see the follow-up validation task and appkit-migration.md."
+        },
+        {
+          "at": "2026-10-28T19:41:46Z",
+          "by": "codex",
+          "text": "Airlock has been accepted. Reconcile the completed Findle implementation, verify its current branch and test results, and prepare a signed Nightly artifact for local integration testing. Preserve the installed app and its data while preparing the artifact."
+        },
+        {
+          "at": "2026-10-28T19:55:28Z",
+          "by": "codex",
+          "text": "The AppKit Findle implementation is ready for review, and its signed optimized Nightly has been installed for testing.\n\nDelivered: a contextual Finder panel with Moodle sections and per-course sync time, fade-out during Finder movement/resizing, native Settings for course selection and configuration, and native Airlock onboarding. All 188 Findle tests and 11 Airlock tests pass; Debug, optimized, and signed builds succeed. All installed components pass code-signature verification.\n\nThe installed Nightly restored the existing connected account, all 43 courses, and the same 11 enabled subscriptions. A post-upgrade sync completed. The prior app is archived under ~/Library/Application Support/Findle Development Backups/20261028-205020/.\n\nPlease review the running Nightly interface. General settings is open at Allow Finder Access; Accessibility permission still needs the user's action. Live attachment across Finder windows/displays/Spaces and fresh SSO checks remain in FN-02. G-01's requested installation is already performed and recorded in its notes; after accepting this card, move that existing result through review without reinstalling.\n\nSource changes remain uncommitted, and Airlock is still a local sibling dependency. See appkit-migration.md for implementation and validation details."
+        },
+        {
+          "at": "2026-10-28T20:02:17Z",
+          "by": "codex",
+          "text": "User reports the companion never appears. Reproduced in the installed signed Nightly inside a course under Findle Nightly; Accessibility is now enabled and the companion preference is on. Investigating Finder observation and location matching as review feedback. Live attachment is not yet validated."
+        },
+        {
+          "at": "2026-10-28T22:39:34Z",
+          "by": "codex",
+          "text": "Fixed the reported missing panel and updated the installed signed Nightly. Finder advertised its document URL attribute but returned no value. The companion now recovers the current folder from actual content-item URLs, checks the title and registered Findle root, and rejects unrelated or ambiguous paths. No additional permission is required.\n\nThe user confirmed that the panel appears. Runtime logs confirm showing after settling and hiding when Finder loses focus. All 14 focused interface tests pass, including six new regression tests; the signed app passes signature verification. Account and course selections remain intact. Full movement/display/Spaces validation is still tracked in FN-02.\n\nKnown edge case: empty icon/list folders that expose no document URL have no content URLs to resolve. Empty column-view folders can use the directory entry in the preceding column. This limitation is recorded in appkit-migration.md for follow-up."
+        }
+      ]
+    },
+    {
+      "id": "FN-02",
+      "title": "Validate the signed AppKit integration",
+      "state": "doing",
+      "group": "FN",
+      "deps": ["FN-01"],
+      "at": "2026-10-28T19:38:16Z",
+      "by": "codex",
+      "desc": "Verify the new interface with a signed build and a real Moodle account after implementation review.\n\nCheck:\n- Accessibility permission and registration of the actual File Provider location.\n- Correct course context when changing Finder folders, tabs, and windows.\n- Fade-out during moving/resizing and reappearance after the window settles.\n- Focus and visibility across other apps, multiple displays, and Spaces.\n- Successful and cancelled browser and embedded institutional sign-in.\n- Session restoration, background sync, and preservation of personal files through an upgrade.\n\nRecord the signed build, exercised sign-in methods, results, and any failures. The automated suites and isolated native UI checks already pass; these live integration checks have not yet been performed.",
+      "notes": [
+        {
+          "at": "2026-10-28T19:54:29Z",
+          "by": "codex",
+          "text": "The signed Nightly app is now installed and running. Startup/session restoration and a post-upgrade sync have been observed successfully, with the original 43 courses and 11 selected subscriptions preserved. General settings currently reports that Accessibility access is not enabled. Remaining checks include live Finder attachment and movement behavior after the user grants access, multiple windows/displays/Spaces, and successful/cancelled fresh browser and embedded SSO. Do not sign the user out merely to force a sign-in test."
+        },
+        {
+          "at": "2026-10-28T22:39:34Z",
+          "by": "codex",
+          "text": "Accessibility is now enabled. Fixed Finder's missing document URL using a bounded content-URL fallback and installed the signed update. User confirmed the companion appears; runtime logs show it hiding on app switches and returning after the context settles. Fourteen focused interface tests pass. Still validate movement/resizing visually, course/tab transitions, multiple windows/displays/Spaces, and empty folders in all Finder view modes. Empty icon/list folders without document metadata remain a known limitation of the current fallback. Fresh SSO and personal-file upgrade checks remain outstanding."
+        },
+        {
+          "at": "2026-10-28T22:50:05Z",
+          "by": "codex",
+          "text": "During FN-03 verification, Finder showed a banner saying syncing was disabled due to an error, alongside the previously observed File Provider -2005 item errors. The host still restores 11 of 43 selected courses. Record this as a remaining File Provider integration issue; the panel-position change does not address it. The installed extension was re-registered after the app update."
+        },
+        {
+          "at": "2026-10-29T10:04:08Z",
+          "by": "codex",
+          "text": "Prepare signed integration validation against the newly stabilized source. Preserve the existing real account and personal files; begin with signatures, installed state, Finder behavior and read-only diagnostics. Fresh SSO and cross-OS upgrade evidence remain separate gates."
+        },
+        {
+          "at": "2026-10-29T11:42:17Z",
+          "by": "codex",
+          "text": "User confirmed: use the existing account only for nondestructive checks; no disposable account is available. Signed Nightly build 141 from 6a58ffa is prepared and all seven owned signatures, both architectures, source stamp and Nightly identities verify. It has not been installed. A verified archive preserves 332 readable personal files, but macOS denies access to the active provider/host SQLite stores and legacy LocalContent, so recovery backup remains incomplete. Native UI still returns cgWindowNotFound. Keep installed-account state unchanged until these access limits are resolved."
+        }
+      ]
+    },
+    {
+      "id": "FN-03",
+      "title": "Fix the panel position",
+      "state": "done",
+      "group": "FN",
+      "deps": ["FN-01"],
+      "at": "2026-10-28T22:40:41Z",
+      "by": "human",
+      "desc": "to not cover the actual finder but instead next to the finder window with some padding so that it does not cover the window contents and makes some folders inaccesible.",
+      "notes": [
+        {
+          "at": "2026-10-28T22:45:17Z",
+          "by": "codex",
+          "text": "Remove the placement fallback that overlays Finder. Keep the companion outside Finder with padding, add geometry regression tests, and update the signed installed Nightly. Clarifying the no-space behavior while inspecting placement: default to hiding the panel when it cannot fit beside Finder, unless the user prefers moving/resizing Finder."
+        },
+        {
+          "at": "2026-10-28T22:46:39Z",
+          "by": "codex",
+          "text": "User chose to hide the panel until there is room. Implemented strict side placement with a 12-point gap, full panel size, and no overlap fallback. The panel hides if neither side fits, and display changes trigger a fresh placement check. Added regressions for centered/maximized Finder windows, exact-fit spacing, offset displays, offscreen windows, and non-overlap across varied geometry."
+        },
+        {
+          "at": "2026-10-28T22:50:06Z",
+          "by": "codex",
+          "text": "The companion now stays outside Finder with a 12-point gap, preferring the right side and using the left when needed. If neither side has room for the full panel, it hides until space is available, as requested. Finder is not moved or resized. The existing fade-out while moving and return after settling remain in place, and display changes refresh placement.\n\nThe signed Nightly is installed and running. All 18 focused interface tests pass, including centered/maximized windows, exact-fit spacing, negative display coordinates, and non-overlap checks. Signature verification passes; the existing account and 11 of 43 course selections are retained. Runtime logs confirm hiding when the current Finder window leaves no room.\n\nPlease review by moving Finder to leave space on either side, then centering or maximizing it: the panel should sit alongside with padding or disappear, never cover folders. The UI tool could not complete this drag check (noWindowsAvailable), so live side placement remains for review. The previous app is backed up in ~/Library/Application Support/Findle Development Backups/20261028-234747-FN03/. Source changes remain uncommitted."
+        },
+        {
+          "at": "2026-10-28T22:52:19Z",
+          "by": "codex",
+          "text": "User reports the panel is still absent after the position update. Runtime logs repeatedly say there is no room, including after geometry changes. Checking the actual Finder and display bounds before deciding whether this is expected hiding or a coordinate/display-selection bug."
+        },
+        {
+          "at": "2026-10-28T22:55:09Z",
+          "by": "codex",
+          "text": "Confirmed the new report is the requested no-space behavior for the measured Finder window. Finder bounds were (274, 199, 978, 547) on a usable display (0, 75, 1512, 874): 274 points remain on the left and 260 on the right, while the 300-point panel plus 12-point gap requires 312. Moving that window roughly 60 points left or 40 points right leaves enough room. Logs also recorded the panel showing after an earlier geometry change before the diagnostic restart.\n\nAdded numeric geometry to the existing transition logs and installed the signed build; placement behavior is unchanged. No new permissions are needed. The temporary test window could not be closed through the UI tool because ScreenCaptureKit failed to start its capture stream."
+        },
+        {
+          "at": "2026-10-28T22:57:00Z",
+          "by": "human",
+          "text": "the current panel expects more free size than it actually needs."
+        },
+        {
+          "at": "2026-10-28T22:59:33Z",
+          "by": "human",
+          "text": "Sent back: The current panel expects more free size than it actually needs. Also, see the next block and work on it"
+        },
+        {
+          "at": "2026-10-28T23:04:02Z",
+          "by": "codex",
+          "text": "Read the sent-back feedback and the linked FN-04 request. Correcting the rigid 300-point width: placement will use a responsive panel width that fits the available side space, while retaining a gap and avoiding Finder overlap. Implementing the requested collapsible companion alongside this revision. The board currently still labels this card Review; recording work in notes without changing human-owned acceptance states."
+        }
+      ]
+    },
+    {
+      "id": "AR-02",
+      "title": "Test the new onboarding",
+      "state": "done",
+      "group": "AR",
+      "deps": ["AR-01"],
+      "at": "2026-10-28T22:41:15Z",
+      "by": "human",
+      "desc": "Find a way to see the new onboarding without breaking Findle Nightly",
+      "notes": [
+        {
+          "at": "2026-10-28T22:48:15Z",
+          "by": "codex-ar02",
+          "text": "Plan: provide a separate way to open and exercise the new onboarding with sample data, verify it cannot change the installed Nightly account or sync, and leave it available for review."
+        },
+        {
+          "at": "2026-10-28T22:53:56Z",
+          "by": "codex-ar02",
+          "text": "The preview uses the same onboarding screens in a separate app. Its sample-only state replaces account storage and sync; Finder access is simulated, and the app has no network or App Group entitlement. It can be opened and restarted without resetting or quitting Nightly."
+        },
+        {
+          "at": "2026-10-28T22:59:43Z",
+          "by": "codex-ar02",
+          "text": "UI review completed with the required unslop-ui procedure: counted the individual Swift files, reviewed the preview title, credential hint, menu, completion sheet and accessible controls, then recounted. No copy edits were needed.\n\n| Rule | Before | After |\n| --- | ---: | ---: |\n| Counter matches across the reviewed Swift files | 0 | 0 |\n\nKept the sample-credentials hint because it is needed to use the preview (U3/U5), the completion notice because it distinguishes simulation from a real setup (U6), and native control/accessibility names (U7/U11)."
+        },
+        {
+          "at": "2026-10-28T22:59:43Z",
+          "by": "codex-ar02",
+          "text": "Findle Onboarding Preview is built and open at the beginning for review. It walks through the actual onboarding screens using sample data. Keep moodle.example.edu and sign in with student / preview. Try course filtering and selection, Finder access, sync or Finish Without Syncing, then Restart Preview (Command-R).\n\nReopen or rebuild with /Users/amodrono/Developer/findle-stability/scripts/onboarding-preview.sh. The app is in build/onboarding-preview/DerivedData/Build/Products/Debug/Findle Onboarding Preview.app in that checkout.\n\nVerified: signed sandboxed build; all 5 automated tests passed, including 3 complete walkthrough variants; native walkthrough and restart checked. The preview has no network or App Group entitlement, URL handlers, File Provider extension, persistence layer, or production sync engine. Nightly's installed binary, Info.plist, timestamps, and running process are unchanged.\n\nSign-in, Accessibility access, and sync are simulated. Real institutional SSO and Finder integration remain separate integration checks."
+        }
+      ]
+    },
+    {
+      "id": "FN-04",
+      "title": "Compact panel",
+      "state": "done",
+      "group": "FN",
+      "deps": ["FN-03"],
+      "at": "2026-10-28T22:59:02Z",
+      "by": "human",
+      "desc": "Find a way of making the panel be able to be collapsed and offer similar features but taking 1/3 of the size.",
+      "notes": [
+        {
+          "at": "2026-10-28T23:04:02Z",
+          "by": "codex",
+          "text": "The user explicitly asked in FN-03's sent-back feedback to work on this follow-up too. Implementing a compact panel at roughly one-third the expanded footprint, with the current course and sync status, Sync and Moodle actions, and file shortcuts in a native menu. Expansion/collapse will be user-controlled and remembered; limited space may use the compact layout automatically. Work is authorized by that feedback although the board dependency still waits on FN-03 review."
+        },
+        {
+          "at": "2026-10-28T23:12:50Z",
+          "by": "codex",
+          "text": "FN-03 is now accepted, so the compact-panel work is recorded as Doing. The responsive placement and compact controls are implemented; checking native layout, menu access and the signed Nightly before handing this back for review."
+        },
+        {
+          "at": "2026-10-28T23:13:55Z",
+          "by": "codex",
+          "text": "The user clarified that collapsed means a narrow vertical sidebar, not a shorter card. Revising compact mode to keep the panel height while reducing its width to roughly one third, with stacked Sync, Moodle and Files controls. The first compact-card build was validated but has not been installed."
+        },
+        {
+          "at": "2026-10-28T23:23:32Z",
+          "by": "codex",
+          "text": "Nightly now collapses horizontally into a 96-point-wide vertical sidebar, keeping the expanded panel's height. Course and sync information remain above stacked Sync, Moodle and Files controls; the Files menu follows the course sections and activities. The arrow expands/collapses the panel, and the choice is remembered. Limited space automatically uses the sidebar; if neither layout fits, the panel hides. Finder is never moved or covered.\n\nThe signed update is installed and signature verification passes. All 23 focused interface tests pass. Native previews cover normal/minimum sizes, long names and errors; the Files menu was opened and its hierarchy checked. Live logs confirm the panel appears beside Finder with the gap, and 11 of 43 course selections remain intact. The scoped unslop-ui review is complete (0 matches before and after), retaining accessible names, real sync state and error help.\n\nReview the horizontal collapse/expand control and move Finder to check automatic sidebar fallback and hiding. These live interaction checks could not be completed because the UI tool timed out or failed its screen capture; the preview app remained responsive in a process sample. The previous installed app is backed up in ~/Library/Application Support/Findle Development Backups/20261029-002034-FN03-FN04/. Changes remain uncommitted."
+        },
+        {
+          "at": "2026-10-28T23:24:00Z",
+          "by": "codex",
+          "text": "This update also addresses FN-03 feedback: expanded placement can narrow to 240 points; the previously failing centered Finder window now fits a 248-point panel. FN-03 is already accepted, so its follow-up validation is recorded here."
+        },
+        {
+          "at": "2026-10-28T23:27:45Z",
+          "by": "codex",
+          "text": "User requested the next polish pass: host SwiftUI panel contents inside the existing AppKit panel, replace collapsed text buttons with accessible SF Symbol controls, show a small last-sync status, and redesign the expanded sidebar for current macOS. This is explicitly authorized in the conversation; retaining this review card while implementing the requested refinement."
+        },
+        {
+          "at": "2026-10-28T23:51:18Z",
+          "by": "codex",
+          "text": "The requested SwiftUI polish is installed in Nightly. AppKit still controls Finder attachment, window size, focus, and fading. The collapsed sidebar uses accessible SF Symbol buttons for Sync, Moodle, Files, Settings, and expansion, with a small Last synced readout. The expanded panel has a system Liquid Glass surface, a clearer course header and file hierarchy, and a fixed status/action footer. Selection and open sections survive collapse and data refreshes. Sync errors open full details with a Settings action.\n\nVerified: 27 focused interface tests pass; Debug and signed Nightly builds and installed signature verification pass. Live previews covered light/dark appearance, long titles, minimum width, empty/disabled courses, horizontal collapse/expansion, Files menus, keyboard section expansion, and error details. The unslop-ui review found zero counter matches before/after and retained meaningful status, accessible labels, and file-type symbols. Account and 11-of-43 course selections are preserved; installed runtime logs confirm showing beside Finder with the 12-point gap.\n\nReview the new panel in a course folder, including the icon tooltips and Last synced status. UI interactions were checked in a standard sample window because the automation tool cannot consistently re-query the production nonactivating panel; live Finder/Space focus transitions remain in FN-02. The previous app is backed up in ~/Library/Application Support/Findle Development Backups/20261029-004846-SwiftUI-panel/. Source changes remain uncommitted."
+        },
+        {
+          "at": "2026-10-29T00:00:09Z",
+          "by": "codex",
+          "text": "User requested a further polish pass: light-gray action-button surfaces contrasting against the glass, restrained hover/press feedback, and animated panel/section transitions. Preserve the existing Finder behavior and keyboard responsiveness; respect Reduce Motion and Increased Contrast. This refinement is authorized by the current conversation."
+        },
+        {
+          "at": "2026-10-29T00:15:18Z",
+          "by": "codex",
+          "text": "The UI polish update is installed in Findle Nightly. Actions now have light-gray backgrounds and dark symbols in both appearances, including the native Files menu. Added brief hover/press feedback, animated section disclosure, and collapse/expand transitions that keep the Finder-facing edge fixed. Keyboard navigation stays immediate; Reduce Motion removes resizing/scaling, and Increased Contrast strengthens button outlines.\n\nVerified light/dark and minimum-size native previews, a long title, collapse/expand, Files menus, and keyboard section expansion. All 29 focused interface tests pass; Debug and signed Nightly builds pass. The installed app restores the existing 11 selected courses, and runtime logs confirm the compact panel appearing 12 points beside Finder. The prior app bundle was backed up.\n\nPlease review the button contrast and the feel of the transitions during normal Finder use. FN-04 remains in review."
+        },
+        {
+          "at": "2026-10-29T02:18:00Z",
+          "by": "codex",
+          "text": "Accepted the compact panel and final light-gray button/transition polish against the latest requested revision. Reviewed recorded signed installation, native previews and 29 interface regressions. Finder/Space interaction qualification remains tracked in FN-02; this acceptance does not claim that runtime matrix complete."
+        }
+      ]
+    },
+    {
+      "id": "AR-03",
+      "title": "Liquid glass",
+      "state": "done",
+      "group": "AR",
+      "deps": ["AR-02"],
+      "at": "2026-10-28T23:04:31Z",
+      "by": "human",
+      "desc": "I want you to make the airlock window not have a title bar (no semaphore, etc.) and essentially be liquid glass.",
+      "notes": [
+        {
+          "at": "2026-10-28T23:08:12Z",
+          "by": "codex",
+          "text": "Plan: make the Airlock content window borderless with native Liquid Glass, preserve keyboard closing, dragging, resizing, and cancellation, then verify in the isolated preview."
+        },
+        {
+          "at": "2026-10-28T23:17:23Z",
+          "by": "codex",
+          "text": "Airlock now opens as a rounded, borderless Liquid Glass window with no title bar or traffic-light buttons. Drag its background to move it, resize its edges, and use Command-W to close it. Reduce Transparency gets an opaque surface; older supported macOS versions retain a visual-effect fallback.\n\nThe isolated Findle Onboarding Preview is rebuilt and open. Nightly has not been replaced and is still running in its original process. Check the glass appearance, text entry, dragging/resizing, and Command-W. The original intro remains; closing during it and reopening now resumes setup correctly.\n\nVerification: all 23 Airlock tests and all 5 Findle onboarding preview tests pass. Native appearance, sample navigation, and keyboard navigation were checked; code signing verification passed. Changes are in the sibling Airlock checkout and Findle's preview/documentation."
+        },
+        {
+          "at": "2026-10-28T23:28:26Z",
+          "by": "codex",
+          "text": "Review feedback: make the main window solid and narrower; keep Liquid Glass only on the navigation pill. Applying this requested revision while the task remains in review."
+        },
+        {
+          "at": "2026-10-28T23:32:34Z",
+          "by": "codex",
+          "text": "Updated from review feedback: the main content is now a solid, theme-aware surface with no glass effect, and the default window is 560 × 500 points (previously 720 points wide). Only the navigation pill retains Liquid Glass. A new frame-save key prevents the previous wide size being restored. The preview has been rebuilt; onboarding tests pass. Unslop-ui review found no copy/control changes needed; counter remains 0 → 0."
+        },
+        {
+          "at": "2026-10-28T23:34:57Z",
+          "by": "codex",
+          "text": "Also fixed the intro animation expanding the window to its preferred width. The final native preview was visually checked after the intro and remains 560 × 500, with a solid background. Only the navigation pill uses glass. Updated preview is open."
+        },
+        {
+          "at": "2026-10-28T23:41:20Z",
+          "by": "codex",
+          "text": "Requested revision: restore the older SwiftUI glow and exact screen centering while retaining the solid compact main window and glass navigation pill. User also explicitly approved updating Nightly and opening its real setup, preserving the current account and files."
+        },
+        {
+          "at": "2026-10-29T00:03:09Z",
+          "by": "codex",
+          "text": "Signed Nightly updated and restored the existing account: 43 courses, 11 selected. Real setup validates COMILLAS and reaches its institutional SSO page; cancel leaves the session intact. Follow-up requested: fade glow when intro ends, finish startup audio once, enlarge hello, and make the setup screens more welcoming. These refinements are in progress."
+        },
+        {
+          "at": "2026-10-29T00:15:16Z",
+          "by": "codex",
+          "text": "Installed the signed Nightly revision with the restored centered, compact solid window. The enlarged hello intro has a rainbow glow that fades out over 0.5 seconds; its 9.6-second startup sound plays once through the end and stops on window close. Setup now includes Findle/Finder artwork, larger fields, institution context, live course selection counts, and a selected-course summary.\n\nAccount restoration still shows 43 courses with 11 selected after installation. Real site validation reaches COMILLAS institutional sign-in; its credentials must be entered by the user. Reconnect now preserves site/account identity and history, uses non-destructive site updates, and rejects replacement accounts or inaccessible existing storage.\n\nVerification: full Nightly test suite passed for the reconnect changes, final signed build passed, all 33 Airlock tests and 5 onboarding preview tests passed. All five preview screens were visually checked at 560x500. Native resizing automation failed before the 500x480 visual check; geometry tests still cover short and offset screens.\n\nUnslop review:\n| Rule | Before | After |\n| --- | --- | --- |\n| Automated candidates | 0 | 0 |\n| U4 repeated SSO/sync status copy | 2 | 0 |\n\nKept actual institution/course state, actionable errors, accessible labels, meaningful Findle/Finder artwork, and the explicitly requested intro glow. AR-03 remains ready for human review."
+        },
+        {
+          "at": "2026-10-29T00:16:39Z",
+          "by": "codex",
+          "text": "Final signed revision installed and its real setup is open on the prefilled COMILLAS server page. Screenshot confirmed the polished first step; sample-only preview closed. Nightly restored 43 courses with 11 selected after this final update. The previous app bundle is backed up under Library/Application Support/Findle Development Backups/20261029-011400-Airlock-live-setup."
+        },
+        {
+          "at": "2026-10-29T02:18:00Z",
+          "by": "codex",
+          "text": "Accepted the latest requested compact solid borderless window and intro refinements, preserving the user’s revision that confines glass to navigation. Reviewed production source and prior signed/visual evidence; Airlock now passes 40 tests in Debug and Release plus demo builds on actual Xcode 26.6 CI. The reproduced outgoing-view QoS warning remains in RS-04."
+        }
+      ]
+    },
+    {
+      "id": "AR-04",
+      "title": "Tab navigation",
+      "state": "done",
+      "group": "AR",
+      "deps": ["AR-02"],
+      "at": "2026-10-28T23:05:47Z",
+      "by": "human",
+      "desc": "I want you to, using the unslop-ui skill, create like a liquid glass pill-shaped window on top of the main airlock window, which will serve as the navigation for the different tabs.",
+      "notes": [
+        {
+          "at": "2026-10-28T23:08:12Z",
+          "by": "codex",
+          "text": "Plan: replace sidebar navigation with a separate glass pill above the main window, keep validated-step navigation and accessible controls, review with unslop-ui, and test both windows together."
+        },
+        {
+          "at": "2026-10-28T23:17:22Z",
+          "by": "codex",
+          "text": "Unslop-ui review completed: counted the Swift files, reviewed the native controls and strings, removed the sidebar and its repeated app-name label, then recounted.\n\n| Rule | Before | After |\n| --- | ---: | ---: |\n| Automated counter matches | 0 | 0 |\n| U7 repeated app branding beside step navigation | 1 | 0 |\n\nKept step names and selected/disabled states because they communicate navigation and actual availability. Kept content headings for page orientation, accessible control names, error messages, and the preview's sample-account help in the app menu. No decorative badges, status dots, or numbering were added."
+        },
+        {
+          "at": "2026-10-28T23:17:23Z",
+          "by": "codex",
+          "text": "Step navigation is now a separate glass pill above the main Airlock window. It replaces the sidebar, follows the main window, remains on screen during resizing, and closes with it. Native segmented controls show the current step and disable steps that would skip validation or cross a completed checkpoint. Command-Option-1 through 9 also selects an available step.\n\nThe updated isolated preview is open. Use moodle.example.edu and student / preview; the app menu's Sample Sign-In item also shows these details. Try returning from Sign In to Moodle Site, then confirm completed checkpoints prevent returning to authentication. Check the pill while moving or resizing the main window.\n\nVerification: all 23 Airlock tests and 5 preview tests pass, including navigation policy, child-window lifetime, closing, reopening, and four short/offset display geometries. Unslop-ui count/read/edit/recount is complete; details are in the previous note."
+        },
+        {
+          "at": "2026-10-28T23:32:34Z",
+          "by": "codex",
+          "text": "Review revision applied: Liquid Glass is now confined to the navigation pill; the main window is solid and narrower. Navigation behavior is unchanged."
+        },
+        {
+          "at": "2026-10-29T00:03:09Z",
+          "by": "codex",
+          "text": "User requested a segmented picker inside the glass navigation pill. Updating to the standard rounded single-selection control with equally sized segments and clear selection."
+        },
+        {
+          "at": "2026-10-29T00:15:16Z",
+          "by": "codex",
+          "text": "The glass pill now contains one standard rounded segmented picker, with equally sized segments and an accented selection. Existing validation checkpoints, disabled steps, keyboard navigation, and attached-window lifecycle remain covered by the 33 passing Airlock tests. Installed in signed Nightly; ready for review."
+        },
+        {
+          "at": "2026-10-29T02:18:00Z",
+          "by": "codex",
+          "text": "Accepted the standard rounded segmented navigation within the attached glass pill. Reviewed checkpoint/accessibility/lifecycle behavior and current native tests; latest Airlock Xcode 26.6 CI passes. Signed institutional completion remains a distinct FN-02 gate."
+        }
+      ]
+    },
+    {
+      "id": "WB-01",
+      "title": "Get started",
+      "state": "done",
+      "group": "WB",
+      "at": "2026-10-28T23:08:10Z",
+      "by": "human",
+      "desc": "Clone the code at `~/Developer/crono/docs-site` and adapt it to create a website for Findle (this project).",
+      "notes": [
+        {
+          "at": "2026-10-28T23:10:24Z",
+          "by": "codex",
+          "text": "Plan: copy the local Crono docs-site into the active foodle checkout as docs-site, retain its documentation layout and local-only workflow, replace content and assets with verified Findle material, then run build/link checks and the required unslop-ui review. Distinguish the released app from the Finder companion currently in development."
+        },
+        {
+          "at": "2026-10-28T23:18:36Z",
+          "by": "codex",
+          "text": "Findle now has a local documentation website adapted from the requested Crono docs-site. It is in /Users/amodrono/Developer/foodle/docs-site, in the active checkout. Crono's source and the app implementations were left unchanged.\n\nThe site has ten Findle guides, the existing app icon and Finder screenshots, correct GitHub download/source links, local search, light/dark themes, mobile navigation, page outlines, copy actions, and Markdown endpoints. The stable app and the Finder companion in development are clearly distinguished. Source review also grounds the account-reset, course-disable, and offline-download instructions in actual behavior.\n\nVerification: the build passes; checks validate 500 internal links/assets and 63 search entries; HTTP checks pass for every page, Markdown aliases, content types, assets, and the 404 response. An independent source review found no blockers. Fixed inherited apostrophe handling in search anchors. The required unslop-ui count/read/edit/recount/report is complete (8 candidates to 1 justified app-icon shadow); see docs-site/REVIEW.md.\n\nTo review: cd /Users/amodrono/Developer/foodle/docs-site && npm run dev, then open http://127.0.0.1:4319/. Check the content, Command-K search, theme controls, mobile navigation, and copy actions. Browser interaction and responsive visual checks have not been performed. The temporary test server has been stopped. The site is local-only, with no deployment, and changes remain uncommitted."
+        },
+        {
+          "at": "2026-10-28T23:39:21Z",
+          "by": "codex",
+          "text": "User requested the repository README.md as the website main page. Updating the build to render that file directly, preserve its content, resolve its repository assets and links, and rebuild when it changes. WB-01 remains in Review while this authorized revision is applied."
+        },
+        {
+          "at": "2026-10-28T23:45:00Z",
+          "by": "codex",
+          "text": "The homepage now renders /Users/amodrono/Developer/foodle/README.md directly, as requested. Its content is preserved, including the introduction, badges, screenshots, installation/build instructions, roadmap, and license links. Removed the separate overview draft and custom hero. Referenced repository files are included in the static output, the README headings populate search and the outline, and homepage Markdown downloads are exact copies of the source. The README itself is unchanged.\n\nBuild/check pass: ten pages, 517 internal links/assets, 69 search entries. HTTP checks verified the homepage and README assets against the already-running local server. Mermaid support is bundled locally; browser rendering remains unverified. UI review is recorded in docs-site/REVIEW.md.\n\nRefresh http://127.0.0.1:4319/ to see the page. Restart npm run dev once to pick up the new README watcher; later README saves then rebuild the site automatically. The existing user-started server was left running. WB-01 remains ready for review."
+        },
+        {
+          "at": "2026-10-28T23:47:39Z",
+          "by": "codex",
+          "text": "User requested restoring the original custom homepage, adding syntax highlighting, and preparing it for a future Findle demo video. Restoring the overview and hero, adding build-time code highlighting, and making the current screenshot switch to a native video player when public/videos/findle-demo.mp4 or .webm is supplied. No recording is available yet, so the screenshot remains until then."
+        },
+        {
+          "at": "2026-10-28T23:54:25Z",
+          "by": "codex",
+          "text": "Restored the original custom homepage and overview content, as requested. The root README is unchanged and is no longer used as the homepage. Added syntax highlighting for code blocks in both light and dark themes; copy buttons preserve the exact code.\n\nVideo support is ready for the upcoming recording. Save it as /Users/amodrono/Developer/foodle/docs-site/public/videos/findle-demo.mp4 (or .webm). The homepage then replaces the current screenshot with a native player, with optional poster/captions and no autoplay. Until a recording is added, the original screenshot stays. Details are in docs-site/README.md.\n\nBuild and check pass for ten pages, 510 internal links/assets, 63 search entries, and code-copy fidelity. Isolated checks pass for video source selection, captions/poster, screenshot fallback, HTTP streaming/HEAD/byte-range seeking, escaped and unknown-language code, and concurrent builds. The UI review is in docs-site/REVIEW.md. Browser playback is still to be checked with the final recording.\n\nRefresh the running site to see the restored homepage and highlighting. Restart npm run dev once to load the updated video-serving behavior. The user's running server was left intact, test fixtures were removed, and the site remains local-only. WB-01 remains ready for review."
+        },
+        {
+          "at": "2026-10-29T02:18:00Z",
+          "by": "codex",
+          "text": "Accepted the local Findle website adaptation and restored custom homepage. Re-ran its build/check: 10 guides, 510 internal links/assets, 63 search entries and code-copy fidelity pass. Preserved the user’s local-only instruction and existing server; no upload or deployment. Final demo playback awaits a future recording, with current screenshot fallback and video fixtures already validated."
+        }
+      ]
+    },
+    {
+      "id": "RR-01",
+      "title": "Make release builds reproducible",
+      "state": "done",
+      "group": "RR",
+      "at": "2026-10-29T00:06:36Z",
+      "by": "codex",
+      "desc": "Build the next major version from a clean checkout without a sibling Airlock directory or developer-local settings.\nPriority: P0, start first alongside the Finder and data-safety investigations.\n\nEvidence: project.yml resolves Airlock from ../Airlock. Both scripts/staging-*.sh still select Findle-Staging/Staging, which project.yml no longer defines. README tooling requirements and project settings also need reconciliation.\n\nDone when:\n- The accepted Airlock implementation is available at a pinned remote revision; dependency resolution and the supported Xcode/Swift/XcodeGen versions are reproducible.\n- Build/test scripts use the actual Debug, Nightly and Release configurations; the separate onboarding preview remains isolated.\n- A clean environment builds the optimized app and produces an initial test report identified by Findle and Airlock revisions. Record pre-existing failures explicitly.\n- No local signing files, sibling checkouts or generated project state are needed by CI.\n\nScope: release preparation, without publishing a Findle release or replacing an installed app.",
+      "notes": [
+        {
+          "at": "2026-10-29T00:24:31Z",
+          "by": "codex",
+          "text": "Inspect dependency reproducibility and repair local validation entrypoints; preserve concurrent Airlock implementation work."
+        },
+        {
+          "at": "2026-10-29T00:29:13Z",
+          "by": "codex",
+          "text": "Repaired both Staging-named helper scripts to select Findle-Nightly/Nightly and the correct app path, regenerating the project before building. Preserved canonical Package.resolved. Remaining blocker: the required new Airlock API is uncommitted concurrent work in ../Airlock; no remote branch contains it. CI must remain visibly blocked until that snapshot is published/pinned, rather than silently compiling a different API."
+        },
+        {
+          "at": "2026-10-29T00:38:01Z",
+          "by": "codex",
+          "text": "Fixed Nightly validation scripts, isolated their build outputs, retained the canonical package lock and documented actual commands. Remaining blocker: AppKit Airlock API exists in uncommitted sibling-checkout work. Publishing an accepted Airlock revision and pinning the toolchain/XcodeGen must precede clean-runner qualification. This task stays open."
+        },
+        {
+          "at": "2026-10-29T01:43:40Z",
+          "by": "codex",
+          "text": "Review and validate the complete Airlock AppKit candidate, resolve SDK compatibility and publish a pinned dependency for clean builds."
+        },
+        {
+          "at": "2026-10-29T02:12:59Z",
+          "by": "codex",
+          "text": "Published reviewed Airlock AppKit candidate in draft PR https://github.com/alexmodrono/Airlock/pull/2 and resolved it by immutable remote SHA without a sibling checkout. Actual Xcode 26.6 CI caught a Swift 6.3 erased-method Sendable conversion; an explicit main-actor closure fix is pushed and undergoing CI. Local XcodeGen 2.44.1 is now checksum-pinned for runners."
+        },
+        {
+          "at": "2026-10-29T09:55:50Z",
+          "by": "codex",
+          "text": "A disposable source snapshot resolved remote Airlock b0b9026 without a sibling checkout and built an unsigned universal Release archive. Matching arm64/x86_64 dSYMs verified for app, File Provider, helper and all four owned frameworks. The archive is explicitly not a release candidate: final source changes and actual Xcode 26.6 CI remain to qualify after commit. Evidence: /tmp/findle-release-validation-path points to archive log and symbol-validation.json. Local archive retries were caused by Xcode preferences referencing an initially unavailable external volume; no project source workaround was added."
+        },
+        {
+          "at": "2026-10-29T11:05:23Z",
+          "by": "codex",
+          "text": "Clean checkout build is reproducible. Published Airlock is pinned at b0b9026 in both manifest and lockfile; actual Debug/Nightly/Release scripts and isolated preview use the correct schemes. Clean remote source a135adf built universal optimized Release without sibling dependencies or signing settings; all seven owned executables have matching two-architecture symbols. Hosted Xcode 26.6 Nightly and preview passed. README now matches the remote dependency setup.\n\nInitial report: Documentation/initial-build-qualification.md. Hosted Debug exposed a concurrent database-open failure, explicitly recorded and reopened under DS-04; RR-02 cannot be accepted until fixed. This accepts reproducible builds and the initial report, not signed runtime or release qualification."
+        }
+      ]
+    },
+    {
+      "id": "RR-02",
+      "title": "Require automated regression checks in CI",
+      "state": "done",
+      "group": "RR",
+      "deps": ["RR-01"],
+      "at": "2026-10-29T00:06:36Z",
+      "by": "codex",
+      "desc": "Prevent regressions from reaching the release branch with tests that run on every PR.\nPriority: P0, establish before accepting the stability fixes.\n\nEvidence: .github/workflows/pr-nightly.yml runs xcodebuild build only; release.yml archives without a test gate. OnboardingPreviewTests has a separate scheme. AppInterfaceTests omits AppState, and FileProviderTests omits FileProviderExtension and ItemEnumerator, so the current suite does not exercise several critical production paths.\n\nDone when:\n- CI runs all seven main suites in Debug and optimized Nightly, plus the onboarding preview suite, with retained xcresult reports.\n- Add injectable seams or focused harnesses for actual session orchestration, provider enumeration and recovery; the relevant stability cards supply behavioral regressions.\n- A failing test prevents merge/release qualification; release preparation verifies results for the exact source revision and pinned dependencies.\n- Keep unsigned automated checks separate from the signed runtime evidence required by FN-02 and RR-03.",
+      "notes": [
+        {
+          "at": "2026-10-29T00:37:24Z",
+          "by": "codex",
+          "text": "Implemented CI matrix for seven main suites in Debug and Nightly, a separate onboarding preview job, retained xcresults/logs and a stable CI required aggregate. Local full Nightly run passed 234 tests with strict resolved dependency flags. Signing tests run before dependency preflight. Clean CI remains blocked by RR-01; required-check enforcement must wait for the live workflow to pass."
+        },
+        {
+          "at": "2026-10-29T00:39:36Z",
+          "by": "codex",
+          "text": "Final local validation: 234 tests passed in Debug and 234 in optimized Nightly, with zero failures or skipped tests; separate onboarding project passed 5 tests (7 parameterized executions) using fresh package downloads and strict canonical-lock resolution. Nine signing regressions also pass. Results are retained in build/stability-debug.xcresult, build/stability-nightly.xcresult and build/stability-onboarding.xcresult. Local toolchain is Xcode 27.1; the configured Xcode 26.6 runner still requires a real clean-CI run after Airlock is published. No signed Finder/SSO result is implied by these unsigned tests."
+        },
+        {
+          "at": "2026-10-29T11:05:23Z",
+          "by": "codex",
+          "text": "Qualify the real GitHub regression pipeline. Nightly and preview already pass; fix the captured Debug database race, then verify a fresh exact-source run and required-check enforcement."
+        },
+        {
+          "at": "2026-10-29T11:28:12Z",
+          "by": "codex",
+          "text": "The live regression pipeline passes all seven main suites in Debug and optimized Nightly, plus isolated onboarding and repository checks, on Xcode 26.6. Reports are retained in run 40863555651 (head 17e751d). Actual session, provider enumeration and recovery seams now have behavioral regressions. The first run caught the concurrent database-open failure and made CI required fail; the fixed revision is green. Release qualification verifies checks for the exact source revision and pinned inputs.\n\nThis accepts the tested CI pipeline. Remote branch protection is still GH-04 and must be enabled after security-baseline qualification; signed Finder/SSO and distribution evidence remain FN-02/RR-03. No unqualified application changes have been merged to main."
+        }
+      ]
+    },
+    {
+      "id": "DS-01",
+      "title": "Keep files when Moodle responses are incomplete",
+      "state": "done",
+      "group": "DS",
+      "at": "2026-10-29T00:06:36Z",
+      "by": "codex",
+      "desc": "A malformed Moodle response must not make previously synced coursework disappear from Finder.\nPriority: P0, release blocker.\n\nEvidence: MoodleResponses.swift:21 silently drops undecodable entries. MoodleClient.swift:461 maps the survivors and skips additional incomplete modules/files. SyncEngine.swift:306-329 treats items absent from that result as remote deletions. This is a code-derived risk; no user data-loss incident was reproduced during planning.\n\nDone when:\n- Carry response completeness through the networking/provider contract or fail the affected course safely.\n- Never infer deletions or advance a successful-sync cursor from an incomplete snapshot. Preserve the last good outline and affected files; expose a retryable partial result.\n- Regression fixtures cover malformed sections/modules/files, missing identifying fields and truncated responses after a successful sync.\n- A complete response containing a genuine deletion still removes the correct remote item, while personal files and their ancestors remain intact.\n\nExtend the existing lossy-decoding and course-scope tests.",
+      "notes": [
+        {
+          "at": "2026-10-29T00:24:31Z",
+          "by": "codex",
+          "text": "Implement conservative incomplete-course rejection with networking and sync regressions."
+        },
+        {
+          "at": "2026-10-29T00:32:43Z",
+          "by": "codex",
+          "text": "Incomplete Moodle course snapshots now fail without deleting existing Finder files or advancing the course cursor, outline, or change counter. Malformed sections, modules, contents, and missing identity/type/content fields are rejected conservatively. Complete responses still remove genuinely deleted resources while retaining personal files and their ancestors. Reviewed the preservation path; 56 networking and 19 sync regressions passed. A syntactically complete but silently truncated server response remains undetectable without a server-side completeness contract."
+        }
+      ]
+    },
+    {
+      "id": "DS-02",
+      "title": "Commit each course update atomically",
+      "state": "done",
+      "group": "DS",
+      "deps": ["DS-01"],
+      "at": "2026-10-29T00:06:36Z",
+      "by": "codex",
+      "desc": "Finder and the companion should see one coherent course revision, including its sync time, after a refresh or interruption.\nPriority: P0, release blocker.\n\nEvidence: SyncEngine.swift:322-345 separately saves added/modified items, deletions, the cursor and the outline, with a cancellation point between them. Database methods have individual transactions, but there is no single transaction for the course publication.\n\nDone when:\n- Commit the accepted course snapshot, deletion records, outline and success cursor in one database transaction; notify Finder only after commit.\n- Cancellation, an injected SQLite failure or process termination leaves either the previous complete revision or the new complete revision.\n- Tests read concurrently from separate app/extension/helper database connections and cover updates, deletions, reintroduced IDs and replay after interruption.\n- Change counters remain monotonic and existing personal items, tags and local-content preservation rules survive.\n\nUse the completeness contract from DS-01; avoid a broad persistence rewrite.",
+      "notes": [
+        {
+          "at": "2026-10-29T00:33:08Z",
+          "by": "codex",
+          "text": "Implement a single atomic course publication and verify rollback, reader visibility, cancellation, and notification behavior."
+        },
+        {
+          "at": "2026-10-29T00:36:08Z",
+          "by": "codex",
+          "text": "Course items, deletions/tombstones, cursor, outline and trigger-driven counters now publish in one SQLite transaction. Reviewed the synchronous commit and rollback path. 133 networking, persistence and sync tests pass, including injected failures at each publication stage, three concurrent readers, cancellation, no Finder notification on failure, replay, and SQLite subprocess termination before/after commit. The process-termination test validates SQLite durability; signed app upgrade tests remain in RR-03."
+        }
+      ]
+    },
+    {
+      "id": "DS-03",
+      "title": "Prove personal files survive recovery and upgrades",
+      "state": "done",
+      "group": "DS",
+      "at": "2026-10-29T00:06:36Z",
+      "by": "codex",
+      "desc": "Keep the user's own files recoverable through the major-version migration and every maintenance action.\nPriority: P0, release blocker.\n\nEvidence: PersonalFileStore and PersonalFilesReconciler now move legacy content into an external folder, preserve IDs with extended attributes and resolve Moodle filename clashes. Existing tests cover normal migration and a database wipe; interruption and live concurrent-edit coverage is still needed.\n\nDone when:\n- Use disposable legacy and current fixtures to test upgrade, unsubscribe/resubscribe, reconnect, logout, provider reset and database rebuild.\n- Inject failures before/after file copy, rename and database commit; also test missing/unreadable stores, corrupt markers, unavailable extended attributes, disk-full errors and edits arriving during reconciliation.\n- Compare file hashes and stable identities before/after, with zero lost or overwritten personal files. An incomplete scan must not be interpreted as deletion.\n- Repeating migration is safe, partial work is recoverable, and Recovery never removes the only usable copy.\n- Record which preservation checks require the signed upgrade rehearsal in RR-03.",
+      "notes": [
+        {
+          "at": "2026-10-29T01:03:41Z",
+          "by": "codex",
+          "text": "Validate personal-file recovery with disposable stores and deterministic interruption/failure cases; fix data-loss paths found."
+        },
+        {
+          "at": "2026-10-29T01:55:52Z",
+          "by": "codex",
+          "text": "Personal-file recovery now fails closed on incomplete, changing or unreadable scans. Published copies retain stable identity on replay, legacy originals remain recovery copies, and empty anchors are removed only if still empty. Final database writes compare expected rows under a write transaction, preserving Finder edits and newly added children at the last boundary. Reviewed the late-write regressions; all 81 persistence tests pass, including 36 personal-file tests. Signed upgrade preservation remains a separate RR-03 qualification gate."
+        },
+        {
+          "at": "2026-10-29T01:55:52Z",
+          "by": "codex",
+          "text": "Accepted after review and the final late-write migration regression under the user’s authorization."
+        }
+      ]
+    },
+    {
+      "id": "DS-04",
+      "title": "Make database transitions and provider reset recoverable",
+      "state": "doing",
+      "group": "DS",
+      "deps": ["DS-03"],
+      "at": "2026-10-29T00:06:36Z",
+      "by": "codex",
+      "desc": "Recover Finder integration without discarding the last usable database or silently stopping automatic sync.\nPriority: P0, release blocker.\n\nEvidence: AppState.resetProvider stops automatic sync, snapshots state, then uses try? to open the fallback database before removing the domain. Failed fallback opening does not currently abort removal, and the function has no explicit schedule restart. Database.swift already serializes schema migrations; retain that protection.\n\nDone when:\n- Stop and await active writers, verify a complete durable snapshot and usable fallback handle before domain removal, and retain a recoverable state on every failure.\n- After successful reseeding, rebind consumers and restore watchers/automatic sync; surface an actionable error if recovery fails.\n- Inject failures at fallback open, domain remove/add, seed copy and schema upgrade, including process interruption and database contention.\n- Old supported schemas upgrade safely; concurrent host/extension opens agree on schema and seed completion.\n- A binary opening an unsupported newer schema takes a safe, explicit path; rollback never blindly overwrites a newer store.\n\nRun fault scenarios only against disposable copies.",
+      "notes": [
+        {
+          "at": "2026-10-29T01:55:53Z",
+          "by": "codex",
+          "text": "Replace partial snapshots and unsafe resets with verified durable recovery, safe schema handling and fault-injected transaction tests."
+        },
+        {
+          "at": "2026-10-29T10:07:54Z",
+          "by": "codex",
+          "text": "Ready for review: reset drains session writers, verifies a durable complete SQLite backup and binds its fallback before removing Finder integration. Removal preserves downloaded files; legacy originals are relocated outside provider state without changing their inode, including unindexed children, so writes through an already-open file survive. Missing files, cross-volume relocation failures, and unfamiliar legacy layouts stop removal. Failure paths retain recovery state and actionable errors; newer schemas disable writes rather than silently resuming bootstrap sync.\n\nSchema migration and whole-database restoration are atomic. Future schemas are rejected before schema/WAL changes. A bounded process lock now coordinates schema/WAL initialization after stress exposed concurrent-opening lock conversion failures. Verified: final 95 persistence tests, 40 interface/service tests including reset stages, actual Nightly app build, and 30 complete optimized persistence runs (94 tests per run before the final lock-link regression). Tests cover interruption before/after restore commit, replay, SQLite contention, missing WAL, failed migrations, concurrent openers, preserved late file writes, and reset failure stages. Evidence: build/ds04-verified-persistence-tests.log, build/ds04-final-app-build.log, build/ds04-reset-tests.log, and build/ds04-locked-persistence-*.log.\n\nNo installed data or provider domains were changed. Signed OS lifecycle and upgrade rehearsal remains RR-03. Supported divergent databases are not merged; restoration rejects newer schemas and higher destination change counters."
+        },
+        {
+          "at": "2026-10-29T10:34:45Z",
+          "by": "codex",
+          "text": "Finder reset now drains writers and verifies a complete durable fallback before removal. It preserves original personal-file inodes and downloaded data, keeps a usable recovery handle on failures, and resumes the session only when its schema is supported.\n\nIndependent review caught and fixed one final destructive edge case: a bound bootstrap database must not replace a different saved provider database. Reset now checks the actual provider file, rejects future schemas, retired handles and divergent saved state, and stops before removal.\n\nAccepted evidence: 95 persistence tests; 30 optimized repetitions of the preceding 94-test suite; fault-injected reset stages; 52 interface tests including six actual-provider guard scenarios; and final whole-app compilation. Combined Debug/Nightly suites each passed 357 tests before the final auth follow-ups. No installed data was used for fault injection. Real signed File Provider removal, upgrades and SSO remain explicitly gated by FN-02/RR-03."
+        },
+        {
+          "at": "2026-10-29T10:58:21Z",
+          "by": "codex",
+          "text": "Reopened after the first hosted Xcode 26.6 Debug run exposed a real concurrent schema-open failure (SQLite 3850 at BEGIN). Local Debug/Nightly passed, and hosted Nightly passed, but that does not dismiss the failure. Investigating and adding evidence before accepting again."
+        },
+        {
+          "at": "2026-10-29T11:12:06Z",
+          "by": "codex",
+          "text": "Added a regression that fails on the old code while an ordinary data writer is active: opening an already-current schema unnecessarily attempts BEGIN IMMEDIATE and times out. Current-schema opens now validate the version without taking that write transaction; genuine upgrades retain the transaction and version recheck. All 96 persistence tests pass in Debug and Nightly, plus 100 repetitions of three opener scenarios per configuration (600 executions). The original hosted SQLite 3850 was not reproduced locally; keep this task open until the Xcode 26.6 rerun confirms the fix."
+        },
+        {
+          "at": "2026-10-29T11:28:12Z",
+          "by": "codex",
+          "text": "Accepted again after the real hosted rerun: Xcode 26.6 Debug and optimized Nightly both passed, with CI required green in run 40863555651 at head 17e751d. The no-op migration write lock was removed, genuine upgrades retain transactional checks, and the new held-writer regression plus repeated concurrent openers passed locally and in the hosted suite. Earlier recovery, fallback, unsupported-schema and personal-file preservation evidence remains valid. Signed operating-system upgrade/reset qualification remains RR-03."
+        },
+        {
+          "at": "2026-10-29T12:39:59Z",
+          "by": "codex",
+          "text": "Reopened: current hosted CI Nightly and two stress lanes reproduced the original concurrent schema-upgrade failure (SQLite3850 at BEGIN). A new standalone C reproduction now captures errno9 EBADF locally, proving the earlier successful rerun and no-op-lock fix did not resolve this separate defect. Investigating readonly preflight/writer connection lifetimes without retrying I/O errors or weakening recovery safeguards. All experiments use disposable databases."
+        },
+        {
+          "at": "2026-10-29T13:03:36Z",
+          "by": "codex",
+          "text": "Root cause confirmed: Apple SQLite attempts an OFD write lock on a live read-only probe descriptor, returning EBADF. Added a process-local gate around all initializer probes/schema/WAL setup and read-only diagnostic captures; normal database operations remain concurrent. Independent lock-order review found no blocker. All 98 optimized persistence tests pass. The new diagnostic/migration regression fails against the original source on its first fixture with the exact hosted SQLite3850, then passes with the fix. Repetition and hosted qualification are still pending."
+        },
+        {
+          "at": "2026-10-29T13:07:32Z",
+          "by": "codex",
+          "text": "Committed 678ef07 after 98 optimized persistence tests and 120 passing executions across six regression tests (20 repetitions each, stop on first failure). The new regression was also run against the original production code and failed immediately with the same SQLite3850. Source hashes were frozen and unrelated concurrent UI edits excluded. Retained source/logs/xcresults: /Volumes/Pheidippides/Developer/Xcode/DerivedData/findle-sqlite-lock-fix.1nddr24d. Keep task open until fresh hosted qualification passes."
+        },
+        {
+          "at": "2026-10-29T14:38:00Z",
+          "by": "codex",
+          "text": "The previous SQLite lock failure is fixed, but fresh hosted CI exposed a second initialization defect: a diagnostic reader can run before a newly switched WAL store has its sidecars ready. A standalone probe reproduces SQLite CANTOPEN14 immediately; a writer metadata read inside the initialization gate passes 1,000 rounds. The new production regression also fails before the fix for both a fresh store and a migrated store. The focused fix is undergoing repeated optimized tests before another hosted qualification. Signed reset/upgrade checks remain separate and will not use the real account destructively."
+        },
+        {
+          "at": "2026-10-29T14:49:04Z",
+          "by": "codex",
+          "text": "Committed 12487d2: initialization now prepares WAL while holding the existing gate, so immediate read-only diagnostics succeed. The new regression fails before the fix for fresh and migrated stores; the fix passes 140 repeated optimized checks. Both full local suites pass 403 tests, zero failures/skips. A separate empty-WAL fixture now explicitly disables SQLite's keep-sidecars policy before checkpoint/close, preserving its no-sidecar precondition and production defaults. Independent C evidence verifies committed data/schema through 1,000 fixture repetitions. Exact source hashes, red/green results and findings are retained at /Volumes/Pheidippides/Developer/Xcode/DerivedData/findle-sqlite-lock-fix.1nddr24d. Fresh hosted qualification remains required."
+        }
+      ]
+    },
+    {
+      "id": "RS-01",
+      "title": "Restore reliable Finder sync and file downloads",
+      "state": "doing",
+      "group": "RS",
+      "at": "2026-10-29T00:06:36Z",
+      "by": "codex",
+      "desc": "Resolve the Finder sync-disabled incident and verify that coursework can be listed and opened after updates and restarts.\nPriority: P0, first runtime investigation.\n\nEvidence: FN-02 records a Finder sync-disabled banner and File Provider -2005 item errors. The cause remains unconfirmed. FileProviderExtension.swift treats an unavailable database as serverUnreachable for item lookup but notAuthenticated for enumeration, which merits a regression test.\n\nDone when:\n- Capture the failing item/domain, build, database/seed state, error domain/code and reproduction before choosing a fix.\n- Distinguish transient database/registration failures from a genuinely signed-out account; verify consistent root, working-set and child enumeration.\n- Exercise stable item IDs/parents, change anchors and tombstones while syncing, restarting the extension and upgrading.\n- Materialize representative files, including zero-byte/large files; cover cancellation, retry, invalid content, full disk and stale versions without corrupt files or duplicate completions.\n- Signed Nightly demonstrates enumeration and download without the recorded banner/error; attach evidence to FN-02.\n\nDo not use destructive reset as a substitute for diagnosis.",
+      "notes": [
+        {
+          "at": "2026-10-29T01:43:40Z",
+          "by": "codex",
+          "text": "Investigate the recorded provider failure, repair enumeration/download correctness and validate with disposable fixtures before signed integration."
+        },
+        {
+          "at": "2026-10-29T01:52:04Z",
+          "by": "codex",
+          "text": "22 provider regressions pass for enumeration, anchors, failed reads, cancellation, truncated or invalid content, disk-full publication, stale versions, zero-byte and sparse large files, and duplicate callbacks. Read-only installed-app inspection has not reproduced the original -2005 incident; signed diagnosis and materialization remain open."
+        },
+        {
+          "at": "2026-10-29T11:16:08Z",
+          "by": "codex",
+          "text": "Private installed-provider diagnostics captured 13 retained cannotSynchronize (-2005) failures with no scheduled retry. All 13 join to metadata-upload rows whose only field is modification time. The synced-item modifyItem guard rejects that field; this is a concrete source/operation match, unlike the earlier generic registration hypothesis. Implementing a targeted metadata fix and regression harness; signed runtime proof remains open. Native computer-use calls currently fail with cgWindowNotFound for both Findle and Finder."
+        },
+        {
+          "at": "2026-10-29T11:28:12Z",
+          "by": "codex",
+          "text": "Targeted production metadata handler now returns unsupported modification-time fields without a permanent error or database write, while preserving tags and remote-content restrictions. All 28 optimized File Provider tests pass, including six incident regressions; production app/extension compile for both architectures. Signed Nightly builds now receive an explicit newer build number so the OS can recognize extension updates and retry parked failures. No reset or broad error-clearing operation was used; live recovery is not yet proven."
+        }
+      ]
+    },
+    {
+      "id": "RS-02",
+      "title": "Report partial syncs accurately and recover from outages",
+      "state": "done",
+      "group": "RS",
+      "deps": ["DS-01"],
+      "at": "2026-10-29T00:06:36Z",
+      "by": "codex",
+      "desc": "Show which courses actually synced and let failed work recover without losing offline access.\nPriority: P1, required before release.\n\nEvidence: SyncEngine.syncAllCourses logs non-authentication course failures and returns successfully. AppState.swift:1512-1517 then sets completed, updates lastSyncDate and sends a completion notification for all selected courses.\n\nDone when:\n- Return a structured result distinguishing succeeded, failed, cancelled and incomplete courses; report counts and retain each course's last successful timestamp.\n- Never report complete success when any selected course failed or was skipped. Empty selection is an explicit no-op.\n- Test one/all-course failure, offline startup, network loss, HTML login responses, timeout, rate limiting, server errors, cancellation and recovery.\n- Retry only suitable operations with bounded backoff; do not replay credential submissions. Verify cached browsing remains usable and interrupted downloads can be retried.\n- Notifications, companion status and diagnostics agree with persisted outcomes.\n\nRetain the existing bounded course concurrency and authentication-error handling.",
+      "notes": [
+        {
+          "at": "2026-10-29T01:03:41Z",
+          "by": "codex",
+          "text": "Implement structured course outcomes and consistent partial-success reporting with cancellation/failure regressions."
+        },
+        {
+          "at": "2026-10-29T01:38:49Z",
+          "by": "codex",
+          "text": "Sync now returns a complete per-course report, preserves prior successful cursors on failure, and persists the latest outcome per site across relaunch. Failed, incomplete, cancelled, skipped and empty runs cannot become full success or send a success notification. Pinned-download failures are reported and retryable; credential submissions are never replayed. Reviewed the scheduling/cancellation and presentation policy. 66 focused tests (68 executions) pass, including HTTP/transport failures, unsubscribe, cancellation, retry, per-site persistence and notification/timestamp policy. Final AppState/diagnostic integration compiles and its focused tests pass. Actual signed Finder/offline/notification interactions remain in RR-03 and FN-02."
+        },
+        {
+          "at": "2026-10-29T01:43:40Z",
+          "by": "codex",
+          "text": "Accepted under the user’s authorization after implementation review and focused regression checks. Signed end-to-end qualification remains tracked separately in FN-02 and RR-03."
+        }
+      ]
+    },
+    {
+      "id": "RS-03",
+      "title": "Make sign-in and session changes safe during active work",
+      "state": "doing",
+      "group": "RS",
+      "at": "2026-10-29T00:06:36Z",
+      "by": "codex",
+      "desc": "Cancelling setup, reconnecting or signing out must leave one coherent session with no stale work writing into it.\nPriority: P1, required before release.\n\nEvidence: AppState owns bootstrap, sync, tracking, reconciliation and scheduled tasks. Browser SSO has duplicate-callback protection, embedded SSO has cancellation handling, and the existing browser tests cover off-main and duplicate callbacks. End-to-end session transitions are not covered by AppInterfaceTests.\n\nDone when:\n- Exercise sign-out/reconnect/reset/unsubscribe while sync, download, personal-file reconciliation and sign-in are suspended; late callbacks cannot restore old state or write through a retired database.\n- Browser and embedded SSO finish exactly once on success, close/back navigation, cancellation, launch failure, missing/late callback and repeated attempts.\n- Distinguish expired credentials from temporary Keychain or connectivity failures; restarting preserves the correct account and subscriptions.\n- Password and both SSO modes are represented in the matrix. FN-02 supplies signed real-institution checks; preview results alone do not count.\n- Tests use controlled suspension points rather than timing sleeps and run under optimized settings.\n\nUse a dedicated test account for destructive session scenarios.",
+      "notes": [
+        {
+          "at": "2026-10-29T01:43:40Z",
+          "by": "codex",
+          "text": "Audit session ownership and cancellation, then test suspended sign-in and background work against retired sessions."
+        },
+        {
+          "at": "2026-10-29T01:52:04Z",
+          "by": "codex",
+          "text": "Browser cancellation now completes without waiting for a system callback; retry and late-callback races are guarded by attempt identity. Embedded callbacks are buffered until the waiter arrives and settle once. All 64 networking tests pass under optimized Nightly; app session ownership fixes are in progress."
+        },
+        {
+          "at": "2026-10-29T02:20:36Z",
+          "by": "codex",
+          "text": "Actual sign-in orchestration now uses tested generation ownership and an exclusive cancel/drain/persist boundary. Eleven controlled suspension tests plus 40 interface cases pass, and the app compiles. Late course/tracking/cover/validation/notification work cannot publish into a retired session; cancellation clears current task ownership. The real signed account-transition matrix and stalled File Provider XPC behavior remain unqualified. Legacy personal-file preservation on logout is being checked before acceptance."
+        },
+        {
+          "at": "2026-10-29T10:44:20Z",
+          "by": "codex",
+          "text": "Final auth/session code validation passed: full Debug and Nightly suites each 372 tests, no failures/skips; source hashes unchanged throughout. Embedded authentication now acquires session ownership before WebKit starts, so logout retires suspended and deferred providers; controller cleanup is attempt-scoped. Persistent WebKit stores are removed only after actual view release, with a bounded persisted retry queue and startup cleanup. Close/process termination resolve waiters; secure nonce failure aborts before auth creation; token-bearing callback hosts/full URLs are never passed to logging. Signed institutional SSO and stalled File Provider XPC qualification remain open."
+        },
+        {
+          "at": "2026-10-29T11:42:17Z",
+          "by": "codex",
+          "text": "User explicitly limits the existing account to nondestructive checks. Sign-out, reset and destructive transition trials require a disposable account and remain unqualified; controlled automated cancellation/session tests are already implemented and passing."
+        }
+      ]
+    },
+    {
+      "id": "RS-04",
+      "title": "Stress Finder attachment and keep the app responsive",
+      "state": "doing",
+      "group": "RS",
+      "at": "2026-10-29T00:06:36Z",
+      "by": "codex",
+      "desc": "Keep the companion correct and responsive while Finder changes windows, folders, displays and permissions.\nPriority: P1, required before release.\n\nEvidence: appkit-migration.md records an unresolved empty-folder case when Finder omits document metadata. FinderWindowObserver polls every 120 ms and performs bounded Accessibility traversal on the main actor. Existing geometry tests do not establish runtime responsiveness.\n\nDone when:\n- Add regressions for ambiguous/missing metadata, renamed courses and paths, and permission denial/revocation.\n- Extend FN-02 with all Finder view modes, empty folders, tabs/windows, relaunch, Spaces, display removal and sleep/wake; never attach to a guessed unrelated course.\n- Resolve the empty-folder limitation or document a safe fallback with explicit acceptance.\n- Profile a representative large course set and file tree; record CPU, memory and interaction latency with the panel visible, hidden and disabled.\n- No sustained resource growth after repeated open/close cycles; observation stops when disabled and sync remains usable without Accessibility permission.\n\nRetain the existing placement and presentation tests; change architecture only where measurements justify it.",
+      "notes": [
+        {
+          "at": "2026-10-29T00:39:36Z",
+          "by": "codex",
+          "text": "Additional measured responsiveness signal: the isolated onboarding test run passed but recorded one priority-inversion runtime warning in AirlockUI/AirlockFlowController.swift (user-interactive thread waiting on default-QoS work). Reproduce/profile before accepting the shared UI dependency; do not label this a confirmed hang. Evidence: build/stability-onboarding.xcresult. No warning appeared in the main Debug or Nightly test results."
+        },
+        {
+          "at": "2026-10-29T02:20:36Z",
+          "by": "codex",
+          "text": "Investigate the reproduced onboarding QoS warning with stack evidence and stress Finder attachment lifecycle in disposable previews; retain the signed Spaces/multimonitor matrix as a separate runtime check."
+        },
+        {
+          "at": "2026-10-29T10:02:22Z",
+          "by": "codex-helper",
+          "text": "Companion lifecycle fixes stop the 120 ms Finder poll when disabled, inactive, or denied/revoked Accessibility access; start/stop and queued notifications are guarded, and an active observer releases its timer on deinit. Eight focused regressions include 100 attachment geometry cycles with actual NSWindow/CompanionPanel objects and 300 hidden native create-close pairs. After run-loop cleanup, every window/panel pair was released; RSS was 104.48 MB baseline, then 115.44 / 86.38 / 76.58 MB across three batches, total process CPU 1.487 s. This is a short native fixture, not a visible full-app or live AX soak. AppInterfaceTests passed 11 XCTest plus 48 Swift Testing cases (build/rs04-window-lifetime-tests.log).\n\nThe onboarding QoS warning was symbolicated to Foundation NSConditionLock and AppKit data detection/spelling during field-editor resignation (AirlockFlowController.swift:104 only triggers removal). The fix is in Findle address/credential field editors; no Airlock source change. Before: preview-2.xcresult recorded one warning. After: the native literal-input teardown regression and full three-mode onboarding preview pass with zero runtime warnings (Test-Findle-OnboardingPreview-2026.10.29_10-52-22-+0100.xcresult; build/rs04-qos-symbolicated.txt).\n\nStill unqualified: actual Finder AX responsiveness with a large course tree, visible/hidden/disabled full-app CPU, long-duration memory soak, real permission revocation, Spaces, sleep/wake, tabs, and multimonitor/display removal. Existing conservative empty-folder fallback remains; do not accept RS-04 as fully complete from these fixtures."
+        }
+      ]
+    },
+    {
+      "id": "RS-05",
+      "title": "Bound helper requests and isolate helper failures",
+      "state": "done",
+      "group": "RS",
+      "deps": ["RS-07"],
+      "at": "2026-10-29T00:06:36Z",
+      "by": "codex",
+      "desc": "Malformed or stalled assistant requests must not crash the helper or degrade Finder sync.\nPriority: P1, required if the MCP helper ships.\n\nEvidence: HTTPServer.swift:138-140 accepts a negative Content-Length before passing it to prefix. The receive loop accumulates data without an overall size limit or read deadline. These are source-level findings, not results from a live exploit or crash test.\n\nDone when:\n- Reject negative, overflowing, conflicting and unsupported request lengths; cap headers/body size, concurrent connections and read time.\n- Tests cover fragmented input, incomplete headers, disconnects, slow clients, invalid credentials and port conflicts without crashes or unbounded memory.\n- Exercise helper reads during sync, schema upgrade and provider reset; reconnect or fail clearly when its database handle/path is retired.\n- Release and Nightly select their own data, index, port and configuration; helper failure leaves the main app and File Provider working.\n- Keep the helper's database access read-only and credentials out of responses and logs.\n\nExtend the existing HTTPRequest, Catalog and IndexStore tests.",
+      "notes": [
+        {
+          "at": "2026-10-29T00:24:31Z",
+          "by": "codex",
+          "text": "Harden HTTP framing, request limits and lifecycle with focused tests; record remaining helper lifecycle coverage separately."
+        },
+        {
+          "at": "2026-10-29T00:38:01Z",
+          "by": "codex",
+          "text": "HTTP transport portion is accepted as RS-07. Remaining work is database retirement/replacement behavior, channel isolation and failure containment during signed integration; no background implementation is running."
+        },
+        {
+          "at": "2026-10-29T01:03:41Z",
+          "by": "codex",
+          "text": "Complete helper database retirement/replacement behavior and Release/Nightly configuration isolation."
+        },
+        {
+          "at": "2026-10-29T01:38:49Z",
+          "by": "codex",
+          "text": "Helper requests now reopen and validate the configured database, detect retirement/schema/seed/account changes, keep query-only access, and isolate caches by installation, source generation and account. Removed cross-channel folder guessing and unsafe database fallback. File Provider root discovery has a three-second deadline even when XPC ignores cancellation; unavailable file access leaves structural tools usable. Reviewed lifecycle and cache validation. 59 helper tests pass, plus an executable authenticated-HTTP smoke against a missing disposable database that returned a clear error without creating the store. Existing RS-07 supplies transport limits. Packaged helper access and signed app/extension coexistence are still exercised by RR-03."
+        },
+        {
+          "at": "2026-10-29T01:43:40Z",
+          "by": "codex",
+          "text": "Accepted under the user’s authorization after implementation review and focused regression checks. Signed end-to-end qualification remains tracked separately in FN-02 and RR-03."
+        }
+      ]
+    },
+    {
+      "id": "RS-06",
+      "title": "Capture actionable, redacted stability diagnostics",
+      "state": "done",
+      "group": "RS",
+      "at": "2026-10-29T00:06:36Z",
+      "by": "codex",
+      "desc": "Make failures diagnosable from one export so recovery does not depend on guesswork or resetting the user's account.\nPriority: P1, start early to support investigations.\n\nEvidence: DiagnosticsController currently exports only timestamp, course count, overall sync status and last sync. It omits build identity, domain state, schema/seed status and per-course failures needed for the FN-02 incident.\n\nDone when:\n- Export build/revision, OS/architecture, installation channel, schema/seed state, provider health, per-course outcome and recent bounded error events.\n- Correlate a sync/recovery attempt across host and extension, preserving error domains/codes without tokens, passwords, callback payloads or unnecessary personal paths.\n- Capture crash/hang evidence and retain matching release symbols; document a short reproduction and recovery procedure.\n- Tests prove sensitive values are redacted and export still works when the database or provider is unavailable.\n- Reproduce one known failure and show that the export identifies the failed operation.\n\nUse local diagnostics; adding a hosted telemetry service is outside this plan.",
+      "notes": [
+        {
+          "at": "2026-10-29T01:03:41Z",
+          "by": "codex",
+          "text": "Implement bounded, redacted diagnostics that remain useful when database or provider state is unavailable."
+        },
+        {
+          "at": "2026-10-29T01:25:39Z",
+          "by": "codex",
+          "text": "Implemented a structured privacy boundary, a bounded shared event journal, a read-only database health probe and a deadline-limited provider probe. Nine focused tests pass, including preservation of the known File Provider -2005 code without leaking descriptions, tokens or paths; export works with unavailable services and a deliberately stalled provider. Integrating actual sync/download/registration events and final build verification before accepting the card. UI-copy review: counter 0 to 0; existing actionable maintenance confirmation retained under U4."
+        },
+        {
+          "at": "2026-10-29T01:38:49Z",
+          "by": "codex",
+          "text": "Diagnostics now export build/revision/channel, OS, schema/seed/counters, provider health, persisted course outcomes and a bounded cross-process event journal. Original safe error domains/codes survive without credential-bearing descriptions, callback payloads or personal paths; registration and download attempts can be correlated with sync context. Bootstrap events survive adoption of a provider store. Missing/corrupt/newer-layout databases and stalled provider probes still produce an export. Eleven diagnostics regressions plus six File Provider tests pass; known missing-store and injected -2005 failures identify the failed operation/code. Workflow/repository checks pass. Documented local crash/hang evidence and matching retained release symbols; no hosted telemetry. UI-copy review 0→0, preserving useful error and maintenance controls."
+        },
+        {
+          "at": "2026-10-29T01:43:40Z",
+          "by": "codex",
+          "text": "Accepted under the user’s authorization after implementation review and focused regression checks. Signed end-to-end qualification remains tracked separately in FN-02 and RR-03."
+        }
+      ]
+    },
+    {
+      "id": "RR-03",
+      "title": "Rehearse signed upgrades and distribution recovery",
+      "state": "todo",
+      "group": "RR",
+      "deps": ["RR-02", "DS-01", "DS-02", "DS-03", "DS-04", "RS-01", "RS-02", "RS-03", "RS-05", "FN-02", "GH-07"],
+      "at": "2026-10-29T00:06:36Z",
+      "by": "codex",
+      "desc": "Demonstrate that users can install and upgrade the actual release artifact without losing accounts, subscriptions or personal files.\nPriority: P0 release gate, after core fixes and FN-02.\n\nDone when:\n- Use disposable profiles/copies to cover clean install and upgrade from the latest shipped version and relevant Foodle/Findle identities. Confirm the supported upgrade origins first.\n- Run on minimum-supported macOS 15 and macOS 26, plus any additional supported release versions and shipping architectures; record unavailable coverage explicitly.\n- Verify exported app/extension/helper signatures, entitlements, version agreement, notarization, launch, login item, real File Provider registration, SSO, sync and materialization.\n- Test Release/Nightly coexistence across Keychain, databases, preferences, personal files, domains, helper configuration/ports and Spotlight.\n- Exercise Sparkle updates and interrupted replacement using a private test feed. Nightly must not update into Release.\n- Verify backup/restore recovery; do not assume an old binary can safely open a migrated schema. Preserve originals.\n\nAttach exact artifact hashes and results. This rehearsal does not authorize publishing an update."
+    },
+    {
+      "id": "RR-04",
+      "title": "Qualify the major release with a soak and go/no-go record",
+      "state": "todo",
+      "group": "RR",
+      "deps": ["RR-03", "RS-04", "RS-06", "FN-04", "AR-03", "AR-04", "GH-04", "GH-06", "RS-08"],
+      "at": "2026-10-29T00:06:36Z",
+      "by": "codex",
+      "desc": "Approve a specific release candidate only after the stability work and the current interface reviews have passed.\nPriority: final release gate.\n\nProposed acceptance:\n- Run a 48-hour signed-build soak with at least 100 sync cycles, including offline/online transitions, sleep/wake, extension restart, repeated file materialization and app relaunch.\n- Before/after manifests show zero personal-file loss or corruption; no reproducible crash, hang, stuck download or permanently disabled provider remains.\n- All automated suites pass for the candidate revision; signed upgrade and FN-02 results identify the same build, dependencies and tested platforms.\n- Record CPU/memory trends under a fixed workload; investigate sustained growth. Every known issue has severity, reproduction and disposition.\n- Zero unresolved P0/P1 stability defects at sign-off; any proposed exception requires an explicit owner decision and is not counted as a pass.\n- The release owner records go/no-go, recovery instructions and symbol/artifact locations. Repeat affected checks after any candidate change.\n\nP0 means data safety, broken core access or build/release blocker; P1 means other reliability work required before shipping. Existing website review WB-01 remains separate. Completing this card is release qualification, not publication.",
+      "notes": [
+        {
+          "at": "2026-10-29T00:07:50Z",
+          "by": "codex",
+          "text": "Planning basis: the current fix/stability worktree on 29 October 2026, including its uncommitted major-version work, existing Kanvas notes, appkit-migration.md, production source, test-target configuration and release workflows. This pass did not rerun the app or tests; earlier passing runs are historical evidence, not certification of the current candidate.\n\nRecommended order after approval: start RR-01 (reproducible build), DS-01 (incomplete-response deletion risk) and RS-01 (recorded Finder failure). Bring RS-06 diagnostics in early; establish RR-02 as the regression gate. Then complete data preservation/recovery and the remaining runtime cards before RR-03 and RR-04. Dependency-free investigations can proceed independently; no calendar estimate or version number is assumed.\n\nFN-02 remains the existing signed integration task. FN-04, AR-03 and AR-04 remain pending human review and are prerequisites for final qualification. WB-01 remains a separate website review. The plan adds proposals without approving, restarting or changing those tasks."
+        },
+        {
+          "at": "2026-10-29T00:18:18Z",
+          "by": "codex",
+          "text": "Repository automation extension: GH-01 through GH-08 add workflow hardening, fast quality checks, Swift/Actions CodeQL, protected merges and contribution templates, tailored CodeRabbit reviews, dependency updates, staged signed releases, and scheduled stress/coverage reporting.\n\nGitHub inspection on 29 October 2026 found two active workflows (PR Nightly Build and Release), no main branch protection/rulesets, no release environments, enabled secret scanning/push protection, disabled Dependabot security updates, and a mutable v0.2.0 release. No GitHub configuration was changed.\n\nGH-07 now feeds RR-03 so the signed rehearsal exercises the revised pipeline. GH-04 and GH-06 are additional final-qualification prerequisites; their dependencies include the workflow/security foundations. GH-05 (CodeRabbit pilot) and GH-08 (extra scheduled stress/coverage reporting) are P2 improvements and intentionally do not block the major release. Existing RR-01/RR-02 still own reproducible builds and the main automated test gate.\n\nStart RR-01/RR-02 and GH-01 first, fix release signing under GH-07 next, and enable protections after the corresponding checks have run successfully. CodeRabbit may be trialled independently; its green status is not a substitute for deterministic tests or human review."
+        },
+        {
+          "at": "2026-10-29T00:24:31Z",
+          "by": "codex",
+          "text": "User explicitly authorized Codex to approve, reject, add, remove and manage Kanvas tasks autonomously. Approved the 22 stability/automation proposals using the existing board API with ETag protection; ongoing CLI notes remain signed codex. Completion still requires actual validation. Existing unrelated interface review cards are not automatically accepted."
+        },
+        {
+          "at": "2026-10-29T00:39:36Z",
+          "by": "codex",
+          "text": "First autonomous implementation batch accepted under the user's explicit Kanvas-control authorization: DS-01 incomplete-response safety, DS-02 atomic publication, RS-07 bounded HTTP transport, GH-02 repository checks and GH-09 verified release signatures. Broader cards remain open where their acceptance requires unpublished Airlock code, live GitHub checks/app installation, signed Finder/SSO tests or soak evidence. Preserved unrelated major-version work and review cards. Changes are local and uncommitted; no release or installed app was replaced."
+        },
+        {
+          "at": "2026-10-29T01:03:51Z",
+          "by": "codex",
+          "text": "User explicitly requested sustained work until all Kanvas tasks are cleared. Continue implementation and autonomous review across the full board; do not erase validation criteria or mark unverified tasks done to reduce the task count."
+        }
+      ]
+    },
+    {
+      "id": "GH-01",
+      "title": "Harden Actions permissions and fork PR handling",
+      "state": "doing",
+      "group": "GH",
+      "at": "2026-10-29T00:16:50Z",
+      "by": "codex",
+      "desc": "Run contribution checks safely and reliably, including pull requests from forks.\nPriority: P0, foundation for the repository work.\n\nEvidence: pr-nightly.yml grants pull-requests: write across the build job and posts a PR comment from the same workflow. Fork tokens cannot normally perform that write. Actions are referenced by mutable version tags. Repository-wide token defaults are already read-only.\n\nDone when:\n- Pin action references to verified full commit SHAs and constrain write permissions to jobs that need them.\n- Unsigned builds/tests run without signing credentials. A failed or unavailable artifact comment cannot turn a successful fork build red.\n- Use job summaries/artifact links, or a separate trusted reporter that never executes untrusted PR code or artifact contents.\n- Set timeouts, cancel superseded PR runs and cache only appropriate dependencies keyed to the toolchain and lockfile. Serialize releases without cancelling an active signing/publishing operation.\n- Test same-repository, fork and dependency-bot event behavior, plus a deliberately failing test.\n\nKeep the existing enabled secret scanning/push protection. Reference: https://docs.github.com/en/actions/reference/security/secure-use",
+      "notes": [
+        {
+          "at": "2026-10-29T00:24:31Z",
+          "by": "codex",
+          "text": "Implement least-privilege, SHA-pinned and fork-safe build automation."
+        },
+        {
+          "at": "2026-10-29T00:37:24Z",
+          "by": "codex",
+          "text": "Implementation and local workflow validation pass: least-privilege permissions, verified action SHAs, fork-safe artifact summaries, timeouts/concurrency, scoped caches and explicit Xcode. No signing secrets in PR jobs. Same-repo/fork/Dependabot live event qualification remains pending publication of the major-version snapshot and the local Airlock dependency; do not mark that acceptance criterion complete yet."
+        },
+        {
+          "at": "2026-10-29T00:38:01Z",
+          "by": "codex",
+          "text": "Workflow hardening is implemented and actionlint-valid. Keep the card open until the published major-version snapshot and pinned Airlock dependency allow real same-repo, fork and dependency-bot runs; branch protection has not been enabled against unavailable checks."
+        },
+        {
+          "at": "2026-10-29T01:52:04Z",
+          "by": "codex",
+          "text": "Validate event-safe workflow permissions and exact dependency/toolchain prerequisites before activating CI."
+        },
+        {
+          "at": "2026-10-29T11:08:06Z",
+          "by": "codex",
+          "text": "Actual PR #26 unsigned Nightly artifact, optimized tests and preview passed with read-only build permissions and job-summary links. Debug intentionally remains red on the captured SQLite race, demonstrating required aggregate failure. Focused PR #27 rolls out fork-safe artifact reporting on current main; actual fork and dependency-bot event evidence remains outstanding."
+        },
+        {
+          "at": "2026-10-29T11:16:08Z",
+          "by": "codex",
+          "text": "PR #27 first same-repository run passed using only contents:read, pinned checkout/upload actions and a job-summary artifact link. Its two valid CodeRabbit documentation findings are fixed in 8167a1f; the follow-up run is pending."
+        },
+        {
+          "at": "2026-10-29T12:03:41Z",
+          "by": "codex",
+          "text": "Actual Dependabot PR #30 completed build/package/upload/summary with only Contents:read and Metadata:read in the setup log, confirming reduced-permission reporting. This matches GitHub’s fork-equivalent Dependabot restrictions; it does not exercise external-contributor approval or fork checkout. The reviewed checkout/upload updates use official verified full SHAs; replaced the remaining floating release checkout tag before merging that bot PR. Baseline-only PRs #31/#32 are under CI before the next full stability-branch run."
+        },
+        {
+          "at": "2026-10-29T12:18:10Z",
+          "by": "codex",
+          "text": "Dependabot PR #30 is merged after exact-head build and CodeRabbit success. Both verified security findings were fixed: immutable checkout SHA and disabled credential persistence. The addressed review thread is resolved. Its Node 24 action updates are integrated into the complete stability workflows; an automatic merge duplicated one identical YAML key, removed before validation and publication. Actual external-fork qualification remains outstanding."
+        },
+        {
+          "at": "2026-10-29T12:39:17Z",
+          "by": "codex",
+          "text": "The new required CI aggregate correctly failed when Nightly reproduced the concurrent schema-opener fault. Debug, unsigned artifact build, onboarding and workflow checks passed. This confirms the fault remains unresolved despite the earlier current-schema no-op improvement; no green run is being substituted for these failures."
+        }
+      ]
+    },
+    {
+      "id": "GH-02",
+      "title": "Add fast repository quality checks",
+      "state": "done",
+      "group": "GH",
+      "at": "2026-10-29T00:16:50Z",
+      "by": "codex",
+      "desc": "Catch broken configuration and inconsistent contributions before the expensive macOS build.\nPriority: P1, required baseline.\n\nDone when:\n- Add actionlint for workflow syntax/expressions, plutil validation for property lists and entitlements, native zsh syntax checks for the existing scripts, and Kanvas board validation.\n- Adopt the pinned toolchain's swift-format lint with an agreed configuration and an explicit baseline or staged rollout. Avoid combining broad formatting churn with stability fixes.\n- Check XcodeGen generation and expected schemes; catch stale Staging references and release metadata drift.\n- Emit actionable file/line annotations where supported and expose one stable quality-check name.\n- A seeded bad workflow/plist/format violation fails the intended check, while a documentation-only PR still reports the required aggregate status.\n\nUse Linux for checks that do not need Xcode/macOS. These supplement the behavioral tests in RR-02.\nReferences: https://github.com/rhysd/actionlint and https://github.com/swiftlang/swift-format",
+      "notes": [
+        {
+          "at": "2026-10-29T00:24:31Z",
+          "by": "codex",
+          "text": "Add fast repository validation without broad formatting churn."
+        },
+        {
+          "at": "2026-10-29T00:37:24Z",
+          "by": "codex",
+          "text": "Added repository quality checks for workflows, plists/entitlements, native shell syntax, Kanvas, release metadata and generated test schemes. A separate advisory swift-format report stages adoption without rewriting existing code. Real actionlint, generated-scheme validation, and seeded bad workflow/plist/shell/stale-scheme/disabled-suite cases passed. The current local formatting baseline has 2,056 diagnostic lines; live CI uses pinned Xcode 26.6 versus local 27.1."
+        }
+      ]
+    },
+    {
+      "id": "GH-03",
+      "title": "Scan Swift code and workflows with CodeQL",
+      "state": "todo",
+      "group": "GH",
+      "deps": ["RR-01", "GH-01"],
+      "at": "2026-10-29T00:16:50Z",
+      "by": "codex",
+      "desc": "Find security defects in authentication, local HTTP handling and workflow code before they reach a release.\nPriority: P1, required baseline.\n\nDone when:\n- Configure CodeQL advanced setup for Swift with an explicit unsigned XcodeGen/xcodebuild build on a compatible macOS runner, and scan GitHub Actions workflows.\n- Verify CodeQL supports the pinned Swift/Xcode toolchain. Ensure the actual app, extension, helper and shared modules are analyzed; do not accept a green scan that extracted no relevant code.\n- Run on pull requests and trusted main, plus a weekly scan for updated queries. Do not reuse compiled outputs that prevent CodeQL extraction.\n- Triage the initial alert baseline and enforce new actionable high/critical findings after the baseline is understood.\n- Preserve secret scanning and push protection already enabled; document private reporting and alert ownership.\n\nCheck a disposable known-bad fixture to verify analysis and reporting, then remove it. Reference: https://docs.github.com/en/code-security/reference/code-scanning/codeql/build-options-for-compiled-languages",
+      "notes": [
+        {
+          "at": "2026-10-29T11:16:08Z",
+          "by": "codex",
+          "text": "First hosted Actions scan exposed query-pack rule metadata in SARIF extensions and diff-informed analysis. Fixed component-aware parsing and required full scans; 31 automation tests pass after independent SARIF-spec review. Fresh clean run is on PR #26 head 17e751d. Disposable draft PR #28 adds only a guarded, nonexecuting critical-finding fixture to verify real analyzer rejection. Never merge #28. No baseline has been approved yet."
+        },
+        {
+          "at": "2026-10-29T11:42:17Z",
+          "by": "codex",
+          "text": "Real Actions canary comparison passed: clean run 40863555679 full scan has zero findings; disposable run 40863941687 finds exactly actions/code-injection/critical severity 9 and the frozen gate rejects its new fingerprint. The canary workflow never executed; artifact hashes and exact merge SHAs are retained. PR #28 was closed without merging and its branch deleted; unnecessary remaining canary jobs were cancelled after evidence retention. Swift analysis and final baseline approval remain open."
+        },
+        {
+          "at": "2026-10-29T12:03:41Z",
+          "by": "codex",
+          "text": "Complete Swift scan finished successfully in run 40863555679: zero findings at every severity, no unresolved AST nodes, and all seven module extraction counts verified independently. Initial security baseline with no exceptions is proposed separately in PR #31. This does not bypass PR-base comparison: after merge, a fresh full run on the updated implementation branch is still required."
+        },
+        {
+          "at": "2026-10-29T12:10:25Z",
+          "by": "codex",
+          "text": "Reviewed baseline-only PR #31 is merged after successful CI and advisory review. Both language baselines reference the real scanned merge 9395de83 and contain no accepted findings. The implementation branch has merged this reviewed main baseline; the next PR event will perform a full scan against it. Remote required-check enforcement remains pending that exact fresh success."
+        },
+        {
+          "at": "2026-10-29T12:21:28Z",
+          "by": "codex",
+          "text": "PR #26 now requests a fresh full CodeQL run 40872153696 at c62356d against the separately reviewed baseline on main. The initial zero-finding/full-extraction evidence and rejected canary remain retained. Do not mark the gate qualified or enforce its context until the fresh run passes."
+        },
+        {
+          "at": "2026-10-29T13:03:36Z",
+          "by": "codex",
+          "text": "Full CodeQL run 40872153696 at c62356d completed successfully: Actions, Swift, and CodeQL required all passed against the separately reviewed main baseline. Subsequent persistence and token-destination fixes will change source, so the final implementation still needs a fresh full security run; this green result is not reused as qualification for those changes."
+        },
+        {
+          "at": "2026-10-29T14:46:48Z",
+          "by": "codex",
+          "text": "Analyzer qualification is established: the fresh full-source Swift and Actions scans and required aggregate all passed on 4a101cb (Actions run 40882491255). The reviewed baseline and deliberately rejected security canary are already retained. Remaining rollout is deployment of this workflow and weekly schedule to trusted main, with the next revision receiving its own normal scan. The outstanding fork-event qualification in GH-01 does not invalidate these analyzer results."
+        }
+      ]
+    },
+    {
+      "id": "GH-04",
+      "title": "Protect merges and capture useful review evidence",
+      "state": "todo",
+      "group": "GH",
+      "deps": ["RR-02", "GH-02", "GH-03"],
+      "at": "2026-10-29T00:16:50Z",
+      "by": "codex",
+      "desc": "Make passing tests and review evidence prerequisites for changing main.\nPriority: P1, required before release.\n\nEvidence from GitHub on 29 October 2026: main is unprotected, the repository has no rulesets, and no release environments are configured.\n\nDone when:\n- Add a main-branch ruleset requiring pull requests, the verified quality/test/security check names, resolved discussions and protection against deletion/force-push.\n- Exercise good, failing, stale and documentation-only PR cases so filtered jobs cannot leave permanent pending checks.\n- Use CODEOWNERS for persistence, auth, File Provider and release workflows where real reviewers exist. Do not require an impossible self-approval for a sole maintainer; document a narrow emergency bypass.\n- Add a concise PR template for behavior, meaningful tests, migration impact and Kanvas task ID, plus bug/crash issue forms requesting build/OS/reproduction and redacted diagnostics.\n- Update contributor guidance and verify all referenced policies actually exist.\n\nDo not enable a merge queue unless contribution volume justifies it. CodeRabbit remains advisory in the initial rollout.",
+      "notes": [
+        {
+          "at": "2026-10-29T02:12:59Z",
+          "by": "codex",
+          "text": "Added concise PR and bug/crash templates, private security-reporting guidance and contributor instructions. Sole-maintainer review avoids impossible required self-approval. Main rulesets remain pending successful exact CI/security qualification; no red check has been bypassed."
+        },
+        {
+          "at": "2026-10-29T12:25:09Z",
+          "by": "codex",
+          "text": "Basic protection is now active and independently read back: main ruleset 26120414 requires PRs and resolved discussions, blocks deletion/force-push, and permits only alexmodrono to use a PR-only emergency bypass. Zero approvals avoids impossible self-review. Version-tag ruleset 26120416 prevents v* updates/deletion with no bypass. Required CI/CodeQL contexts and good/failing/stale/docs-only qualification remain pending; no missing checks were imposed. Full policy evidence and prepared next-stage payload are retained at /Volumes/Pheidippides/Developer/findle-repository-protection.rphxdgaq."
+        }
+      ]
+    },
+    {
+      "id": "GH-05",
+      "title": "Add CodeRabbit reviews tailored to Findle",
+      "state": "done",
+      "group": "GH",
+      "at": "2026-10-29T00:16:50Z",
+      "by": "codex",
+      "desc": "Use CodeRabbit to catch project-specific correctness issues and reduce review effort.\nPriority: P2, useful early pilot; not a blocker for shipping the stability fixes.\n\nDone when:\n- Install the official GitHub App scoped to alexmodrono/Findle and commit a schema-valid .coderabbit.yaml. Public-repository reviews are currently offered free; confirm the offer during installation.\n- Use quiet or chill reviews and focused path instructions: migrations/transactions and personal-file preservation; partial-sync deletion rules; stable File Provider IDs/anchors and exactly-once callbacks; cancellation/session lifetime; token redaction; signing and Actions permissions.\n- Read AGENTS.md and project guidance; exclude generated/binary artifacts while retaining source, tests, entitlements and workflow review.\n- Keep auto-approval, auto-merge and unsolicited code-generation features off. Suppress decorative summaries and style comments already handled by deterministic checks.\n- Trial on representative small PRs and record useful findings, false positives and review time before making any bot status required.\n\nA passing CodeRabbit status can include skipped or rate-limited reviews; it is not evidence that code is correct.\nReferences: https://docs.coderabbit.ai/configuration/path-instructions ; https://docs.coderabbit.ai/pr-reviews/status-check ; https://www.coderabbit.ai/oss",
+      "notes": [
+        {
+          "at": "2026-10-29T00:24:31Z",
+          "by": "codex",
+          "text": "Prepare and validate project-specific advisory CodeRabbit configuration; separately verify GitHub App activation."
+        },
+        {
+          "at": "2026-10-29T00:38:01Z",
+          "by": "codex",
+          "text": "Schema-valid quiet CodeRabbit configuration is ready with project-specific correctness guidance, no auto-approval or unsolicited code changes. Official GitHub App activation and representative-PR pilot remain unverified; configuration alone is not an installed integration."
+        },
+        {
+          "at": "2026-10-29T02:12:59Z",
+          "by": "codex",
+          "text": "Configuration is schema-valid and advisory. Official OSS pricing remains free; installation needs a usable signed-in browser because preview snapshots time out and native browsers report cgWindowNotFound."
+        },
+        {
+          "at": "2026-10-29T09:37:33Z",
+          "by": "codex",
+          "text": "Ardia CLI reached the official GitHub App installation. Selected only alexmodrono/Findle and submitted Install & Authorize. GitHub now requires account re-authentication; GitHub Mobile verification was triggered and the user was asked to complete it. Installation is not yet confirmed."
+        },
+        {
+          "at": "2026-10-29T09:47:05Z",
+          "by": "codex",
+          "text": "Official CodeRabbit GitHub App installed successfully after user re-authentication, installation 176487214. CodeRabbit dashboard lists only Findle (public) as accessible. GitHub installation selected only alexmodrono/Findle; no organization grants or payment were added. Repository YAML remains the source for advisory quiet reviews with auto-approval and code-generation off. Config commit and representative-PR pilot remain before acceptance."
+        },
+        {
+          "at": "2026-10-29T09:51:41Z",
+          "by": "codex",
+          "text": "Confirmed current official pricing FAQ in the signed-in Ardia browser: installing CodeRabbit on a public GitHub repository provides free reviews forever with no additional setup. No paid plan or payment details were selected. Installation complete; waiting for the committed config and pilot PR evidence."
+        },
+        {
+          "at": "2026-10-29T10:26:44Z",
+          "by": "codex",
+          "text": "CodeRabbit is operational on pilot PR https://github.com/alexmodrono/Findle/pull/25. It loaded the exact repository YAML with QUIET profile, completed a COMMENTED review (no approval), and raised one minor unverified configuration finding: the default auto-pause stops reviews after five reviewed commits. Verified this against the official schema (default 5; 0 disables), applied 0, schema-validated and pushed 98976fd. No inline false positives observed in this one-file pilot; application-code review still needs a representative PR. Keep bot advisory, since success alone does not prove complete review."
+        },
+        {
+          "at": "2026-10-29T10:44:20Z",
+          "by": "codex",
+          "text": "Pilot timing: PR opened 2026-10-29T10:20:55Z, first COMMENTED CodeRabbit review completed 10:23:38Z (2m43s). One useful verified configuration finding; no inline false positives in this small config-only sample. Follow-up commit 98976fd retains review throughout longer PRs. Application-code pilot remains pending."
+        },
+        {
+          "at": "2026-10-29T11:08:06Z",
+          "by": "codex",
+          "text": "Official app installation is scoped to Findle. Configuration PR #25 is merged after successful build and advisory review; the first bot review took 2m43s and found the useful default review-pause setting, corrected before merge. Focused workflow-hardening PR #27 now supplies the representative CI review pilot. Automatic approval/merge and unsolicited code generation remain disabled."
+        },
+        {
+          "at": "2026-10-29T11:12:06Z",
+          "by": "codex",
+          "text": "CodeRabbit is installed only for alexmodrono/Findle, and its schema-valid configuration is merged in PR #25. Public-repository free reviews were confirmed during installation. Quiet reviews cover data preservation, sync, File Provider, authentication, diagnostics and workflow/signing correctness. Auto-approval, auto-merge and unsolicited code generation are disabled; generated/binary files are excluded and source/tests/entitlements/workflows retained.\n\nPilot results: configuration review arrived within 2m43s of PR creation and found the useful default five-commit pause; fixed by disabling automatic pauses. The representative workflow review in PR #27 took 3m49s from review start to publication and found two valid documentation issues: the artifact-link location and unsigned first-launch guidance. Both are fixed. Three useful minor findings, no false positives observed in these small pilots. This is limited evidence, not a measurement of defect-detection accuracy. CodeRabbit remains advisory and is not a required check."
+        }
+      ]
+    },
+    {
+      "id": "GH-06",
+      "title": "Track and update the actual build dependencies",
+      "state": "todo",
+      "group": "GH",
+      "deps": ["RR-01", "GH-01"],
+      "at": "2026-10-29T00:16:50Z",
+      "by": "codex",
+      "desc": "Keep Actions and Swift dependencies visible, reproducible and current without a stream of noisy upgrade PRs.\nPriority: P1, required baseline.\n\nEvidence: Dependabot security updates are disabled. The worktree tracks dependencies in project.yml but ignores all .xcodeproj directories and Package.resolved. Dependabot's Swift fetcher requires Package.swift or an Xcode/workspace Package.resolved; project.yml alone is insufficient.\n\nDone when:\n- Enable appropriate Dependabot alerts/security updates and grouped weekly Actions version updates, including maintained SHA pins.\n- Preserve a canonical resolved dependency set for CI and the dependency graph without tracking the whole generated project.\n- Prove that the chosen Swift update path detects and proposes changes to the source-of-truth constraints in project.yml and the resolved versions. If native Dependabot cannot handle that layout, use a narrowly scoped scheduled updater for this manifest; do not add a dummy Package.swift that can drift.\n- Demonstrate updates for Sparkle, MCP and the pinned remote Airlock; bound open update PRs and keep major bumps explicit.\n- Update PRs run the same required tests; initially avoid automatic merging of signing, networking and persistence dependency changes.\n\nReference: https://github.com/dependabot/dependabot-core/blob/main/swift/lib/dependabot/swift/file_fetcher.rb",
+      "notes": [
+        {
+          "at": "2026-10-29T00:29:13Z",
+          "by": "codex",
+          "text": "Enabled GitHub vulnerability alerts and Dependabot security updates through the repository API; readback confirms enabled=true, paused=false. Canonical remote package resolution is now exposed for tracking through narrow .gitignore exceptions without tracking the generated project. Full Swift version-update automation still waits for the remote Airlock revision and source-of-truth updater."
+        },
+        {
+          "at": "2026-10-29T12:03:41Z",
+          "by": "codex",
+          "text": "Grouped weekly GitHub Actions version updates are now enabled on main via PR #29 and produced actual Dependabot PR #30. Independent review verified official checkout v7.0.1/upload-artifact v7.0.2 commits and Node 24 runner compatibility. The bot build passed with read-only permissions; no automatic approval/merge is enabled. Swift dependency discovery/update tooling remains in the stability branch and still needs live qualification."
+        },
+        {
+          "at": "2026-10-29T18:30:57Z",
+          "by": "codex",
+          "text": "A real older-to-current MCP updater trial established published 0.12.0 as the resolver baseline and discovery selected current 0.12.1. Pheidippides disconnected again while the actual update/resolution was running, so the resolver completion and retained before/after evidence are not yet verified. This is not a completed upgrade trial. The real project remains pinned to 0.12.1; hosted proposal/PR qualification and the completed MCP trial remain open."
+        }
+      ]
+    },
+    {
+      "id": "GH-07",
+      "title": "Stage releases and reject invalid update artifacts",
+      "state": "todo",
+      "group": "GH",
+      "deps": ["RR-02", "GH-01", "GH-09"],
+      "at": "2026-10-29T00:16:50Z",
+      "by": "codex",
+      "desc": "Produce a verifiable release candidate and publish only after qualification, with no invalid Sparkle feed reaching users.\nPriority: P0, highest-priority CD fix.\n\nEvidence: release.yml can continue with an empty EdDSA signature, immediately creates a public release and then pushes the Homebrew tap. It updates only the app's version fields; the cask declares Sonoma while the app targets macOS 15. Latest release assets are mutable and omit symbols.\n\nDone when:\n- Separate build/sign/notarize/validate from promotion. Stage a draft candidate tied to exact source/dependency revisions; production promotion requires the RR-04 go/no-go record.\n- Fail before publication on missing/invalid Sparkle signature, failed notarization/stapling, signature/entitlement/version mismatches, checksum disagreement or invalid minimum OS metadata.\n- Use a protected production environment and a maintainer release decision appropriate to the actual maintainer count; expose secrets only to trusted signing jobs.\n- Retain matching dSYMs, checksums and build provenance attestations; verify attestations in the rehearsal. Publish complete, immutable release assets and protect release tags.\n- Update Homebrew only after the release is verified; make retries idempotent and rehearse failure before promotion without public side effects.\n\nThis task implements and dry-runs the pipeline; it does not publish the major release.\nReferences: https://sparkle-project.org/documentation/publishing/ ; https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations",
+      "notes": [
+        {
+          "at": "2026-10-29T02:08:33Z",
+          "by": "codex",
+          "text": "Implemented draft-only staging and a separate protected promotion workflow. Release gates check exact trusted CI revisions, bundle/signature/entitlement metadata, artifact hashes, attested provenance and a reviewed 48-hour/100-cycle signed qualification record. 21 disposable release-tool tests pass, including rejection of altered archives, incomplete evidence and stale/failed CI. GitHub environment/immutability setup and actual signed rehearsal remain open; no Findle release has been published."
+        },
+        {
+          "at": "2026-10-29T02:18:01Z",
+          "by": "codex",
+          "text": "GitHub now has release-candidate and production environments requiring the actual maintainer reviewer, scoped respectively to v* tags and main. Immutable releases are enabled and verified; the promotion prerequisite variable is set. No release or tag was created. Private vulnerability reporting is also enabled for the security-reporting link."
+        },
+        {
+          "at": "2026-10-29T09:55:51Z",
+          "by": "codex",
+          "text": "Release gate implementation now validates matching Mach-O UUIDs for every owned executable, including optimized MCP helper symbols. 24 release-tool tests pass, including real compiled Mach-O/dSYM mismatch fixtures. Homebrew promotion edits only version, checksum and reviewed minimum OS, preserves unrelated cask content, rejects unexpected layout and remains idempotent. No Findle tag, draft release, public release or Homebrew change has been made."
+        },
+        {
+          "at": "2026-10-29T10:14:01Z",
+          "by": "codex",
+          "text": "Release review closed two promotion defects: retries now reject Homebrew downgrades and same-version checksum changes; promotion publishes without latest, verifies final immutable release/asset attestations and raw-tag-to-source binding, then advances latest monotonically. Verified the release-attestation parser against GitHub CLI's official decoded fixture (repository is owner/repo; annotated tags bind the raw tag object separately from the peeled commit). All 28 release-tool tests pass; all workflows pass actionlint. Added checksum-verified create-dmg 1.3.0 at immutable commit a2b71d0fda6d0df2a86dc7f67082d4d73e84c59f before signing import. Actual disposable DMG creation and read-only inspection preserved app/Applications icon positions, 100px icons and 600x400 layout; evidence: /tmp/findle-create-dmg-layout.3Fgesk/layout-verification.json. Signed archive/notarization and live immutable publication still require the planned rehearsal. No release, tag, tap update or other remote mutation was performed in this review."
+        },
+        {
+          "at": "2026-10-29T12:25:59Z",
+          "by": "codex",
+          "text": "Version-tag ruleset 26120416 now prevents updating or deleting v* tags; read-back confirms no bypass. Both release environments already have reviewer/ref restrictions. A remaining isolation gap is recorded: signing/tap secret names exist at repository scope, but environment-scoped secrets are empty. Move credentials securely to the appropriate protected environments only after replacement values can be supplied and verified; never delete working repository secrets first. No release tag, signing execution, or public release was created."
+        },
+        {
+          "at": "2026-10-29T13:29:57Z",
+          "by": "codex",
+          "text": "Addressed the review finding that promotion relied on uninstalled ripgrep after publication: immutable-release verification now uses the gh API result and shell test, preserving API failure propagation. actionlint and28 release-tool tests pass. No publishing or signing step was executed."
+        }
+      ]
+    },
+    {
+      "id": "GH-08",
+      "title": "Schedule stress tests and report coverage changes",
+      "state": "doing",
+      "group": "GH",
+      "deps": ["RR-02"],
+      "at": "2026-10-29T00:16:50Z",
+      "by": "codex",
+      "desc": "Detect intermittent failures and test-coverage gaps without slowing every pull request.\nPriority: P2, adopt after the required PR pipeline is stable.\n\nDone when:\n- Report coverage from xcresult in Actions summaries/artifacts, including changed critical modules; begin with a measured baseline and ratchet rather than an arbitrary project-wide percentage.\n- Run scheduled and manual disposable-fixture suites for migration, cancellation, concurrent database access, malformed HTTP and repeated sync, with deterministic seeds and failure logs.\n- Use separate supported Thread Sanitizer and Address Sanitizer jobs where they add value; keep optimization-specific regressions in Nightly tests.\n- Add minimum/current macOS coverage where runner availability permits. Track execution time and flakes; do not retry failures into an unexplained green result.\n- Bound runtime/artifact retention, and make failures visible to the maintainer through normal GitHub checks/notifications.\n\nThese jobs do not replace signed File Provider, institutional SSO or the 48-hour live soak in FN-02/RR-04. Start with native coverage reports; a hosted coverage dashboard can wait until it solves a demonstrated need.",
+      "notes": [
+        {
+          "at": "2026-10-29T11:28:12Z",
+          "by": "codex",
+          "text": "Qualify coverage from the successful hosted Debug artifact and run the prepared stress lanes; keep the security and release baselines separate."
+        },
+        {
+          "at": "2026-10-29T11:42:17Z",
+          "by": "codex",
+          "text": "Successful hosted run 40863555651 confirms 373 logical tests per Debug/Nightly configuration (375 parameterized executions), zero failures/skips. Raw coverage and independent xcresult extraction agree across seven modules. Provisional measured baseline is retained for review; no arbitrary percentage floor. Added opt-in stability-stress PR label support so the four prepared lanes can be qualified before the workflow reaches main."
+        },
+        {
+          "at": "2026-10-29T12:10:25Z",
+          "by": "codex",
+          "text": "Measured coverage-only PR #32 is merged after successful CI and review. The implementation branch preserves those exact Xcode 26.6 Debug fractions from main, so its next PR event will enforce the measured floors rather than trust a head-edited baseline. Four opt-in stress lanes are ready to run on the new source."
+        },
+        {
+          "at": "2026-10-29T12:21:28Z",
+          "by": "codex",
+          "text": "Published c62356d and enabled the stability-stress label on PR #26. Actual four-lane run 40872262289 has started; its results remain unqualified until completed and inspected. Fresh CI run 40872153678 uses the measured coverage baseline from main. No further source pushes are planned while these exact-revision runs finish."
+        },
+        {
+          "at": "2026-10-29T12:39:17Z",
+          "by": "codex",
+          "text": "Fresh stress run 40872262289 passed ASan and macOS15 optimized lanes but failed macOS26 optimized/TSan on the same database-opening regression as full CI Nightly. Artifacts are retained; no rerun or failure retry was used. A standalone SQLite C harness reproduced the exact IOERR_LOCK3850 locally, with system errno9 (bad file descriptor). Investigating connection lifetime/access mode; this is not evidence of a sanitizer race or ordinary SQLITE_BUSY."
+        },
+        {
+          "at": "2026-10-29T13:29:57Z",
+          "by": "codex",
+          "text": "Latest frozen integration passes399 local Debug tests and399 optimized Nightly tests with no skips. Database regression has red-before/green-after evidence plus120 passing repeated executions. Commit08628a4 also addresses the CodeRabbit credential-destination issue. All four hosted stress lanes will rerun automatically on the labeled PR; earlier failed lane evidence remains retained."
+        },
+        {
+          "at": "2026-10-29T14:46:48Z",
+          "by": "codex",
+          "text": "The latest four hosted lanes exercised real failures: macOS 26 Nightly/TSan caught a WAL readiness defect, while macOS 26 ASan and macOS 15 Nightly passed. The failed lanes each retained 917 successful executions and one failing execution, with no skips or sanitizer warning. The focused fix now passes 140 local optimized checks, and the complete local Debug suite passes after correcting a fixture's SQLite sidecar-retention assumption. Fresh green hosted coverage and all four stress lanes remain required before this task can finish."
+        },
+        {
+          "at": "2026-10-29T14:51:54Z",
+          "by": "codex",
+          "text": "The final local implementation now passes all 403 Debug and 403 optimized Nightly tests, zero failures/skips, plus 140 focused repeated database checks. The exact committed source is 62843fc with the WAL fix in 12487d2; hashes and retained results match the frozen validation source. The remaining gate is fresh hosted coverage and all four stress lanes on the pushed revision, followed by schedule deployment to main."
+        }
+      ]
+    },
+    {
+      "id": "GH-09",
+      "title": "Reject invalid Sparkle update signatures before release",
+      "state": "done",
+      "group": "GH",
+      "at": "2026-10-29T00:25:50Z",
+      "by": "codex",
+      "desc": "P0 isolated fix extracted from GH-07 so it can ship independently of the larger release redesign. Require the pinned Sparkle signing tool, reject missing/invalid signatures, cryptographically verify each archive against the public key embedded in the app, and validate negative cases without production credentials. Align embedded version fields and retain crash symbols. Full staged promotion and provenance remain in GH-07.",
+      "notes": [
+        {
+          "at": "2026-10-29T00:25:50Z",
+          "by": "codex",
+          "text": "Require a pinned signer and verify Ed25519 signatures against the shipped public key; test with disposable generated fixtures."
+        },
+        {
+          "at": "2026-10-29T00:37:24Z",
+          "by": "codex",
+          "text": "Release now requires the resolved Sparkle signing tool and cryptographically verifies the ZIP against the public key shipped in the app before emitting appcast metadata. Nine positive/negative signing tests pass; independent review also passed with the actual Sparkle 2.10 binary and disposable keys. Versions align across app/extension/frameworks; symbols are retained; stapling/codesign/Gatekeeper verification is enforced. Review findings fixed: retain release xcconfig/archive settings and permit the Release framework signing identity. Full signed pipeline and staged promotion remain GH-07/RR-03."
+        }
+      ]
+    },
+    {
+      "id": "RS-07",
+      "title": "Bound and validate helper HTTP transport",
+      "state": "done",
+      "group": "RS",
+      "at": "2026-10-29T00:34:42Z",
+      "by": "codex",
+      "desc": "Deliver the independent HTTP portion of RS-05: strict request framing, bounded headers/body and concurrent connections, absolute read/write deadlines, isolated handlers, and truthful listener readiness/failure. Parser and real-loopback regressions must cover hostile lengths, fragmentation, authentication, stalls, disconnects, saturation, and occupied ports. Database lifecycle and Release/Nightly isolation stay in RS-05.",
+      "notes": [
+        {
+          "at": "2026-10-29T00:36:08Z",
+          "by": "codex",
+          "text": "Extracted the completed HTTP implementation from RS-05 so database lifecycle and channel isolation remain explicitly open."
+        },
+        {
+          "at": "2026-10-29T00:36:08Z",
+          "by": "codex",
+          "text": "Reviewed bounded parser/transport and real listener readiness. All 43 helper tests pass, including malformed lengths, fragmentation, authentication, absolute read timeout/recovery, occupied port, connection/handler admission and disconnect recovery. Limits: 16 KiB headers, 1 MiB bodies, 16 admitted connections/handlers; slow tool handlers cannot block request parsing. Database lifecycle work remains in RS-05."
+        }
+      ]
+    },
+    {
+      "id": "AR-05",
+      "title": "Adapt Crono onboarding to Airlock and Findle",
+      "state": "proposed",
+      "group": "AR",
+      "at": "2026-10-29T12:41:58Z",
+      "by": "codex",
+      "desc": "Requested directly in this conversation: reproduce Crono’s compact centered welcome, grouped forms, and footer in Airlock and Findle, retain the hello animation and segmented glass navigation pill, and open an isolated demo. Verify sample sign-in, course selection, navigation, and completion without touching the installed account.",
+      "notes": [
+        {
+          "at": "2026-10-29T12:42:18Z",
+          "by": "codex",
+          "text": "Implementation is explicitly authorized by the user’s request in this conversation. Work is being tracked here without changing the human-controlled approval state. Crono is a read-only reference; the deliverable will be the isolated Findle onboarding demo."
+        },
+        {
+          "at": "2026-10-29T12:57:29Z",
+          "by": "codex",
+          "text": "Implemented and opened the isolated Findle demo using Crono’s onboarding composition: 540×520 window, centered Welcome with three feature rows, grouped native forms, and large footer actions at the right. The hello intro, full one-shot sound, fading intro glow, and segmented glass navigation remain. The standalone Airlock demo uses the same composition.\n\nVerification: 43 Airlock tests and 6 onboarding-preview tests pass. Layout tests cover 540×520 and 500×480, rapid navigation, and closing during transitions. Visually checked all six Findle pages and completed sample sign-in, optional Finder access, and simulated sync. No installed account or files were changed.\n\nUI review:\n| Before | After | Why |\n| --- | --- | --- |\n| Horizontal product banner on server page | Centered Welcome with useful feature rows | Match Crono’s introduction |\n| Large independent headings and spread footer buttons | 22-point form headings and adjacent large actions | Match Crono’s hierarchy |\n| Window and form backgrounds resolve identically | Subtle opaque group fill | Keep grouping visible on current macOS |\n| Counter candidates: 0 | Counter candidates: 0 | Retained meaningful icons, real state, and accessible controls |\n\nThe demo overrides Airlock to the sibling local checkout. Production retains its immutable published dependency; publishing the matching Airlock changes and updating that pin is still required before release integration. This task remains in the board’s human-controlled approval state; its implementation was directly requested in the conversation."
+        }
+      ]
+    },
+    {
+      "id": "RS-08",
+      "title": "Keep Moodle credentials scoped to their trusted download destination",
+      "state": "done",
+      "group": "RS",
+      "at": "2026-10-29T13:00:17Z",
+      "by": "codex",
+      "desc": "Prevent course links and redirected downloads from receiving Moodle credentials. Priority P1, required before release. Generate web-location files locally without network requests or token access; require explicit site context for authenticated downloads; reject insecure, foreign-origin and credential-forwarding redirects in both File Provider and pinned-app download paths. Preserve cancellation, exactly-once completion and validated publication. Verify with disposable fixtures and hostile initial URL/redirect cases; no real account credentials in tests.",
+      "notes": [
+        {
+          "at": "2026-10-29T13:00:17Z",
+          "by": "codex",
+          "text": "Verified CodeRabbit finding affects both extension and pinned downloads. Implement shared destination policy and local web-location publication, then run controlled network/cancellation regressions. Existing-account checks remain nondestructive."
+        },
+        {
+          "at": "2026-10-29T13:15:04Z",
+          "by": "codex",
+          "text": "Implementation now passes explicit site context through file downloads, course covers, password sign-in and REST token calls. Credential destinations are restricted to the persisted canonical HTTPS origin including port; URL credentials/token query parameters and cross-origin/downgrade redirects are rejected. LMS URL resources are generated locally as bookmarks before Keychain access. Deliberate compatibility limit: HTTP-only sites and alternate-origin authenticated CDN files fail closed until a credential-free download contract exists. Focused transport/cancellation/publication tests and independent review are in progress."
+        },
+        {
+          "at": "2026-10-29T13:29:57Z",
+          "by": "codex",
+          "text": "Committed 08628a4 after independent review and real URLSession redirect tests. The focused security suites pass24 tests; the complete frozen-source suites pass399 in Debug and399 in optimized Nightly, zero failures/skips. Denied redirects cancel once and produce a security error before retry/auth-expiry handling. Local bookmarks, token-free paths, wrong-site rejection, stale publication and cancellation are covered. New error-copy review counted0 before/after. Evidence: /Volumes/Pheidippides/Developer/Xcode/DerivedData/findle-sqlite-lock-fix.1nddr24d. Fresh hosted qualification is next; no real account or installed app was changed."
+        },
+        {
+          "at": "2026-10-29T14:38:00Z",
+          "by": "codex",
+          "text": "The credential-boundary tests and complete 399-test Debug/Nightly suites passed locally; the fresh hosted Nightly suite, CodeQL, macOS 15 stress and macOS 26 Address Sanitizer also passed. Other hosted lanes exposed a separate database initialization defect now being fixed. CodeRabbit's two follow-up findings are valid: preserve the original download failure if recording it fails, and map synchronous database failures to Finder's transient error. Both fixes now have disposable-fixture regressions; qualification is in progress."
+        },
+        {
+          "at": "2026-10-29T14:49:04Z",
+          "by": "codex",
+          "text": "Credentials stay within the selected secure Moodle origin, including redirects; course web links become local bookmarks without reading tokens or using the network. Cancellation, stale-version publication, hostile URLs/redirects and both download paths are covered with disposable fixtures. Follow-up commit 62843fc preserves original download/authentication failures when recording state fails and gives Finder transient errors for database failures. All 403 Debug and 403 optimized Nightly tests pass with no failures/skips. HTTP-only sites and authenticated foreign-origin CDN files deliberately fail closed. Accepting this implementation does not close the separate hosted, signed-runtime or release-soak gates."
+        }
+      ]
+    }
+  ]
+}

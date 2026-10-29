@@ -1,0 +1,34 @@
+name: Bug or crash
+description: Report a reproducible Findle failure with redacted diagnostics
+title: "[Bug] "
+body:
+  - type: input
+    id: build
+    attributes:
+      label: Findle version, build and channel
+      placeholder: "For example: Nightly, version and build from Settings"
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: macOS version and Mac architecture
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps, expected result and actual result
+      description: Include whether this followed an upgrade, sleep/wake or a network interruption.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted diagnostics and crash evidence
+      description: Export Diagnostics from Settings. Inspect attachments before sharing; remove credentials, callback URLs and personal file contents. A crash report may include personal paths.
+  - type: textarea
+    id: recovery
+    attributes:
+      label: Recovery attempts and impact
+      description: Mention affected files without sharing their contents. Preserve personal files and diagnostics before trying a provider reset.

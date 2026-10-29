@@ -16,31 +16,28 @@ private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.sel
 /// so repeat reads don't re-open the PDF.
 final class IndexStore: @unchecked Sendable {
     private var db: OpaquePointer?
-    private let queue = DispatchQueue(label: "es.amodrono.foodle.mcp.index")
+    private let queue = DispatchQueue(label: "es.amodrono.findle.mcp.index")
 
     struct Hit {
         let itemID: String
         let courseID: Int
         let filename: String
         let snippet: String
+        let contentVersion: String?
     }
 
-    /// Opens the index database. `path` is injectable for tests; production uses
-    /// the default cache location.
-    init(path: String? = nil) throws {
-        let resolvedPath: String
-        if let path {
-            resolvedPath = path
-        } else {
-            let dir = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
-                .appendingPathComponent("Library/Caches/FindleMCP", isDirectory: true)
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            resolvedPath = dir.appendingPathComponent("index.db").path
-        }
-
-        guard sqlite3_open_v2(resolvedPath, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
+    /// Requires an explicit, source-scoped cache path. Never open the shared
+    /// application database here: only HelperSession chooses production paths.
+    init(path: String) throws {
+        var pointer: OpaquePointer?
+        let status = sqlite3_open_v2(path, &pointer, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil)
+        guard status == SQLITE_OK else {
+            if let pointer { sqlite3_close(pointer) }
             throw Failure.open
         }
+        db = pointer
+        var initialized = false
+        defer { if !initialized { sqlite3_close(db); db = nil } }
         sqlite3_busy_timeout(db, 3000)
 
         // FTS5 with unicode61 + diacritic folding so accented Spanish content is
@@ -72,6 +69,10 @@ final class IndexStore: @unchecked Sendable {
                 PRIMARY KEY (item_id, chunk_index)
             );
         """)
+        // Existing incompatible caches are disabled, never repaired in place.
+        try exec("SELECT item_id, course_id, filename, content, content_version FROM item_text LIMIT 0")
+        try exec("SELECT item_id, course_id, filename, chunk_index, chunk_text, language, vector, content_version FROM embeddings LIMIT 0")
+        initialized = true
     }
 
     struct EmbeddingChunk {
@@ -87,6 +88,7 @@ final class IndexStore: @unchecked Sendable {
         let filename: String
         let chunkText: String
         let vector: [Float]
+        let contentVersion: String?
     }
 
     /// Whether `itemID` already has embeddings stored at the given content version.
@@ -102,12 +104,13 @@ final class IndexStore: @unchecked Sendable {
     }
 
     /// Replace all embeddings for `itemID` with a fresh set of chunks.
-    func replaceEmbeddings(itemID: String, courseID: Int, filename: String, contentVersion: String, chunks: [EmbeddingChunk]) {
-        queue.sync {
-            _ = run("DELETE FROM embeddings WHERE item_id = ?") { sqlite3_bind_text($0, 1, itemID, -1, SQLITE_TRANSIENT) }
+    @discardableResult
+    func replaceEmbeddings(itemID: String, courseID: Int, filename: String, contentVersion: String, chunks: [EmbeddingChunk]) -> Bool {
+        queue.sync { transaction {
+            guard run("DELETE FROM embeddings WHERE item_id = ?", bind: { sqlite3_bind_text($0, 1, itemID, -1, SQLITE_TRANSIENT) }) else { return false }
             for chunk in chunks {
                 let blob = chunk.vector.withUnsafeBufferPointer { Data(buffer: $0) }
-                _ = run("INSERT INTO embeddings (item_id, course_id, filename, chunk_index, chunk_text, language, vector, content_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)") { stmt in
+                guard run("INSERT INTO embeddings (item_id, course_id, filename, chunk_index, chunk_text, language, vector, content_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", bind: { stmt in
                     sqlite3_bind_text(stmt, 1, itemID, -1, SQLITE_TRANSIENT)
                     sqlite3_bind_int64(stmt, 2, Int64(courseID))
                     sqlite3_bind_text(stmt, 3, filename, -1, SQLITE_TRANSIENT)
@@ -118,16 +121,17 @@ final class IndexStore: @unchecked Sendable {
                         _ = sqlite3_bind_blob(stmt, 7, raw.baseAddress, Int32(raw.count), SQLITE_TRANSIENT)
                     }
                     sqlite3_bind_text(stmt, 8, contentVersion, -1, SQLITE_TRANSIENT)
-                }
+                }) else { return false }
             }
-        }
+            return true
+        } }
     }
 
     /// All embedded chunks in a given language (optionally scoped to a course),
     /// for brute-force cosine ranking.
     func fetchEmbeddings(language: String, courseID: Int?) -> [EmbeddingHit] {
         queue.sync {
-            var sql = "SELECT item_id, course_id, filename, chunk_text, vector FROM embeddings WHERE language = ?"
+            var sql = "SELECT item_id, course_id, filename, chunk_text, vector, content_version FROM embeddings WHERE language = ?"
             if courseID != nil { sql += " AND course_id = ?" }
 
             var stmt: OpaquePointer?
@@ -149,7 +153,8 @@ final class IndexStore: @unchecked Sendable {
                     courseID: Int(sqlite3_column_int64(stmt, 1)),
                     filename: sqlite3_column_text(stmt, 2).map { String(cString: $0) } ?? "",
                     chunkText: sqlite3_column_text(stmt, 3).map { String(cString: $0) } ?? "",
-                    vector: vector
+                    vector: vector,
+                    contentVersion: sqlite3_column_text(stmt, 5).map { String(cString: $0) }
                 ))
             }
             return hits
@@ -176,17 +181,18 @@ final class IndexStore: @unchecked Sendable {
     }
 
     /// Replace any existing text for `itemID` with the freshly extracted text.
-    func upsert(itemID: String, courseID: Int, filename: String, content: String, contentVersion: String) {
-        queue.sync {
-            _ = run("DELETE FROM item_text WHERE item_id = ?") { sqlite3_bind_text($0, 1, itemID, -1, SQLITE_TRANSIENT) }
-            _ = run("INSERT INTO item_text (item_id, course_id, filename, content, content_version) VALUES (?, ?, ?, ?, ?)") { stmt in
+    @discardableResult
+    func upsert(itemID: String, courseID: Int, filename: String, content: String, contentVersion: String) -> Bool {
+        queue.sync { transaction {
+            guard run("DELETE FROM item_text WHERE item_id = ?", bind: { sqlite3_bind_text($0, 1, itemID, -1, SQLITE_TRANSIENT) }) else { return false }
+            return run("INSERT INTO item_text (item_id, course_id, filename, content, content_version) VALUES (?, ?, ?, ?, ?)") { stmt in
                 sqlite3_bind_text(stmt, 1, itemID, -1, SQLITE_TRANSIENT)
                 sqlite3_bind_int64(stmt, 2, Int64(courseID))
                 sqlite3_bind_text(stmt, 3, filename, -1, SQLITE_TRANSIENT)
                 sqlite3_bind_text(stmt, 4, content, -1, SQLITE_TRANSIENT)
                 sqlite3_bind_text(stmt, 5, contentVersion, -1, SQLITE_TRANSIENT)
             }
-        }
+        } }
     }
 
     func search(query: String, courseID: Int?, limit: Int) -> [Hit] {
@@ -194,7 +200,7 @@ final class IndexStore: @unchecked Sendable {
         guard !match.isEmpty else { return [] }
 
         return queue.sync {
-            var sql = "SELECT item_id, course_id, filename, snippet(item_text, 3, '«', '»', '…', 14) FROM item_text WHERE item_text MATCH ?"
+            var sql = "SELECT item_id, course_id, filename, snippet(item_text, 3, '«', '»', '…', 14), content_version FROM item_text WHERE item_text MATCH ?"
             // CAST: course_id is an FTS5 UNINDEXED column; its stored affinity is
             // unreliable, so compare as an integer to keep scoped search correct.
             if courseID != nil { sql += " AND CAST(course_id AS INTEGER) = ?" }
@@ -207,7 +213,7 @@ final class IndexStore: @unchecked Sendable {
             var idx: Int32 = 1
             sqlite3_bind_text(stmt, idx, match, -1, SQLITE_TRANSIENT); idx += 1
             if let courseID { sqlite3_bind_int64(stmt, idx, Int64(courseID)); idx += 1 }
-            sqlite3_bind_int(stmt, idx, Int32(max(1, limit)))
+            sqlite3_bind_int(stmt, idx, Int32(max(1, min(limit, 100))))
 
             var hits: [Hit] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -215,7 +221,8 @@ final class IndexStore: @unchecked Sendable {
                     itemID: sqlite3_column_text(stmt, 0).map { String(cString: $0) } ?? "",
                     courseID: Int(sqlite3_column_int64(stmt, 1)),
                     filename: sqlite3_column_text(stmt, 2).map { String(cString: $0) } ?? "",
-                    snippet: sqlite3_column_text(stmt, 3).map { String(cString: $0) } ?? ""
+                    snippet: sqlite3_column_text(stmt, 3).map { String(cString: $0) } ?? "",
+                    contentVersion: sqlite3_column_text(stmt, 4).map { String(cString: $0) }
                 ))
             }
             return hits
@@ -232,6 +239,15 @@ final class IndexStore: @unchecked Sendable {
             .split(whereSeparator: { $0.isWhitespace })
             .map { "\"\($0.replacingOccurrences(of: "\"", with: "\"\""))\"" }
             .joined(separator: " ")
+    }
+
+    private func transaction(_ changes: () -> Bool) -> Bool {
+        guard run("BEGIN IMMEDIATE", bind: { _ in }) else { return false }
+        guard changes(), run("COMMIT", bind: { _ in }) else {
+            _ = run("ROLLBACK", bind: { _ in })
+            return false
+        }
+        return true
     }
 
     private func exec(_ sql: String) throws {

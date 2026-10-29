@@ -4,7 +4,7 @@
 // You may obtain a copy of the License in the LICENSE file at the root of this repository.
 
 import XCTest
-import FoodlePersistence
+import FindlePersistence
 import SharedDomain
 
 final class CatalogTests: XCTestCase {
@@ -42,6 +42,28 @@ final class CatalogTests: XCTestCase {
         XCTAssertEqual(folder["type"] as? String, "folder")
         let children = folder["children"] as! [[String: Any]]
         XCTAssertEqual(children.count, 2)
+    }
+
+    func testCourseBriefIsBoundedAndIncludesDeadlines() throws {
+        let object = parseJSON(try makeCatalog().getCourseBrief(
+            courseID: 100,
+            maxSections: 1,
+            maxFilesPerSection: 1,
+            maxChars: 200
+        )) as! [String: Any]
+
+        let course = object["course"] as! [String: Any]
+        XCTAssertEqual(course["fileCount"] as? Int, 2)
+        XCTAssertEqual(course["downloadedCount"] as? Int, 1)
+
+        let sections = object["sections"] as! [[String: Any]]
+        XCTAssertEqual(sections.count, 1)
+        XCTAssertEqual((sections[0]["files"] as! [[String: Any]]).count, 1)
+        XCTAssertEqual(sections[0]["summary"] as? String, "Evaluación final y material de repaso.")
+        XCTAssertEqual((sections[0]["activities"] as! [[String: Any]]).first?["type"] as? String, "resource")
+
+        let deadlines = object["upcomingDeadlines"] as! [[String: Any]]
+        XCTAssertTrue(deadlines.contains { $0["name"] as? String == "Entrega 1" })
     }
 
     func testGetItemAndMoodleURL() throws {
@@ -95,10 +117,48 @@ final class CatalogTests: XCTestCase {
         let search = catalog.callTool(named: "search_items", args: ArgReader(string: { $0 == "query" ? "examen" : nil }, int: { _ in nil }))
         XCTAssertFalse(search.isError)
         XCTAssertTrue(search.text.contains("Exámenes"))
+
+        let missing = catalog.callTool(named: "get_course_brief", args: empty)
+        XCTAssertTrue(missing.isError)
+
+        let invalid = catalog.callTool(named: "search_items", args: ArgReader(string: { _ in "" }, int: { _ in nil }))
+        XCTAssertTrue(invalid.isError)
     }
 
     func testNoAccountYieldsError() throws {
         let object = parseJSON(try makeCatalog(seed: false).listCourses()) as! [String: Any]
         XCTAssertNotNil(object["error"])
+    }
+
+    func testIndexSearchFiltersDeletedChangedAndOtherSiteItems() throws {
+        let db = try TestDB.make()
+        var item = try XCTUnwrap(db.fetchItem(id: "f1"))
+        item.contentVersion = "current"
+        try db.saveItems([item])
+        let index = try IndexStore(path: ":memory:")
+        for (id, version) in [("f1", "current"), ("f2", "stale"), ("deleted", "v1")] {
+            index.upsert(itemID: id, courseID: 100, filename: "x", content: "private keyword", contentVersion: version)
+        }
+        let catalog = Catalog(database: db, indexStore: index, embedder: nil)
+        let result = try XCTUnwrap(parseJSON(catalog.searchText(query: "keyword", courseID: nil, limit: 10)) as? [String: Any])
+        let hits = try XCTUnwrap(result["matches"] as? [[String: Any]])
+        XCTAssertEqual(hits.compactMap { $0["id"] as? String }, ["f1"])
+        item.contentVersion = "new-version"
+        try db.saveItems([item])
+        let changed = try XCTUnwrap(parseJSON(catalog.searchText(query: "keyword", courseID: nil, limit: 10)) as? [String: Any])
+        XCTAssertEqual((changed["matches"] as? [[String: Any]])?.count, 0)
+    }
+
+    func testMoodleURLsDoNotExposeCredentials() throws {
+        let db = try TestDB.make()
+        var item = try XCTUnwrap(db.fetchItem(id: "f1"))
+        item.remoteURL = URL(string: "https://user:password@moodle.test/file?id=7&token=secret&wstoken=other&custom_secret=value#secret")
+        try db.saveItems([item])
+        let catalog = Catalog(database: db, indexStore: nil, embedder: nil)
+        for response in [catalog.getItem(id: "f1"), catalog.getMoodleURL(id: "f1")] {
+            let result = try XCTUnwrap(parseJSON(response) as? [String: Any])
+            XCTAssertEqual(result["moodleURL"] as? String, "https://moodle.test/file?id=7")
+        }
+        XCTAssertFalse(Catalog.errorJSON(NSError(domain: "Secret", code: 1, userInfo: [NSLocalizedDescriptionKey: "token=private"])).contains("private"))
     }
 }

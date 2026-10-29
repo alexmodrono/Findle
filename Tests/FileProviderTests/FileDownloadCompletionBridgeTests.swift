@@ -8,6 +8,34 @@ import FileProvider
 @testable import SharedDomain
 
 final class FileDownloadCompletionBridgeTests: XCTestCase {
+    func testCancellationReentrancyCompletesOnlyOnceWithoutHoldingBridgeLock() async {
+        let progress = Progress(totalUnitCount: 100)
+        let completed = expectation(description: "Reentrant cancellation completes")
+        let state = CallbackState()
+        let bridge = FileDownloadCompletionBridge(progress: progress) { url, item, error in
+            state.record(url: url, item: item, error: error)
+            completed.fulfill()
+        }
+        progress.cancellationHandler = { bridge.fail(CocoaError(.userCancelled)) }
+        Task.detached { bridge.fail(CocoaError(.fileWriteOutOfSpace)) }
+        await fulfillment(of: [completed], timeout: 2)
+        XCTAssertEqual(state.invocationCount, 1)
+        XCTAssertTrue(progress.isCancelled)
+    }
+
+    func testAlreadyCancelledProgressCannotCompleteAsSuccess() {
+        let progress = Progress(totalUnitCount: 100)
+        progress.cancel()
+        let state = CallbackState()
+        let bridge = FileDownloadCompletionBridge(progress: progress) { url, item, error in
+            state.record(url: url, item: item, error: error)
+        }
+        bridge.succeed(url: URL(fileURLWithPath: "/unused"), item: FileProviderItem(localItem: makeLocalItem()))
+        XCTAssertEqual(state.invocationCount, 1)
+        XCTAssertEqual((state.lastError as? CocoaError)?.code, .userCancelled)
+        XCTAssertNil(state.lastURL)
+    }
+
     func testConcurrentSuccessCallbacksOnlyCompleteOnce() async {
         let progress = Progress(totalUnitCount: 100)
         let completionCalled = expectation(description: "completion called once")
@@ -61,6 +89,7 @@ final class FileDownloadCompletionBridgeTests: XCTestCase {
 
         XCTAssertEqual(state.invocationCount, 1)
         XCTAssertEqual(progress.completedUnitCount, 0)
+        XCTAssertTrue(progress.isCancelled)
         XCTAssertNotNil(state.lastError)
         XCTAssertNil(state.lastURL)
     }

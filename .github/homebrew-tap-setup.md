@@ -16,7 +16,7 @@ The repo just needs to exist — the release workflow will populate it automatic
 
 ## 2. GitHub Secrets
 
-Add these secrets to the **Foodle** repository (Settings > Secrets and variables > Actions):
+Add these secrets to the **Findle** repository (Settings > Secrets and variables > Actions):
 
 | Secret | Description |
 |---|---|
@@ -26,8 +26,8 @@ Add these secrets to the **Foodle** repository (Settings > Secrets and variables
 | `APPLE_ID` | Your Apple ID email (for notarization) |
 | `NOTARIZATION_PASSWORD` | App-specific password for notarization. Generate at appleid.apple.com > Sign-In and Security > App-Specific Passwords |
 | `HOMEBREW_TAP_TOKEN` | A GitHub Personal Access Token (classic) with `repo` scope, so the workflow can push to the `homebrew-tap` repo |
-| `APP_PROVISION_PROFILE_BASE64` | Base64-encoded Developer ID provisioning profile for `es.amodrono.foodle`. Create at developer.apple.com > Profiles, then: `base64 -i profile.provisionprofile \| pbcopy` |
-| `FILEPROVIDER_PROVISION_PROFILE_BASE64` | Base64-encoded Developer ID provisioning profile for `es.amodrono.foodle.file-provider` |
+| `APP_PROVISION_PROFILE_BASE64` | Base64-encoded Developer ID provisioning profile for `es.amodrono.findle`. Create at developer.apple.com > Profiles, then: `base64 -i profile.provisionprofile \| pbcopy` |
+| `FILEPROVIDER_PROVISION_PROFILE_BASE64` | Base64-encoded Developer ID provisioning profile for `es.amodrono.findle.file-provider` |
 | `SPARKLE_PRIVATE_ED_KEY` | Sparkle EdDSA private key for signing updates. Generate with `generate_keys` from Sparkle's tools |
 | `SPARKLE_PUBLIC_ED_KEY` | Sparkle EdDSA public key (embedded in Info.plist via build settings) |
 

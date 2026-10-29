@@ -1,0 +1,87 @@
+name: Stability stress
+
+on:
+  pull_request:
+    branches: [main]
+    types: [labeled, synchronize, reopened]
+  schedule:
+    - cron: '41 3 * * 3'
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: Unsigned integer seed for disposable database operations
+        type: string
+        default: '20261029'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stress-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  stress:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'stability-stress')
+    name: Stress (${{ matrix.runner }}, ${{ matrix.mode }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: nightly
+            runner: macos-26
+            xcode: '26.6'
+          - mode: thread
+            runner: macos-26
+            xcode: '26.6'
+          - mode: address
+            runner: macos-26
+            xcode: '26.6'
+          - mode: nightly
+            runner: macos-15
+            xcode: '26.3'
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
+      FINDLE_STRESS_SEED: ${{ inputs.seed || '20261029' }}
+      MODE: ${{ matrix.mode }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare pinned build tools
+        run: |
+          bash scripts/ci-preflight.sh
+          bash scripts/install-ci-tools.sh
+      - name: Generate disposable test project
+        run: xcodegen generate
+      - name: Run repeated failures, recovery, migration and concurrency fixtures
+        run: bash scripts/run-stress.sh "$MODE" "$RUNNER_TEMP/stress"
+      - name: Summarize native coverage
+        if: always()
+        run: |
+          set -o pipefail
+          xcodebuild -version > "$RUNNER_TEMP/stress/toolchain.txt"
+          xcrun xccov view --report --json "$RUNNER_TEMP/stress/results.xcresult" > "$RUNNER_TEMP/stress/coverage.json"
+          # This subset and sanitizer configuration cannot be compared with the
+          # full Debug baseline. Retain its measurements without claiming a gate.
+          echo '{"status":"unqualified"}' > "$RUNNER_TEMP/stress/baseline.json"
+          python3 scripts/coverage-summary.py "$RUNNER_TEMP/stress/coverage.json" \
+            --baseline "$RUNNER_TEMP/stress/baseline.json" \
+            --toolchain "$RUNNER_TEMP/stress/toolchain.txt" --configuration "$MODE" \
+            --output "$RUNNER_TEMP/stress/coverage-summary.json" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Retain bounded stress evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: stress-${{ matrix.runner }}-${{ matrix.mode }}
+          path: |
+            ${{ runner.temp }}/stress/results.xcresult
+            ${{ runner.temp }}/stress/build.log
+            ${{ runner.temp }}/stress/run.txt
+            ${{ runner.temp }}/stress/toolchain.txt
+            ${{ runner.temp }}/stress/coverage*.json
+          retention-days: 14
+          if-no-files-found: warn

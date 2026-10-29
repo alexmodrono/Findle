@@ -10,9 +10,9 @@ Decisions locked: **signed + notarized** beta · triggered by **prerelease tags*
 
 ## What already exists (good foundation)
 
-- A **`Nightly` config + `Foodle-Nightly` scheme** with isolated bundle IDs (`es.amodrono.foodle.nightly[.file-provider]`) and app group (`group.es.amodrono.foodle.nightly`).
-- **`BundleIdentifiers.swift`** derives app group, keychain service, File Provider domain ID, Spotlight prefix, and action IDs from `Bundle.main.bundleIdentifier` at runtime — so those are **already variant-isolated**. The hardcoded `es.amodrono.foodle` strings elsewhere are only Logger subsystems (cosmetic).
-- **Entitlements** use `$(APP_GROUP_IDENTIFIER)` / `$(FOODLE_BUNDLE_PREFIX)` / `$(PRODUCT_BUNDLE_IDENTIFIER)`, so app group, keychain group, and Sparkle XPC names vary per variant automatically.
+- A **`Nightly` config + `Findle-Nightly` scheme** with isolated bundle IDs (`es.amodrono.findle.nightly[.file-provider]`) and app group (`group.es.amodrono.findle.nightly`).
+- **`BundleIdentifiers.swift`** derives app group, keychain service, File Provider domain ID, Spotlight prefix, and action IDs from `Bundle.main.bundleIdentifier` at runtime — so those are **already variant-isolated**. The hardcoded `es.amodrono.findle` strings elsewhere are only Logger subsystems (cosmetic).
+- **Entitlements** use `$(APP_GROUP_IDENTIFIER)` / `$(FINDLE_BUNDLE_PREFIX)` / `$(PRODUCT_BUNDLE_IDENTIFIER)`, so app group, keychain group, and Sparkle XPC names vary per variant automatically.
 - A **production `release.yml`** (tag `v*`): import cert → install profiles → archive → export developer-id → notarize → DMG/ZIP → Sparkle-sign → appcast → GitHub Release → Homebrew cask.
 - A **`pr-nightly.yml`** that builds the Nightly scheme **unsigned** on PRs.
 
@@ -38,7 +38,7 @@ A gitignored `Config/Signing.local.xcconfig` holds `DEVELOPMENT_TEAM`, `#include
 **Implemented:**
 - `Config/Signing.local.xcconfig` (gitignored) + `Config/Signing.local.xcconfig.example` (committed)
 - `Config/Debug-App.xcconfig`, `Config/Debug-FileProvider.xcconfig` (new) + `#include?` added to Nightly/Release app+FP xcconfigs
-- `project.yml`: Debug `configFiles` for `Foodle` and `FoodleFileProvider`
+- `project.yml`: Debug `configFiles` for `Findle` and `FindleFileProvider`
 - `.gitignore`: `Config/Signing.local.xcconfig`
 
 **Your one action:** paste your Team ID into `Config/Signing.local.xcconfig`:
@@ -80,9 +80,9 @@ A new workflow mirroring `release.yml`, triggered on **`v*-beta.*`** tags, build
 
 Key differences from `release.yml`:
 - `on: push: tags: ['v*-beta.*']`
-- `SCHEME: Foodle-Nightly`, `-configuration Nightly`, `APP_NAME: "Findle Beta"`, `BUNDLE_ID: es.amodrono.foodle.nightly`
+- `SCHEME: Findle-Nightly`, `-configuration Nightly`, `APP_NAME: "Findle Beta"`, `BUNDLE_ID: es.amodrono.findle.nightly`
 - Install **nightly** provisioning profiles (new secrets) and write the **`Nightly-App` / `Nightly-FileProvider`** signing xcconfigs (manual, `Developer ID Application`, nightly profile UUIDs).
-- `ExportOptions.plist` `provisioningProfiles` maps `es.amodrono.foodle.nightly` and `es.amodrono.foodle.nightly.file-provider`.
+- `ExportOptions.plist` `provisioningProfiles` maps `es.amodrono.findle.nightly` and `es.amodrono.findle.nightly.file-provider`.
 - Notarize → DMG/ZIP named `Findle Beta` → Sparkle-sign → generate **beta** appcast.
 - `gh release create … --prerelease` (versioned, marked prerelease).
 - **Skip the Homebrew cask update** (don't disturb the stable cask). Optional: a separate `findle-beta` cask later.
@@ -103,9 +103,9 @@ The prod `release.yml` is unchanged. (Optional later: tighten its tag filter to 
 This is the price of a signed beta where the File Provider works. In the [Apple Developer portal](https://developer.apple.com/account):
 
 1. **Register App IDs**
-   - `es.amodrono.foodle.nightly` — enable **App Groups** capability
-   - `es.amodrono.foodle.nightly.file-provider` — enable **App Groups**
-2. **Register App Group** `group.es.amodrono.foodle.nightly`, and associate both App IDs with it.
+   - `es.amodrono.findle.nightly` — enable **App Groups** capability
+   - `es.amodrono.findle.nightly.file-provider` — enable **App Groups**
+2. **Register App Group** `group.es.amodrono.findle.nightly`, and associate both App IDs with it.
 3. **Create Developer ID provisioning profiles** for both nightly App IDs (Developer ID distribution, including the app group entitlement).
 4. **Export + add GitHub secrets** (base64 the `.provisionprofile` files):
    ```bash

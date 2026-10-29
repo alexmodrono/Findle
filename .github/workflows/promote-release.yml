@@ -1,0 +1,110 @@
+name: Promote qualified release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing draft tag with a reviewed qualification record
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: findle-release
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    runs-on: macos-26
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+      attestations: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.tag }}
+      IMMUTABILITY_ENABLED: ${{ vars.RELEASE_IMMUTABILITY_ENABLED }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download candidate and verify qualification
+        id: candidate
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          test "$IMMUTABILITY_ENABLED" = true
+          mkdir "$RUNNER_TEMP/candidate"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/candidate"
+          REVISION=$(git rev-list -n 1 "$TAG")
+          git merge-base --is-ancestor "$REVISION" origin/main
+          python3 scripts/require-release-ci.py "$REVISION"
+          for artifact in "$RUNNER_TEMP"/candidate/*; do
+            gh attestation verify "$artifact" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+              --source-ref "refs/tags/$TAG" --source-digest "$REVISION" --deny-self-hosted-runners
+          done
+          python3 scripts/release-candidate.py verify "$RUNNER_TEMP/candidate" \
+            --qualification "release-qualification/$TAG.json" --evidence-root release-qualification
+          python3 - "$RUNNER_TEMP/candidate/candidate.json" "$REVISION" "$TAG" <<'PY'
+          import json, sys
+          manifest = json.load(open(sys.argv[1]))
+          assert manifest['source_revision'] == sys.argv[2]
+          assert 'v' + manifest['version'] == sys.argv[3]
+          PY
+          echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
+      - name: Recheck shipped update signature and notarization
+        run: |
+          mkdir "$RUNNER_TEMP/verify-app"
+          ditto -x -k "$RUNNER_TEMP/candidate/Findle-${TAG#v}.zip" "$RUNNER_TEMP/verify-app"
+          APP="$RUNNER_TEMP/verify-app/Findle.app"
+          SIGNATURE=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sparkle_signature"])' "$RUNNER_TEMP/candidate/candidate.json")
+          swift scripts/verify-update.swift "$RUNNER_TEMP/candidate/Findle-${TAG#v}.zip" "$SIGNATURE" "$APP/Contents/Info.plist"
+          codesign --verify --deep --strict "$APP"
+          xcrun stapler validate "$APP"
+          xcrun stapler validate "$RUNNER_TEMP/candidate/Findle-${TAG#v}.dmg"
+          spctl --assess --type execute "$APP"
+      - name: Publish the complete candidate
+        id: publication
+        env:
+          SOURCE_REVISION: ${{ steps.candidate.outputs.revision }}
+        run: |
+          # Already-published retries verify identical, attested bytes above and
+          # leave immutable assets untouched before retrying Homebrew below.
+          DRAFT=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
+          if [[ "$DRAFT" = true ]]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
+          fi
+          IMMUTABLE_RELEASE=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.immutable')
+          test "$IMMUTABLE_RELEASE" = true
+          # Publication locks the assets and tag. Verify those final locked bytes
+          # before the public latest appcast or Homebrew can point at this release.
+          gh release verify "$TAG" --repo "$GITHUB_REPOSITORY" --format json > "$RUNNER_TEMP/release-verification.json"
+          for artifact in "$RUNNER_TEMP"/candidate/*; do
+            gh release verify-asset "$TAG" "$artifact" --repo "$GITHUB_REPOSITORY"
+          done
+          git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
+          test "$(git rev-parse "$TAG^{commit}")" = "$SOURCE_REVISION"
+          TAG_OBJECT=$(git rev-parse "refs/tags/$TAG")
+          python3 scripts/release-candidate.py published \
+            --verification "$RUNNER_TEMP/release-verification.json" --repository "$GITHUB_REPOSITORY" \
+            --tag "$TAG" --tag-object "$TAG_OBJECT"
+          LATEST=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          ADVANCE=$(python3 scripts/release-candidate.py latest "$TAG" "$LATEST")
+          echo "advance=$ADVANCE" >> "$GITHUB_OUTPUT"
+          if [[ "$ADVANCE" = true ]]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --latest
+          else
+            echo "Verified superseded release; leaving latest and Homebrew unchanged." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Update Homebrew after verified publication
+        if: steps.publication.outputs.advance == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: python3 scripts/update-homebrew.py "$RUNNER_TEMP/candidate/candidate.json"

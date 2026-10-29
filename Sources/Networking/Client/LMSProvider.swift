@@ -39,19 +39,19 @@ public protocol LMSProvider: Sendable {
     /// Fetch courses accessible to the authenticated user.
     func fetchCourses(site: MoodleSite, token: AuthToken, userID: Int) async throws -> [MoodleCourse]
 
-    /// Fetch the content tree (sections and modules) for a course.
+    /// Fetch a complete content tree (sections and modules) for a course.
+    /// Throw if the response is incomplete or entries cannot be mapped safely:
+    /// sync interprets absent items in a successful result as remote deletions.
     func fetchCourseContents(site: MoodleSite, token: AuthToken, courseID: Int) async throws -> [MoodleSection]
 
-    /// Download a file to a local path.
-    func downloadFile(url: URL, token: AuthToken, destination: URL) async throws
+    /// Download from the selected site's HTTPS origin. Cross-origin redirects
+    /// must be rejected before forwarding credentials, including POST bodies.
+    func downloadFile(url: URL, site: MoodleSite, token: AuthToken, destination: URL) async throws
 
-    /// Build the URLRequest that downloads `fileURL` with the given token.
-    ///
-    /// The token is sent in the POST body instead of the URL query so it
-    /// doesn't leak into URL access logs, URLSession metrics, the `Referer`
-    /// header on cross-host CDN redirects, or crash reports that include the
-    /// in-flight request URL.
-    func authenticatedFileRequest(fileURL: URL, token: AuthToken) -> URLRequest
+    /// Validate the destination before reading the token. The token stays out
+    /// of the URL; callers must also enforce the site's origin on redirects.
+    func authenticatedFileRequest(fileURL: URL, site: MoodleSite, token: AuthToken) throws -> URLRequest
+
 }
 
 /// Represents an authentication token for a Moodle session.

@@ -5,9 +5,9 @@
 
 import XCTest
 @testable import SharedDomain
-@testable import FoodleNetworking
-@testable import FoodlePersistence
-@testable import FoodleSyncEngine
+@testable import FindleNetworking
+@testable import FindlePersistence
+@testable import FindleSyncEngine
 
 final class SyncEngineReauthTests: XCTestCase {
     var database: Database!
@@ -26,7 +26,7 @@ final class SyncEngineReauthTests: XCTestCase {
     private let token = AuthToken(token: "token")
 
     override func setUp() async throws {
-        tempPath = NSTemporaryDirectory() + "foodle_reauth_test_\(UUID().uuidString).db"
+        tempPath = NSTemporaryDirectory() + "findle_reauth_test_\(UUID().uuidString).db"
         database = try Database(path: tempPath)
     }
 
@@ -35,17 +35,17 @@ final class SyncEngineReauthTests: XCTestCase {
         try? FileManager.default.removeItem(atPath: tempPath)
     }
 
-    func testSyncAllCoursesRethrowsAuthenticationFailure() async throws {
+    func testSyncAllCoursesReportsAuthenticationFailureAndSkipsUnstartedCourses() async throws {
         let provider = ThrowingLMSProvider(error: .tokenExpired)
         let engine = SyncEngine(provider: provider, database: database)
-        let courses = [MoodleCourse(id: 1, shortName: "C1", fullName: "Course 1", siteID: site.id)]
-
-        do {
-            try await engine.syncAllCourses(site: site, token: token, courses: courses)
-            XCTFail("Expected syncAllCourses to rethrow the authentication failure")
-        } catch let error as FoodleError {
-            XCTAssertTrue(error.requiresReauthentication)
-        }
+        let courses = (1...3).map { MoodleCourse(id: $0, shortName: "C", fullName: "Course", siteID: site.id) }
+        let report = await engine.syncAllCourses(site: site, token: token, courses: courses, maxConcurrentCourses: 1)
+        XCTAssertTrue(report.requiresReauthentication)
+        XCTAssertFalse(report.allSucceeded)
+        XCTAssertEqual(report.failedCount, 1)
+        XCTAssertEqual(report.skippedCount, 2)
+        XCTAssertEqual(report.failure?.kind, "tokenExpired")
+        XCTAssertNil(report.successfulCompletionDate)
     }
 
     func testSyncAllCoursesContinuesPastNonAuthFailure() async throws {
@@ -57,13 +57,16 @@ final class SyncEngineReauthTests: XCTestCase {
             MoodleCourse(id: 2, shortName: "C2", fullName: "Course 2", siteID: site.id),
         ]
 
-        // Should complete without throwing even though every course errors.
-        try await engine.syncAllCourses(site: site, token: token, courses: courses)
+        let report = await engine.syncAllCourses(site: site, token: token, courses: courses)
+        XCTAssertEqual(report.failedCount, 2)
+        XCTAssertFalse(report.allSucceeded)
+        XCTAssertFalse(report.requiresReauthentication)
+        XCTAssertNil(report.successfulCompletionDate)
     }
 }
 
 private struct ThrowingLMSProvider: LMSProvider {
-    let error: FoodleError
+    let error: FindleError
 
     func validateSite(url: URL) async throws -> MoodleSite {
         MoodleSite(displayName: url.host ?? "Test", baseURL: url)
@@ -89,9 +92,9 @@ private struct ThrowingLMSProvider: LMSProvider {
         throw error
     }
 
-    func downloadFile(url: URL, token: AuthToken, destination: URL) async throws {}
+    func downloadFile(url: URL, site: MoodleSite, token: AuthToken, destination: URL) async throws {}
 
-    func authenticatedFileRequest(fileURL: URL, token: AuthToken) -> URLRequest {
+    func authenticatedFileRequest(fileURL: URL, site: MoodleSite, token: AuthToken) throws -> URLRequest {
         URLRequest(url: fileURL)
     }
 }

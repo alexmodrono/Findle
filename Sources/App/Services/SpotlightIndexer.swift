@@ -6,14 +6,14 @@
 import CoreSpotlight
 import UniformTypeIdentifiers
 import SharedDomain
-import FoodlePersistence
+import FindlePersistence
 import OSLog
 
 /// Indexes Moodle courses and files into CoreSpotlight for system-wide search.
 final class SpotlightIndexer: @unchecked Sendable {
     private static let domainPrefix = BundleIdentifiers.spotlightPrefix
     private static let lastIndexedDomainsKey = "spotlightLastIndexedDomains"
-    private let logger = Logger(subsystem: "es.amodrono.foodle", category: "SpotlightIndexer")
+    private let logger = Logger(subsystem: "es.amodrono.findle", category: "SpotlightIndexer")
 
     static let shared = SpotlightIndexer()
 

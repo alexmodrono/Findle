@@ -3,6 +3,7 @@
 // Licensed under the Apache License, Version 2.0.
 // You may obtain a copy of the License in the LICENSE file at the root of this repository.
 
+import Combine
 import Foundation
 import ServiceManagement
 import OSLog
@@ -15,7 +16,7 @@ final class LoginItemController: ObservableObject {
     @Published private(set) var isEnabled: Bool = false
     @Published private(set) var lastError: String?
 
-    private let logger = Logger(subsystem: "es.amodrono.foodle", category: "LoginItem")
+    private let logger = Logger(subsystem: "es.amodrono.findle", category: "LoginItem")
 
     init() {
         refresh()

@@ -8,6 +8,41 @@ import XCTest
 
 final class ModelTests: XCTestCase {
 
+    func testDiscoveryPreservesCanonicalSiteIdentityAndRefreshesCapabilities() {
+        let existing = MoodleSite(id: "existing", displayName: "Old", baseURL: URL(string: "https://MOODLE.example.edu:443/campus/")!)
+        let discovered = MoodleSite(displayName: "New", baseURL: URL(string: "https://moodle.example.edu/campus")!,
+                                    capabilities: SiteCapabilities(loginType: .embedded))
+        let reconciled = discovered.preservingIdentity(from: [existing])
+        XCTAssertEqual(reconciled.id, existing.id)
+        XCTAssertEqual(reconciled.displayName, "New")
+        XCTAssertEqual(reconciled.capabilities.loginType, .embedded)
+        XCTAssertEqual(reconciled.baseURL, discovered.baseURL)
+    }
+
+    func testDiscoveryDoesNotMergeDistinctServers() {
+        let existing = MoodleSite(id: "existing", displayName: "Site", baseURL: URL(string: "https://example.edu/campus")!)
+        for address in ["https://elsewhere.edu/campus", "http://example.edu/campus", "https://example.edu/Campus",
+                        "https://example.edu/other", "https://example.edu:8443/campus", "https://example.edu/campus?tenant=2"] {
+            let discovered = MoodleSite(displayName: "Other", baseURL: URL(string: address)!)
+            XCTAssertEqual(discovered.preservingIdentity(from: [existing]).id, discovered.id, address)
+        }
+        let root = MoodleSite(id: "root", displayName: "Root", baseURL: URL(string: "https://example.edu/")!)
+        let discovered = MoodleSite(displayName: "Root", baseURL: URL(string: "https://example.edu")!)
+        XCTAssertEqual(discovered.preservingIdentity(from: [root]).id, "root")
+    }
+
+    func testReauthenticationPreservesAccountHistory() throws {
+        let old = Account(id: "account", siteID: "site", userID: 42, state: .expired,
+                          lastSyncDate: Date(timeIntervalSince1970: 200), createdAt: Date(timeIntervalSince1970: 100))
+        let refreshed = try old.reauthenticated(siteID: "site", userID: 42)
+        XCTAssertEqual(refreshed.id, old.id)
+        XCTAssertEqual(refreshed.lastSyncDate, old.lastSyncDate)
+        XCTAssertEqual(refreshed.createdAt, old.createdAt)
+        XCTAssertEqual(refreshed.state, .authenticated(userID: 42))
+        XCTAssertThrowsError(try old.reauthenticated(siteID: "another-site", userID: 42))
+        XCTAssertThrowsError(try old.reauthenticated(siteID: "site", userID: 43))
+    }
+
     func testMoodleSiteURLs() {
         let site = MoodleSite(
             displayName: "Test",
@@ -98,12 +133,12 @@ final class ModelTests: XCTestCase {
     }
 
     func testRequiresReauthentication() {
-        XCTAssertTrue(FoodleError.tokenExpired.requiresReauthentication)
-        XCTAssertTrue(FoodleError.tokenRefreshFailed(underlying: "x").requiresReauthentication)
-        XCTAssertTrue(FoodleError.authenticationRequired.requiresReauthentication)
+        XCTAssertTrue(FindleError.tokenExpired.requiresReauthentication)
+        XCTAssertTrue(FindleError.tokenRefreshFailed(underlying: "x").requiresReauthentication)
+        XCTAssertTrue(FindleError.authenticationRequired.requiresReauthentication)
 
-        XCTAssertFalse(FoodleError.networkUnavailable.requiresReauthentication)
-        XCTAssertFalse(FoodleError.timeout.requiresReauthentication)
-        XCTAssertFalse(FoodleError.invalidCredentials.requiresReauthentication)
+        XCTAssertFalse(FindleError.networkUnavailable.requiresReauthentication)
+        XCTAssertFalse(FindleError.timeout.requiresReauthentication)
+        XCTAssertFalse(FindleError.invalidCredentials.requiresReauthentication)
     }
 }

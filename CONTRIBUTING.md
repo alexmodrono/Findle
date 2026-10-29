@@ -1,64 +1,34 @@
-# Contributing to Findle
+# Contributing
 
-Thanks for your interest in contributing to Findle.
+Use a pull request against `main` and link the relevant Kanvas task. Describe the
+behavior change and meaningful validation. Follow [AGENTS.md](AGENTS.md), including
+the shared board and interface review guidance.
 
-## What Findle is
+Generate the Xcode project from `project.yml`; retain its canonical
+`Findle.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`.
+Do not commit a local Airlock path, signing configuration, provisioning profile,
+credential or generated build product. The supported CI toolchain and local test
+commands are in [README.md](README.md).
 
-Findle is a native macOS app that brings Moodle / Open LMS course materials into Finder using Apple File Provider.
+All seven main suites run in Debug and optimized Nightly, with onboarding in its
+isolated preview project. `CI required` and `CodeQL required` are stable aggregate
+checks, including documentation-only changes. Fork and dependency-bot builds use
+read-only tokens and no signing secrets. Formatting and CodeRabbit begin as
+advisory checks; a skipped bot review is not a correctness result.
 
-This project is currently focused on:
-- macOS
-- Moodle / Open LMS
-- Finder-native file workflows
-- stability, clarity, and secure auth flows
+Changes to persistence, authentication, File Provider, personal-file recovery and
+release workflows need regression evidence for their failure paths. Prefer
+controlled suspension and disposable stores. Preserve existing user files and
+uncommitted changes. Signed integration and upgrade/soak evidence are separate
+from unsigned unit tests.
 
-## Before you contribute
+The sole maintainer owns final review. A CODEOWNERS self-approval requirement would
+make the maintainer's own PRs impossible, so it is not enabled. Main protection
+will require pull requests, verified aggregate checks, resolved conversations,
+and no force pushes or branch deletion after the initial CI/security rollout is
+qualified. Repository administrators have a pull-request-only emergency bypass;
+record the reason and the omitted checks in the PR and restore normal checks
+before release. Do not use it for ordinary red builds.
 
-Please open an issue before starting work on:
-- large refactors
-- new features
-- architectural changes
-- UI redesigns
-
-Small bug fixes and documentation improvements can be submitted directly.
-
-## Development principles
-
-When contributing, please try to preserve these goals:
-- keep the app native to macOS
-- prefer clarity over abstraction
-- avoid adding features that turn Findle into a full LMS client
-- keep Moodle / Open LMS support stable and well-tested
-- do not introduce unnecessary dependencies
-
-## Pull requests
-
-Please make pull requests:
-- focused and small
-- clearly described
-- linked to an issue when relevant
-- tested locally before submission
-
-Include:
-- what changed
-- why it changed
-- screenshots for visible UI changes
-- any migration or compatibility notes
-
-## Code style
-
-Please follow the existing style of the codebase.
-Prefer incremental improvements over broad rewrites.
-
-## Licensing of contributions
-
-By intentionally submitting a contribution to this repository, you agree that your contribution is licensed under the Apache License 2.0 for inclusion in this project.
-
-## Contributor expectations
-
-By participating in this project, you agree to follow the Code of Conduct.
-
-## Security issues
-
-Please do not open public issues for security vulnerabilities.
-Instead, follow the instructions in `SECURITY.md`.
+Release staging and promotion follow [the qualification procedure](Documentation/release-qualification.md).
+No merge or successful bot status by itself authorizes a public release.

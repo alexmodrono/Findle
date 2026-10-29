@@ -11,7 +11,7 @@ import CommonCrypto
 /// Native Moodle web services client implementing the LMSProvider protocol.
 public final class MoodleClient: LMSProvider, Sendable {
     private let session: URLSession
-    private let logger = Logger(subsystem: "es.amodrono.foodle.networking", category: "MoodleClient")
+    private let logger = Logger(subsystem: "es.amodrono.findle.networking", category: "MoodleClient")
 
     public init(session: URLSession = .shared) {
         self.session = session
@@ -28,7 +28,7 @@ public final class MoodleClient: LMSProvider, Sendable {
         onProgress: @escaping @Sendable (SiteValidationProgress) async -> Void
     ) async throws -> MoodleSite {
         let normalizedURL = Self.normalizeURL(url)
-        logger.info("Validating site: \(normalizedURL.absoluteString, privacy: .public)")
+        logger.info("Validating site: \(normalizedURL.absoluteString, privacy: .private)")
 
         try Task.checkCancellation()
 
@@ -38,7 +38,7 @@ public final class MoodleClient: LMSProvider, Sendable {
             return try await fetchSiteInfo(baseURL: normalizedURL, requestPolicy: .interactiveValidation)
         } catch is CancellationError {
             throw CancellationError()
-        } catch let error as FoodleError {
+        } catch let error as FindleError {
             guard shouldAttemptCompatibilityProbe(after: error) else {
                 throw error
             }
@@ -79,11 +79,11 @@ public final class MoodleClient: LMSProvider, Sendable {
         let (data, response) = try await performRequest(request, policy: requestPolicy)
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw FoodleError.siteUnreachable(url: baseURL)
+            throw FindleError.siteUnreachable(url: baseURL)
         }
 
         guard (200...299).contains(httpResponse.statusCode) else {
-            throw FoodleError.requestFailed(
+            throw FindleError.requestFailed(
                 statusCode: httpResponse.statusCode,
                 detail: String(data: data, encoding: .utf8) ?? "Unknown"
             )
@@ -93,11 +93,11 @@ public final class MoodleClient: LMSProvider, Sendable {
            let first = responses.first {
             if let exception = first["exception"] as? [String: Any] {
                 let detail = exception["message"] as? String ?? "Missing public site configuration."
-                throw FoodleError.siteIncompatible(reason: detail)
+                throw FindleError.siteIncompatible(reason: detail)
             }
 
             guard let resultData = first["data"] as? [String: Any] else {
-                throw FoodleError.invalidResponse(detail: "Missing public site configuration.")
+                throw FindleError.invalidResponse(detail: "Missing public site configuration.")
             }
 
             let siteName = resultData["sitename"] as? String
@@ -138,21 +138,21 @@ public final class MoodleClient: LMSProvider, Sendable {
 
             logger.info("Site login type: \(typeOfLogin) (\(loginType.requiresSSO ? "SSO" : "password", privacy: .public))")
             if let launchURL {
-                logger.info("Discovered launchurl: \(launchURL, privacy: .public)")
+                logger.info("Discovered launchurl: \(launchURL, privacy: .private)")
             } else {
                 logger.info("No launchurl advertised by site")
             }
             if let wwwroot {
-                logger.info("Discovered wwwroot: \(wwwroot, privacy: .public)")
+                logger.info("Discovered wwwroot: \(wwwroot, privacy: .private)")
             }
             if let httpswwwroot {
-                logger.info("Discovered httpswwwroot: \(httpswwwroot, privacy: .public)")
+                logger.info("Discovered httpswwwroot: \(httpswwwroot, privacy: .private)")
             }
             if canonicalBaseURL != baseURL {
-                logger.info("Canonical base URL set to discovered root: \(canonicalBaseURL.absoluteString, privacy: .public)")
+                logger.info("Canonical base URL set to discovered root: \(canonicalBaseURL.absoluteString, privacy: .private)")
             }
             if !identityProviders.isEmpty {
-                logger.info("Identity providers: \(identityProviders.map(\.name).joined(separator: ", "), privacy: .public)")
+                logger.info("Identity providers: \(identityProviders.map(\.name).joined(separator: ", "), privacy: .private)")
             }
 
             let capabilities = SiteCapabilities(
@@ -177,7 +177,7 @@ public final class MoodleClient: LMSProvider, Sendable {
             )
         }
 
-        throw FoodleError.invalidResponse(detail: "Could not decode Moodle public site configuration.")
+        throw FindleError.invalidResponse(detail: "Could not decode Moodle public site configuration.")
     }
 
     private func probeTokenEndpointCompatibility(
@@ -194,20 +194,20 @@ public final class MoodleClient: LMSProvider, Sendable {
         let (data, response) = try await performRequest(request, policy: requestPolicy)
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw FoodleError.siteUnreachable(url: baseURL)
+            throw FindleError.siteUnreachable(url: baseURL)
         }
 
         guard httpResponse.statusCode == 200 else {
-            throw FoodleError.siteIncompatible(reason: "Could not verify Moodle web services at this URL.")
+            throw FindleError.siteIncompatible(reason: "Could not verify Moodle web services at this URL.")
         }
 
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw FoodleError.siteIncompatible(reason: "Could not verify Moodle web services at this URL.")
+            throw FindleError.siteIncompatible(reason: "Could not verify Moodle web services at this URL.")
         }
 
         let errorCode = json["errorcode"] as? String
         if errorCode == "enablewsdescription" {
-            throw FoodleError.webServicesDisabled
+            throw FindleError.webServicesDisabled
         }
 
         let isValidMoodle = errorCode == "invalidlogin"
@@ -215,7 +215,7 @@ public final class MoodleClient: LMSProvider, Sendable {
             || json["token"] != nil
 
         guard isValidMoodle else {
-            throw FoodleError.siteIncompatible(reason: "Could not verify Moodle web services at this URL.")
+            throw FindleError.siteIncompatible(reason: "Could not verify Moodle web services at this URL.")
         }
 
         logger.info("Token endpoint compatibility probe succeeded")
@@ -230,7 +230,7 @@ public final class MoodleClient: LMSProvider, Sendable {
         )
     }
 
-    private func shouldAttemptCompatibilityProbe(after error: FoodleError) -> Bool {
+    private func shouldAttemptCompatibilityProbe(after error: FindleError) -> Bool {
         switch error {
         case .networkUnavailable, .timeout, .siteUnreachable, .webServicesDisabled:
             return false
@@ -242,6 +242,7 @@ public final class MoodleClient: LMSProvider, Sendable {
     // MARK: - Authentication
 
     public func authenticate(site: MoodleSite, username: String, password: String) async throws -> AuthToken {
+        let origin = try credentialOrigin(site: site, destination: site.tokenURL)
         logger.info("Authenticating user \(username, privacy: .private) at \(site.baseURL.host ?? "", privacy: .public)")
 
         // Build the body explicitly so '+' in a password isn't double-decoded
@@ -256,18 +257,36 @@ public final class MoodleClient: LMSProvider, Sendable {
             "service": "moodle_mobile_app"
         ])
 
-        let (data, _) = try await performRequest(request)
-        let tokenResponse = try Self.makeDecoder().decode(TokenResponse.self, from: data)
+        // Never retried: the request carries the password, and a retry after a lost
+        // connection could submit it twice.
+        let (data, response) = try await performRequest(request, policy: .authentication, credentialOrigin: origin)
+        guard let response = response as? HTTPURLResponse, !(300...399).contains(response.statusCode) else {
+            throw FindleError.invalidResponse(detail: "Sign-in did not complete at the selected secure site.")
+        }
+        _ = try Self.parseJSON(data, context: "Sign-in")
+
+        let tokenResponse: TokenResponse
+        do {
+            tokenResponse = try Self.makeDecoder().decode(TokenResponse.self, from: data)
+        } catch {
+            throw FindleError.invalidResponse(detail: "Unexpected sign-in response: \(error.localizedDescription)")
+        }
 
         if let error = tokenResponse.error {
             if error.contains("invalidlogin") || tokenResponse.errorcode == "invalidlogin" {
-                throw FoodleError.invalidCredentials
+                throw FindleError.invalidCredentials
             }
-            throw FoodleError.siteIncompatible(reason: error)
+            throw FindleError.siteIncompatible(reason: error)
+        }
+
+        guard (200...299).contains(response.statusCode) else {
+            throw FindleError.invalidResponse(detail: "Sign-in did not complete at the selected secure site.")
         }
 
         guard let token = tokenResponse.token else {
-            throw FoodleError.invalidResponse(detail: "No token in authentication response.")
+            // Surface whatever Moodle said instead of a generic message.
+            let detail = tokenResponse.message ?? tokenResponse.errorcode ?? "No token in authentication response."
+            throw FindleError.invalidResponse(detail: detail)
         }
 
         return AuthToken(token: token, privateToken: tokenResponse.privatetoken)
@@ -279,7 +298,7 @@ public final class MoodleClient: LMSProvider, Sendable {
         logger.info("Parsing SSO callback")
 
         guard let base64String = Self.extractTokenParam(from: callbackURLString) else {
-            throw FoodleError.invalidResponse(detail: "SSO callback URL has unexpected format.")
+            throw FindleError.invalidResponse(detail: "SSO callback URL has unexpected format.")
         }
 
         return try decodeTokenPayload(base64String, site: site, passport: passport)
@@ -287,7 +306,7 @@ public final class MoodleClient: LMSProvider, Sendable {
 
     /// Extract the base64 token parameter from a raw callback URL string.
     /// Handles both `scheme://token=<base64>` and `scheme://token?token=<base64>` formats,
-    /// and accepts any URL scheme (foodle, moodlemobile, openlms, etc.).
+    /// and accepts any URL scheme (findle, moodlemobile, openlms, etc.).
     static func extractTokenParam(from urlString: String) -> String? {
         // Format 1: scheme://token=<base64> — the token is everything after "://token="
         if let range = urlString.range(of: "://token=") {
@@ -321,13 +340,13 @@ public final class MoodleClient: LMSProvider, Sendable {
 
         guard let data = Data(base64Encoded: base64),
               let decoded = String(data: data, encoding: .utf8) else {
-            throw FoodleError.invalidResponse(detail: "Could not decode SSO token payload.")
+            throw FindleError.invalidResponse(detail: "Could not decode SSO token payload.")
         }
 
         // Moodle payload format: md5(siteURL + passport):::token[:::privatetoken]
         let parts = decoded.components(separatedBy: ":::")
         guard parts.count >= 2 else {
-            throw FoodleError.invalidResponse(detail: "SSO token payload has unexpected format.")
+            throw FindleError.invalidResponse(detail: "SSO token payload has unexpected format.")
         }
 
         let signature = parts[0]
@@ -345,7 +364,7 @@ public final class MoodleClient: LMSProvider, Sendable {
 
         guard matched else {
             logger.error("SSO signature mismatch - none of the candidate URLs matched")
-            throw FoodleError.invalidResponse(detail: "SSO security verification failed.")
+            throw FindleError.invalidResponse(detail: "SSO security verification failed.")
         }
 
         logger.info("SSO token obtained successfully")
@@ -448,35 +467,54 @@ public final class MoodleClient: LMSProvider, Sendable {
     // MARK: - Course Contents
 
     public func fetchCourseContents(site: MoodleSite, token: AuthToken, courseID: Int) async throws -> [MoodleSection] {
-        let response: [SectionResponse] = try await callWebService(
+        let response: LossyArray<SectionResponse> = try await callWebService(
             site: site,
             token: token,
             function: "core_course_get_contents",
             params: ["courseid": String(courseID)]
         )
 
-        return response.map { section in
-            MoodleSection(
+        // Sync treats missing items as deletions. Lossy decoding is useful for
+        // diagnosis, but its survivors must never be published as a full tree.
+        let incomplete = FindleError.invalidResponse(
+            detail: "Moodle returned incomplete course content. Previous files were kept; try syncing again."
+        )
+        guard response.discardedCount == 0 else { throw incomplete }
+
+        return try response.elements.map { section in
+            guard let modules = section.modules, modules.discardedCount == 0 else { throw incomplete }
+            return MoodleSection(
                 id: section.id,
                 courseID: courseID,
-                name: section.name,
+                name: section.name ?? "Section \(section.section)",
                 summary: section.summary,
                 sectionNumber: section.section,
                 visible: (section.visible ?? 1) == 1,
-                modules: section.modules.map { mod in
-                    MoodleModule(
+                modules: try modules.elements.map { mod in
+                    guard let modName = mod.modname, !modName.isEmpty,
+                          (mod.contents?.discardedCount ?? 0) == 0 else { throw incomplete }
+                    // Content-bearing modules must distinguish an explicit empty
+                    // list from an omitted one. Activities such as forums may
+                    // legitimately have no exported contents.
+                    if ["resource", "folder", "url"].contains(modName), mod.contents == nil {
+                        throw incomplete
+                    }
+                    return MoodleModule(
                         id: mod.id,
-                        name: mod.name,
-                        modName: mod.modname,
+                        name: mod.name ?? modName,
+                        modName: modName,
                         modIcon: mod.modicon.flatMap { URL(string: $0) },
                         visible: (mod.visible ?? 1) == 1,
-                        contents: (mod.contents ?? []).map { content in
-                            MoodleFileContent(
-                                type: content.type,
-                                fileName: content.filename,
+                        contents: try (mod.contents?.elements ?? []).map { content in
+                            guard let fileName = content.filename, !fileName.isEmpty else { throw incomplete }
+                            let fileURL = content.fileurl.flatMap { URL(string: $0) }
+                            if modName == "url", fileURL == nil { throw incomplete }
+                            return MoodleFileContent(
+                                type: content.type ?? "file",
+                                fileName: fileName,
                                 filePath: content.filepath,
                                 fileSize: content.filesize ?? 0,
-                                fileURL: content.fileurl.flatMap { URL(string: $0) },
+                                fileURL: fileURL,
                                 timeCreated: content.timecreated.flatMap { Date(timeIntervalSince1970: TimeInterval($0)) },
                                 timeModified: content.timemodified.flatMap { Date(timeIntervalSince1970: TimeInterval($0)) },
                                 mimeType: content.mimetype,
@@ -611,15 +649,29 @@ public final class MoodleClient: LMSProvider, Sendable {
 
     // MARK: - File Download
 
-    public func downloadFile(url: URL, token: AuthToken, destination: URL) async throws {
-        let request = authenticatedFileRequest(fileURL: url, token: token)
-
-        let (tempURL, response) = try await session.download(for: request)
+    public func downloadFile(url: URL, site: MoodleSite, token: AuthToken, destination: URL) async throws {
+        let origin = try credentialOrigin(site: site, destination: url)
+        let request = try origin.fileRequest(url: url, token: token)
+        let redirectDelegate = AuthenticatedRedirectDelegate(origin: origin)
+        let tempURL: URL
+        let response: URLResponse
+        do {
+            (tempURL, response) = try await session.download(for: request, delegate: redirectDelegate)
+        } catch {
+            try Task.checkCancellation()
+            try redirectDelegate.checkRedirect()
+            throw error
+        }
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        try Task.checkCancellation()
+        try redirectDelegate.checkRedirect()
+        guard let responseURL = response.url else { throw AuthenticatedRequestError.untrustedDestination }
+        try origin.validate(responseURL)
 
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-            throw FoodleError.downloadFailed(itemID: url.lastPathComponent, reason: "HTTP \(statusCode)")
+            throw FindleError.downloadFailed(itemID: url.lastPathComponent, reason: "HTTP \(statusCode)")
         }
 
         let fileManager = FileManager.default
@@ -631,16 +683,18 @@ public final class MoodleClient: LMSProvider, Sendable {
         try fileManager.moveItem(at: tempURL, to: destination)
     }
 
-    public func authenticatedFileRequest(fileURL: URL, token: AuthToken) -> URLRequest {
-        // Moodle's pluginfile.php accepts the token via either $_GET or $_POST.
-        // Send it via POST body so the token doesn't end up in URL logs, the
-        // Referer header on CDN redirects, or URLSession metrics. The URL
-        // itself stays clean.
-        var request = URLRequest(url: fileURL)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = Self.formEncode(["token": token.token])
-        return request
+    public func authenticatedFileRequest(fileURL: URL, site: MoodleSite, token: AuthToken) throws -> URLRequest {
+        try credentialOrigin(site: site, destination: fileURL).fileRequest(url: fileURL, token: token)
+    }
+
+    private func credentialOrigin(site: MoodleSite, destination: URL) throws -> AuthenticatedRequestOrigin {
+        // Background sessions follow redirects without consulting the delegate.
+        guard session.configuration.identifier == nil else {
+            throw AuthenticatedRequestError.unsupportedBackgroundSession
+        }
+        let origin = try AuthenticatedRequestOrigin(site: site)
+        try origin.validate(destination)
+        return origin
     }
 
     // MARK: - Web Service Call
@@ -651,6 +705,7 @@ public final class MoodleClient: LMSProvider, Sendable {
         function: String,
         params: [String: String] = [:]
     ) async throws -> T {
+        let origin = try credentialOrigin(site: site, destination: site.webServiceURL)
         // POST the credentials and parameters in the body so wstoken never
         // ends up in URL logs, proxy access logs, or crash reports. Moodle's
         // webservice/rest/server.php accepts either GET or POST.
@@ -668,33 +723,87 @@ public final class MoodleClient: LMSProvider, Sendable {
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = Self.formEncode(body)
 
-        let (data, response) = try await performRequest(request)
+        let (data, response) = try await performRequest(request, credentialOrigin: origin)
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw FoodleError.invalidResponse(detail: "Non-HTTP response.")
+            throw FindleError.invalidResponse(detail: "Non-HTTP response.")
         }
 
         guard (200...299).contains(httpResponse.statusCode) else {
-            throw FoodleError.requestFailed(
+            throw FindleError.requestFailed(
                 statusCode: httpResponse.statusCode,
                 detail: String(data: data, encoding: .utf8) ?? "Unknown"
             )
         }
 
-        // Check for Moodle-level errors in the JSON
-        if let errorResponse = try? Self.makeDecoder().decode(MoodleErrorResponse.self, from: data) {
-            if errorResponse.errorcode != nil {
-                if errorResponse.errorcode == "invalidtoken" || errorResponse.errorcode == "accessexception" {
-                    throw FoodleError.tokenExpired
+        // Login pages and SSO proxies return HTML here, so check for JSON before decoding.
+        let json = try Self.parseJSON(data, context: function)
+
+        if let object = json as? [String: Any] {
+            // Check for Moodle-level errors in the JSON
+            if let errorCode = object["errorcode"] as? String {
+                if errorCode == "invalidtoken" {
+                    throw FindleError.tokenExpired
                 }
-                throw FoodleError.requestFailed(
+                if errorCode == "accessexception" {
+                    // Moodle uses accessexception both for a dead token and for one function
+                    // the token may not call. Only a dead token should sign the user out.
+                    try await confirmTokenValid(site: site, token: token, function: function)
+                }
+                throw FindleError.requestFailed(
                     statusCode: httpResponse.statusCode,
-                    detail: errorResponse.message ?? errorResponse.errorcode ?? "Unknown Moodle error"
+                    detail: object["message"] as? String ?? errorCode
                 )
+            }
+            if object["exception"] != nil {
+                let message = object["message"] as? String ?? "Moodle returned an exception."
+                throw FindleError.invalidResponse(detail: "\(function): \(message)")
             }
         }
 
-        return try Self.makeDecoder().decode(T.self, from: data)
+        do {
+            return try Self.makeDecoder().decode(T.self, from: data)
+        } catch {
+            throw FindleError.invalidResponse(detail: "Could not decode \(function): \(error.localizedDescription)")
+        }
+    }
+
+    /// Resolves an `accessexception` by calling site info with the same token.
+    ///
+    /// Returns normally when the token still works, so the caller reports the original
+    /// Moodle error. Throws `tokenExpired` only when the probe is rejected as a bad token.
+    /// Network failures are rethrown. Other probe failures are treated as "token still good"
+    /// so an ambiguous answer never signs the user out.
+    private func confirmTokenValid(site: MoodleSite, token: AuthToken, function: String) async throws {
+        // The probe is site info itself, so there is nothing further to check.
+        guard function != "core_webservice_get_site_info" else {
+            throw FindleError.tokenExpired
+        }
+
+        do {
+            let _: SiteInfoResponse = try await callWebService(
+                site: site,
+                token: token,
+                function: "core_webservice_get_site_info"
+            )
+        } catch let error as FindleError {
+            switch error {
+            case .tokenExpired, .networkUnavailable, .timeout, .siteUnreachable:
+                throw error
+            default:
+                logger.info("Token probe after accessexception failed without a token error; keeping session")
+            }
+        }
+    }
+
+    /// Parses a response body as JSON. HTML from an SSO or proxy page is reported as an invalid response.
+    private static func parseJSON(_ data: Data, context: String) throws -> Any {
+        guard let json = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else {
+            throw FindleError.invalidResponse(
+                detail: "\(context) returned a non-JSON response. The server may be showing a login or proxy page."
+            )
+        }
+        return json
     }
 
     private static func makeDecoder() -> JSONDecoder {
@@ -709,19 +818,21 @@ public final class MoodleClient: LMSProvider, Sendable {
         case standard
         case interactiveValidation
         case interactiveCompatibilityProbe
+        /// Sign-in POST. Carries the password, so it must never be replayed.
+        case authentication
 
         var retryCount: Int {
             switch self {
             case .standard:
                 return 3
-            case .interactiveValidation, .interactiveCompatibilityProbe:
+            case .interactiveValidation, .interactiveCompatibilityProbe, .authentication:
                 return 1
             }
         }
 
         var timeoutInterval: TimeInterval {
             switch self {
-            case .standard:
+            case .standard, .authentication:
                 return 15
             case .interactiveValidation:
                 return 6
@@ -732,7 +843,7 @@ public final class MoodleClient: LMSProvider, Sendable {
 
         var mapsHostErrorsToSiteUnreachable: Bool {
             switch self {
-            case .standard:
+            case .standard, .authentication:
                 return false
             case .interactiveValidation, .interactiveCompatibilityProbe:
                 return true
@@ -742,46 +853,79 @@ public final class MoodleClient: LMSProvider, Sendable {
 
     private func performRequest(
         _ request: URLRequest,
-        policy: RequestPolicy = .standard
+        policy: RequestPolicy = .standard,
+        credentialOrigin: AuthenticatedRequestOrigin? = nil
     ) async throws -> (Data, URLResponse) {
         var request = request
         if request.timeoutInterval <= 0 {
             request.timeoutInterval = policy.timeoutInterval
         }
 
-        var lastError: Error?
         for attempt in 0..<policy.retryCount {
             try Task.checkCancellation()
+            let redirectDelegate = credentialOrigin.map { AuthenticatedRedirectDelegate(origin: $0) }
 
             do {
-                return try await session.data(for: request)
+                let result = try await session.data(for: request, delegate: redirectDelegate)
+                try redirectDelegate?.checkRedirect()
+                if let credentialOrigin {
+                    guard let responseURL = result.1.url else { throw AuthenticatedRequestError.untrustedDestination }
+                    try credentialOrigin.validate(responseURL)
+                }
+                return result
             } catch is CancellationError {
+                try Task.checkCancellation()
+                try redirectDelegate?.checkRedirect()
                 throw CancellationError()
             } catch let error as URLError {
-                lastError = error
-
-                if let mappedError = mapTransportError(error, requestURL: request.url, policy: policy) {
-                    throw mappedError
+                try Task.checkCancellation()
+                try redirectDelegate?.checkRedirect()
+                if error.code == .cancelled {
+                    throw CancellationError()
                 }
 
-                if attempt < policy.retryCount - 1 {
-                    let delay = pow(2.0, Double(attempt)) * 0.5
-                    try await Task.sleep(for: .seconds(delay))
-                    logger.debug("Retrying request (attempt \(attempt + 1))")
+                // Only transient transport failures are retried, and only while attempts remain.
+                let canRetry = Self.isRetryableTransportError(error.code) && attempt < policy.retryCount - 1
+                if !canRetry {
+                    throw mapTransportError(error, requestURL: request.url, policy: policy)
+                        ?? Self.wrapTransportError(error)
                 }
+
+                let delay = pow(2.0, Double(attempt)) * 0.5
+                logger.debug("Retrying request after URLError \(error.code.rawValue, privacy: .public) (attempt \(attempt + 1))")
+                try await Task.sleep(for: .seconds(delay))
             } catch {
                 throw error
             }
         }
 
-        throw lastError ?? FoodleError.networkUnavailable
+        throw FindleError.networkUnavailable
+    }
+
+    private static func isRetryableTransportError(_ code: URLError.Code) -> Bool {
+        switch code {
+        case .networkConnectionLost, .timedOut, .cannotConnectToHost, .dnsLookupFailed:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Fallback for transport errors that have no specific mapping, so no raw URLError leaks out.
+    private static func wrapTransportError(_ error: URLError) -> FindleError {
+        switch error.code {
+        case .badServerResponse, .cannotParseResponse, .zeroByteResource:
+            return .invalidResponse(detail: error.localizedDescription)
+        default:
+            return .networkUnavailable
+        }
     }
 
     private func mapTransportError(
         _ error: URLError,
         requestURL: URL?,
         policy: RequestPolicy
-    ) -> FoodleError? {
+    ) -> FindleError? {
         switch error.code {
         case .notConnectedToInternet, .networkConnectionLost:
             return .networkUnavailable
@@ -835,15 +979,15 @@ public final class MoodleClient: LMSProvider, Sendable {
 
     /// Log a privacy-safe summary of a site's SSO capabilities for manual verification.
     public func logSSODiagnostics(for site: MoodleSite) {
-        logger.info("SSO diagnostics for \(site.displayName, privacy: .public)")
-        logger.info("  Base URL: \(site.baseURL.absoluteString, privacy: .public)")
+        logger.info("SSO diagnostics for \(site.displayName, privacy: .private)")
+        logger.info("  Base URL: \(site.baseURL.absoluteString, privacy: .private)")
         logger.info("  Login type: \(site.capabilities.loginType.rawValue) (requiresSSO: \(site.capabilities.loginType.requiresSSO, privacy: .public))")
         logger.info("  Has advertised launchURL: \(site.capabilities.launchURL != nil, privacy: .public)")
         logger.debug("  Advertised launchURL: \(site.capabilities.launchURL ?? "<none>", privacy: .private)")
-        logger.info("  wwwroot: \(site.capabilities.wwwroot ?? "<none>", privacy: .public)")
-        logger.info("  httpswwwroot: \(site.capabilities.httpswwwroot ?? "<none>", privacy: .public)")
-        logger.info("  Identity providers: \(site.capabilities.identityProviders.map(\.name).joined(separator: ", "), privacy: .public)")
-        logger.info("  Moodle version: \(site.capabilities.moodleVersion ?? "unknown", privacy: .public)")
-        logger.info("  Moodle release: \(site.capabilities.moodleRelease ?? "unknown", privacy: .public)")
+        logger.info("  wwwroot: \(site.capabilities.wwwroot ?? "<none>", privacy: .private)")
+        logger.info("  httpswwwroot: \(site.capabilities.httpswwwroot ?? "<none>", privacy: .private)")
+        logger.info("  Identity providers: \(site.capabilities.identityProviders.map(\.name).joined(separator: ", "), privacy: .private)")
+        logger.info("  Moodle version: \(site.capabilities.moodleVersion ?? "unknown", privacy: .private)")
+        logger.info("  Moodle release: \(site.capabilities.moodleRelease ?? "unknown", privacy: .private)")
     }
 }

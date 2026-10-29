@@ -29,6 +29,27 @@ public struct MoodleSite: Sendable, Codable, Equatable, Identifiable {
         Self.appending(path: "login/token.php", to: baseURL)
     }
 
+    /// Public site discovery creates a new UUID. Reuse the persisted identity
+    /// for the same canonical server so reconnecting keeps its files and courses.
+    public func preservingIdentity(from knownSites: [MoodleSite]) -> MoodleSite {
+        guard let previous = knownSites.first(where: {
+            Self.identityURL($0.baseURL) == Self.identityURL(baseURL)
+        }) else { return self }
+        return MoodleSite(id: previous.id, displayName: displayName, baseURL: baseURL, capabilities: capabilities)
+    }
+
+    private static func identityURL(_ url: URL) -> String {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url.absoluteString
+        }
+        components.scheme = components.scheme?.lowercased()
+        components.host = components.host?.lowercased()
+        if (components.scheme == "https" && components.port == 443) ||
+            (components.scheme == "http" && components.port == 80) { components.port = nil }
+        while components.percentEncodedPath.hasSuffix("/") { components.percentEncodedPath.removeLast() }
+        return components.string ?? url.absoluteString
+    }
+
     /// Append a service-relative path to a Moodle base URL, going through
     /// URLComponents so any existing path is preserved correctly and a
     /// trailing-slash mismatch on `baseURL` doesn't collapse the suffix.
@@ -56,7 +77,6 @@ public struct MoodleSite: Sendable, Codable, Equatable, Identifiable {
     /// navigation delegate intercepts them instead of the system URL handler.
     public static let acceptedCallbackSchemes: Set<String> = [
         "findle",
-        "foodle",
         "moodlemobile",
         "openlms",
         "ltgopenlmsapp",

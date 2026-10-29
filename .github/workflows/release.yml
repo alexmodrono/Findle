@@ -1,4 +1,4 @@
-name: Release
+name: Stage release candidate
 
 on:
   push:
@@ -6,16 +6,28 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: findle-release
+  cancel-in-progress: false
 
 env:
   APP_NAME: Findle
-  SCHEME: Foodle
-  BUNDLE_ID: es.amodrono.foodle
+  SCHEME: Findle
+  BUNDLE_ID: es.amodrono.findle
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
 
 jobs:
-  build-and-release:
+  stage:
+    environment: release-candidate
     runs-on: macos-26
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      actions: read
+      attestations: write
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -25,10 +37,22 @@ jobs:
 
       - name: Extract version from tag
         id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid release tag" >&2; exit 1; }
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Require tested source on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          python3 scripts/require-release-ci.py "$GITHUB_SHA"
+          bash scripts/ci-preflight.sh
+
+      - name: Install verified release tools before importing signing credentials
+        run: |
+          bash scripts/install-ci-tools.sh
+          bash scripts/install-release-tools.sh
 
       - name: Import signing certificate
         env:
@@ -71,7 +95,8 @@ jobs:
         run: |
           KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain"
 
-          cat > Config/Release-App.xcconfig <<XCCONFIG
+          # Append signing overrides; retain release optimization and archive settings.
+          cat >> Config/Release-App.xcconfig <<XCCONFIG
           CODE_SIGN_STYLE = Manual
           CODE_SIGN_IDENTITY = Developer ID Application
           DEVELOPMENT_TEAM = ${{ secrets.TEAM_ID }}
@@ -79,7 +104,7 @@ jobs:
           OTHER_CODE_SIGN_FLAGS = --keychain $KEYCHAIN_PATH
           XCCONFIG
 
-          cat > Config/Release-FileProvider.xcconfig <<XCCONFIG
+          cat >> Config/Release-FileProvider.xcconfig <<XCCONFIG
           CODE_SIGN_STYLE = Manual
           CODE_SIGN_IDENTITY = Developer ID Application
           DEVELOPMENT_TEAM = ${{ secrets.TEAM_ID }}
@@ -87,16 +112,17 @@ jobs:
           OTHER_CODE_SIGN_FLAGS = --keychain $KEYCHAIN_PATH
           XCCONFIG
 
-          cat > Config/Release-Framework.xcconfig <<XCCONFIG
+          cat >> Config/Release-Framework.xcconfig <<XCCONFIG
           CODE_SIGN_STYLE = Manual
-          CODE_SIGN_IDENTITY = -
+          CODE_SIGN_IDENTITY = Developer ID Application
           DEVELOPMENT_TEAM = ${{ secrets.TEAM_ID }}
+          OTHER_CODE_SIGN_FLAGS = --keychain $KEYCHAIN_PATH
           XCCONFIG
 
           # The bundled MCP helper (FindleMCP) ships inside the app's Contents/MacOS.
           # It must be Developer ID-signed with the same team as the embedded
           # frameworks, or the hardened runtime's library validation refuses to
-          # load SharedDomain/FoodlePersistence at runtime (and notarization
+          # load SharedDomain/FindlePersistence at runtime (and notarization
           # rejects an ad-hoc nested executable). A CLI tool needs no provisioning
           # profile. Overwrites the gitignored local include used for dev builds.
           cat > Config/MCP.xcconfig <<XCCONFIG
@@ -111,16 +137,22 @@ jobs:
 
       - name: Set version in Info.plist
         run: |
-          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.version.outputs.version }}" Resources/Info/App-Info.plist
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" Resources/Info/App-Info.plist
+          for plist in Resources/Info/App-Info.plist Resources/Info/FileProvider-Info.plist Resources/Info/Framework-Info.plist; do
+            /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.version.outputs.version }}" "$plist"
+            /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" "$plist"
+          done
 
       - name: Build archive
         run: |
           xcodebuild archive \
-            -project Foodle.xcodeproj \
+            -project Findle.xcodeproj \
             -scheme "$SCHEME" \
             -configuration Release \
-            -archivePath "$RUNNER_TEMP/Foodle.xcarchive"
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            FINDLE_SOURCE_REVISION="$GITHUB_SHA" \
+            -derivedDataPath "$RUNNER_TEMP/ReleaseDerivedData" \
+            -archivePath "$RUNNER_TEMP/Findle.xcarchive"
 
       - name: Export archive
         run: |
@@ -139,9 +171,9 @@ jobs:
               <string>Developer ID Application</string>
               <key>provisioningProfiles</key>
               <dict>
-                  <key>es.amodrono.foodle</key>
+                  <key>es.amodrono.findle</key>
                   <string>${APP_PROFILE_UUID}</string>
-                  <key>es.amodrono.foodle.file-provider</key>
+                  <key>es.amodrono.findle.file-provider</key>
                   <string>${FP_PROFILE_UUID}</string>
               </dict>
           </dict>
@@ -149,7 +181,7 @@ jobs:
           EOF
 
           xcodebuild -exportArchive \
-            -archivePath "$RUNNER_TEMP/Foodle.xcarchive" \
+            -archivePath "$RUNNER_TEMP/Findle.xcarchive" \
             -exportPath "$RUNNER_TEMP/export" \
             -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
 
@@ -170,11 +202,21 @@ jobs:
             --wait
 
           xcrun stapler staple "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          spctl --assess --type execute --verbose=2 "$APP_PATH"
+
+      - name: Verify bundle identity and entitlements
+        env:
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          python3 scripts/release-candidate.py app \
+            --app "$RUNNER_TEMP/export/$APP_NAME.app" \
+            --version "${{ steps.version.outputs.version }}" --build "$GITHUB_RUN_NUMBER" \
+            --revision "$GITHUB_SHA" --team "$TEAM_ID" --symbols "$RUNNER_TEMP/Findle.xcarchive/dSYMs"
 
       - name: Create DMG
         run: |
-          brew install create-dmg
-
           create-dmg \
             --volname "$APP_NAME" \
             --window-pos 200 120 \
@@ -186,51 +228,41 @@ jobs:
             "$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.dmg" \
             "$RUNNER_TEMP/export/$APP_NAME.app"
 
+      - name: Sign and notarize the disk image
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          NOTARIZATION_PASSWORD: ${{ secrets.NOTARIZATION_PASSWORD }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          DMG="$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.dmg"
+          codesign --sign "Developer ID Application" --timestamp --keychain "$RUNNER_TEMP/build.keychain" "$DMG"
+          xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" \
+            --password "$NOTARIZATION_PASSWORD" --team-id "$TEAM_ID" --wait
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+
       - name: Create ZIP
         run: |
           cd "$RUNNER_TEMP/export"
           ditto -c -k --keepParent "$APP_NAME.app" "$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.zip"
 
-      - name: Sign ZIP with Sparkle EdDSA key
+      - name: Sign and verify ZIP with Sparkle
         id: sparkle
         env:
           SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
+          SIGN_UPDATE: ${{ runner.temp }}/ReleaseDerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin/sign_update
         run: |
-          ZIP_PATH="$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.zip"
-          ZIP_SIZE=$(stat -f%z "$ZIP_PATH")
+          bash scripts/sign-update.sh \
+            "$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.zip" \
+            "$RUNNER_TEMP/export/$APP_NAME.app/Contents/Info.plist"
 
-          # Find Sparkle's sign_update tool from the SPM build
-          SIGN_UPDATE=$(find ~/Library/Developer/Xcode/DerivedData -name "sign_update" -path "*/Sparkle-*/bin/*" 2>/dev/null | head -1)
-
-          if [ -z "$SIGN_UPDATE" ]; then
-            # Fallback: build it from the checked-out package
-            SPARKLE_CHECKOUT=$(find ~/Library/Developer/Xcode/DerivedData -name "Sparkle" -path "*/SourcePackages/checkouts/*" -type d 2>/dev/null | head -1)
-            if [ -n "$SPARKLE_CHECKOUT" ]; then
-              pushd "$SPARKLE_CHECKOUT"
-              xcodebuild -project Sparkle.xcodeproj -scheme sign_update -configuration Release -derivedDataPath "$RUNNER_TEMP/sparkle-build" build 2>/dev/null || true
-              popd
-              SIGN_UPDATE=$(find "$RUNNER_TEMP/sparkle-build" -name "sign_update" -type f 2>/dev/null | head -1)
-            fi
-          fi
-
-          if [ -n "$SIGN_UPDATE" ]; then
-            ED_SIGNATURE=$("$SIGN_UPDATE" "$ZIP_PATH" --ed-key-file <(echo "$SPARKLE_PRIVATE_ED_KEY") 2>&1 | grep "sparkle:edSignature" | sed 's/.*sparkle:edSignature="\([^"]*\)".*/\1/')
-          fi
-
-          # Fallback: use openssl to compute EdDSA signature manually if sign_update failed
-          if [ -z "$ED_SIGNATURE" ]; then
-            echo "Warning: Could not compute EdDSA signature with sign_update, appcast will lack signature"
-            ED_SIGNATURE=""
-          fi
-
-          echo "ed_signature=$ED_SIGNATURE" >> "$GITHUB_OUTPUT"
-          echo "zip_size=$ZIP_SIZE" >> "$GITHUB_OUTPUT"
-
-      - name: Compute SHA256
-        id: sha
-        run: |
-          SHA=$(shasum -a 256 "$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.zip" | awk '{print $1}')
-          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+      - name: Retain crash symbols
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Findle-symbols-${{ github.ref_name }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/Findle.xcarchive/dSYMs
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Generate Sparkle appcast
         run: |
@@ -252,7 +284,7 @@ jobs:
                 <pubDate>${PUB_DATE}</pubDate>
                 <sparkle:version>${BUILD}</sparkle:version>
                 <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
-                <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+                <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
                 <enclosure
                   url="https://github.com/${REPO}/releases/download/v${VERSION}/Findle-${VERSION}.zip"
                   length="${ZIP_SIZE}"
@@ -264,57 +296,49 @@ jobs:
           </rss>
           APPCAST
 
-      - name: Create GitHub Release and upload artifacts
+      - name: Assemble validated candidate
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ED_SIGNATURE: ${{ steps.sparkle.outputs.ed_signature }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$APP_NAME ${{ steps.version.outputs.version }}" \
-            --generate-notes \
-            "$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.dmg" \
-            "$RUNNER_TEMP/$APP_NAME-${{ steps.version.outputs.version }}.zip" \
-            "$RUNNER_TEMP/appcast.xml"
+          mkdir -p "$RUNNER_TEMP/candidate"
+          cp "$RUNNER_TEMP/$APP_NAME-$VERSION.zip" "$RUNNER_TEMP/$APP_NAME-$VERSION.dmg" \
+            "$RUNNER_TEMP/appcast.xml" "$RUNNER_TEMP/candidate/"
+          cp Findle.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved "$RUNNER_TEMP/candidate/"
+          ditto -c -k --keepParent "$RUNNER_TEMP/Findle.xcarchive/dSYMs" "$RUNNER_TEMP/candidate/Findle-symbols.zip"
+          python3 scripts/release-candidate.py manifest --directory "$RUNNER_TEMP/candidate" \
+            --version "$VERSION" --build "$GITHUB_RUN_NUMBER" --revision "$GITHUB_SHA" --signature "$ED_SIGNATURE"
+          cd "$RUNNER_TEMP/candidate"
+          shasum -a 256 ./* > "$RUNNER_TEMP/candidate-checksums.txt"
+          cat "$RUNNER_TEMP/candidate-checksums.txt" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Update Homebrew cask
+      - name: Attest candidate provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: ${{ runner.temp }}/candidate/*
+
+      - name: Verify generated attestations
         env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          SHA="${{ steps.sha.outputs.sha256 }}"
-          REPO="${{ github.repository }}"
-          OWNER="${REPO%%/*}"
+          for artifact in "$RUNNER_TEMP"/candidate/*; do
+            gh attestation verify "$artifact" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+              --source-digest "$GITHUB_SHA" --deny-self-hosted-runners
+          done
 
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${OWNER}/homebrew-tap.git" "$RUNNER_TEMP/homebrew-tap"
+      - name: Retain complete candidate
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-candidate-${{ github.ref_name }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/candidate
+          if-no-files-found: error
+          retention-days: 90
 
-          mkdir -p "$RUNNER_TEMP/homebrew-tap/Casks"
-          cat > "$RUNNER_TEMP/homebrew-tap/Casks/findle.rb" <<CASK
-          cask "findle" do
-            version "$VERSION"
-            sha256 "$SHA"
-
-            url "https://github.com/${REPO}/releases/download/v#{version}/Findle-#{version}.zip"
-            name "Findle"
-            desc "Sync Moodle course content to your Mac via Finder"
-            homepage "https://github.com/${REPO}"
-
-            depends_on macos: ">= :sonoma"
-
-            app "Findle.app"
-
-            zap trash: [
-              "~/Library/Group Containers/group.es.amodrono.foodle",
-              "~/Library/Containers/es.amodrono.foodle",
-              "~/Library/Containers/es.amodrono.foodle.file-provider",
-            ]
-          end
-          CASK
-
-          cd "$RUNNER_TEMP/homebrew-tap"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Casks/findle.rb
-          git commit -m "Update findle to $VERSION"
-          git push
+      - name: Stage draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/stage-release.py "$RUNNER_TEMP/candidate"
 
       - name: Clean up keychain
         if: always()

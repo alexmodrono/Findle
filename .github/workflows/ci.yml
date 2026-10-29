@@ -1,0 +1,243 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Repository quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install shell syntax checker
+        run: sudo apt-get update && sudo apt-get install -y zsh
+      - name: Install pinned workflow checker
+        run: |
+          curl --fail --silent --show-error --location \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            -o "$RUNNER_TEMP/actionlint.tar.gz"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+      - name: Validate workflows
+        run: '"$RUNNER_TEMP/actionlint" -color'
+      - name: Validate repository files
+        run: python3 scripts/check-repository.py
+      - name: Test security and coverage gates
+        run: python3 -m unittest discover -s Tests/AutomationTests -v
+
+  format:
+    # Staged adoption: retain findings for baseline review before requiring them.
+    # This job never rewrites files or hides findings in the required aggregate.
+    name: Swift format baseline (advisory)
+    runs-on: macos-26
+    timeout-minutes: 10
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Record formatting baseline
+        id: format
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          xcrun swift-format lint --strict --recursive --configuration .swift-format \
+            Sources Tests scripts 2>&1 | tee "$RUNNER_TEMP/swift-format.log"
+      - name: Retain formatting report
+        if: always()
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: swift-format-baseline
+          path: ${{ runner.temp }}/swift-format.log
+          retention-days: 14
+          if-no-files-found: error
+      - name: Explain staged formatting check
+        if: always()
+        env:
+          FORMAT_RESULT: ${{ steps.format.outcome }}
+          REPORT_URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          {
+            echo "Swift format baseline result: $FORMAT_RESULT"
+            echo
+            echo "[Full formatting report]($REPORT_URL)"
+            echo "Advisory while the existing baseline is reviewed. No files were rewritten."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  tests:
+    name: Tests (${{ matrix.configuration }})
+    runs-on: macos-26
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - configuration: Debug
+            scheme: Findle
+          - configuration: Nightly
+            scheme: Findle-Nightly
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      SCHEME: ${{ matrix.scheme }}
+      CONFIGURATION: ${{ matrix.configuration }}
+      COVERAGE: ${{ matrix.configuration == 'Debug' && 'YES' || 'NO' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Test release signing gate with disposable keys
+        if: matrix.configuration == 'Debug'
+        run: python3 -m unittest discover -s Tests/ReleaseToolsTests -v
+      - name: Check build prerequisites
+        run: bash scripts/ci-preflight.sh
+      - name: Install XcodeGen
+        run: bash scripts/install-ci-tools.sh
+      - name: Restore resolved package sources
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/SourcePackages
+          key: spm-${{ runner.os }}-${{ runner.arch }}-xcode26.6-${{ matrix.configuration }}-${{ hashFiles('Findle.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+      - name: Generate and validate schemes
+        run: |
+          xcodegen generate
+          python3 scripts/check-repository.py --generated-project Findle.xcodeproj
+      - name: Run all main test suites
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Findle.xcodeproj \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution \
+            FINDLE_SOURCE_REVISION="$GITHUB_SHA" \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -enableCodeCoverage "$COVERAGE" \
+            -resultBundlePath "$RUNNER_TEMP/$CONFIGURATION.xcresult" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            | tee "$RUNNER_TEMP/$CONFIGURATION.log"
+      - name: Summarize coverage and compare reviewed baseline
+        if: always() && matrix.configuration == 'Debug'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -o pipefail
+          xcodebuild -version > "$RUNNER_TEMP/coverage-toolchain.txt"
+          xcrun xccov view --report --json "$RUNNER_TEMP/Debug.xcresult" > "$RUNNER_TEMP/coverage.json"
+          if [[ -n "$BASE_SHA" ]]; then
+            git diff --name-only "$BASE_SHA" HEAD -- Sources > "$RUNNER_TEMP/changed-files.txt"
+            if ! git show "$BASE_SHA:.github/coverage-baseline.json" > "$RUNNER_TEMP/coverage-baseline.json"; then
+              echo '{"status":"unqualified"}' > "$RUNNER_TEMP/coverage-baseline.json"
+            fi
+          else
+            : > "$RUNNER_TEMP/changed-files.txt"
+            cp .github/coverage-baseline.json "$RUNNER_TEMP/coverage-baseline.json"
+          fi
+          python3 scripts/coverage-summary.py "$RUNNER_TEMP/coverage.json" \
+            --baseline "$RUNNER_TEMP/coverage-baseline.json" \
+            --toolchain "$RUNNER_TEMP/coverage-toolchain.txt" \
+            --changed-files "$RUNNER_TEMP/changed-files.txt" \
+            --output "$RUNNER_TEMP/coverage-summary.json" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Retain test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tests-${{ matrix.configuration }}
+          path: |
+            ${{ runner.temp }}/${{ matrix.configuration }}.xcresult
+            ${{ runner.temp }}/${{ matrix.configuration }}.log
+            ${{ runner.temp }}/coverage*.json
+            ${{ runner.temp }}/coverage-toolchain.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+  onboarding:
+    name: Onboarding preview tests
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check build prerequisites
+        run: bash scripts/ci-preflight.sh
+      - name: Install XcodeGen
+        run: bash scripts/install-ci-tools.sh
+      - name: Restore resolved package sources
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/SourcePackages
+          key: spm-${{ runner.os }}-${{ runner.arch }}-xcode26.6-preview-${{ hashFiles('Findle.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+      - name: Generate preview project
+        run: |
+          xcodegen generate --spec onboarding-preview.yml
+          mkdir -p FindleOnboardingPreview.xcodeproj/project.xcworkspace/xcshareddata/swiftpm
+          cp Findle.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved \
+            FindleOnboardingPreview.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+      - name: Test production setup screens with sample state
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project FindleOnboardingPreview.xcodeproj \
+            -scheme Findle-OnboardingPreview \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/PreviewDerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution \
+            FINDLE_SOURCE_REVISION="$GITHUB_SHA" \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -resultBundlePath "$RUNNER_TEMP/onboarding.xcresult" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            | tee "$RUNNER_TEMP/onboarding.log"
+      - name: Retain preview test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tests-onboarding-preview
+          path: |
+            ${{ runner.temp }}/onboarding.xcresult
+            ${{ runner.temp }}/onboarding.log
+          retention-days: 14
+          if-no-files-found: warn
+
+  required:
+    name: CI required
+    if: always()
+    needs: [quality, tests, onboarding]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every suite and quality check
+        env:
+          QUALITY: ${{ needs.quality.result }}
+          TESTS: ${{ needs.tests.result }}
+          ONBOARDING: ${{ needs.onboarding.result }}
+        run: |
+          test "$QUALITY" = success
+          test "$TESTS" = success
+          test "$ONBOARDING" = success

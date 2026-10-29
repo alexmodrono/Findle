@@ -23,6 +23,8 @@ Package.resolved
 
 # macOS
 .DS_Store
+__pycache__/
+*.pyc
 .AppleDouble
 .LSOverride
 ._*
@@ -54,8 +56,22 @@ Config/Signing.local.xcconfig
 
 # Local-only workspace content
 Docs/
-.agents/
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/kanvas/
 .cl[a]ude/
 CLA[U]DE.md
 skills-lock.json
-Resources/Icon/Foodle.icon/
+Resources/Icon/Findle.icon/
+
+# Track dependency resolution without committing the generated Xcode project.
+!Findle.xcodeproj/
+Findle.xcodeproj/*
+!Findle.xcodeproj/project.xcworkspace/
+Findle.xcodeproj/project.xcworkspace/*
+!Findle.xcodeproj/project.xcworkspace/xcshareddata/
+Findle.xcodeproj/project.xcworkspace/xcshareddata/*
+!Findle.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+Findle.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/*
+!Findle.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved

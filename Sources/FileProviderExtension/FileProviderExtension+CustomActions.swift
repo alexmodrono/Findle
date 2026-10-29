@@ -6,7 +6,7 @@
 import FileProvider
 import AppKit
 import SharedDomain
-import FoodlePersistence
+import FindlePersistence
 import OSLog
 
 extension FileProviderExtension: NSFileProviderCustomAction {
@@ -16,6 +16,7 @@ extension FileProviderExtension: NSFileProviderCustomAction {
     private static let openCoursePageIdentifier = BundleIdentifiers.actionOpenCoursePage
     private static let keepDownloadedIdentifier = BundleIdentifiers.actionKeepDownloaded
     private static let removeDownloadIdentifier = BundleIdentifiers.actionRemoveDownload
+    private static let syncNowIdentifier = BundleIdentifiers.actionSyncNow
 
     func performAction(
         identifier actionIdentifier: NSFileProviderExtensionActionIdentifier,
@@ -32,7 +33,7 @@ extension FileProviderExtension: NSFileProviderCustomAction {
         }
 
         guard let site = try? db.fetchSite(id: siteID) else {
-            logger.error("Custom action failed: site not found for ID \(siteID, privacy: .public)")
+            logger.error("Custom action failed: site not found for ID \(siteID, privacy: .private)")
             completionHandler(NSFileProviderError(.serverUnreachable))
             progress.completedUnitCount = 1
             return progress
@@ -57,6 +58,10 @@ extension FileProviderExtension: NSFileProviderCustomAction {
 
         switch actionIdentifier.rawValue {
         case Self.openInMoodleIdentifier:
+            guard localItem?.isLocal != true else {
+                completionHandler(NSFileProviderError(.cannotSynchronize))
+                break
+            }
             let url: URL
             if let localItem {
                 url = MoodleURLBuilder.webURL(
@@ -69,11 +74,15 @@ extension FileProviderExtension: NSFileProviderCustomAction {
             } else {
                 url = site.baseURL
             }
-            logger.info("Opening in Moodle: \(url.absoluteString, privacy: .public)")
+            logger.info("Opening in Moodle: \(url.absoluteString, privacy: .private)")
             NSWorkspace.shared.open(url)
             completionHandler(nil)
 
         case Self.copyMoodleLinkIdentifier:
+            guard localItem?.isLocal != true else {
+                completionHandler(NSFileProviderError(.cannotSynchronize))
+                break
+            }
             let url: URL
             if let localItem {
                 url = MoodleURLBuilder.webURL(
@@ -86,13 +95,17 @@ extension FileProviderExtension: NSFileProviderCustomAction {
             } else {
                 url = site.baseURL
             }
-            logger.info("Copying Moodle link: \(url.absoluteString, privacy: .public)")
+            logger.info("Copying Moodle link: \(url.absoluteString, privacy: .private)")
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             pasteboard.setString(url.absoluteString, forType: .string)
             completionHandler(nil)
 
         case Self.openCoursePageIdentifier:
+            guard localItem?.isLocal != true else {
+                completionHandler(NSFileProviderError(.cannotSynchronize))
+                break
+            }
             let courseURL: URL
             if let localItem {
                 courseURL = MoodleURLBuilder.courseURL(
@@ -102,7 +115,7 @@ extension FileProviderExtension: NSFileProviderCustomAction {
             } else {
                 courseURL = site.baseURL
             }
-            logger.info("Opening course page: \(courseURL.absoluteString, privacy: .public)")
+            logger.info("Opening course page: \(courseURL.absoluteString, privacy: .private)")
             NSWorkspace.shared.open(courseURL)
             completionHandler(nil)
 
@@ -115,7 +128,7 @@ extension FileProviderExtension: NSFileProviderCustomAction {
                 signalChanges()
                 completionHandler(nil)
             } catch {
-                logger.error("Failed to pin items: \(error.localizedDescription, privacy: .public)")
+                logger.error("Failed to pin items: \(DiagnosticFailure(error).summary, privacy: .public)")
                 completionHandler(error)
             }
 
@@ -128,9 +141,16 @@ extension FileProviderExtension: NSFileProviderCustomAction {
                 signalChanges()
                 completionHandler(nil)
             } catch {
-                logger.error("Failed to unpin items: \(error.localizedDescription, privacy: .public)")
+                logger.error("Failed to unpin items: \(DiagnosticFailure(error).summary, privacy: .public)")
                 completionHandler(error)
             }
+
+        case Self.syncNowIdentifier:
+            // The extension has no sync engine of its own — it only reads rows
+            // the app writes — so a manual refresh means waking the app up.
+            logger.info("Sync Now requested from Finder")
+            requestSyncFromApp()
+            completionHandler(nil)
 
         default:
             completionHandler(NSError(domain: NSCocoaErrorDomain, code: NSFeatureUnsupportedError))
@@ -143,5 +163,48 @@ extension FileProviderExtension: NSFileProviderCustomAction {
     private func signalChanges() {
         guard let manager = NSFileProviderManager(for: domain) else { return }
         manager.signalEnumerator(for: .workingSet) { _ in }
+    }
+
+    /// Ask the main app to sync immediately, launching it first if it isn't
+    /// running. Without the launch step "Sync Now" would silently do nothing
+    /// whenever the app is closed — which is precisely when content is stalest.
+    private func requestSyncFromApp() {
+        let appBundleID = BundleIdentifiers.prefix
+        let notificationName = BundleIdentifiers.syncNowRequestNotification
+        let log = logger
+
+        // Covers the common case where the app is already listening.
+        DarwinNotification.post(notificationName)
+
+        Task { @MainActor in
+            let isRunning = NSWorkspace.shared.runningApplications.contains {
+                $0.bundleIdentifier == appBundleID
+            }
+            guard !isRunning else { return }
+
+            guard let appURL = NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: appBundleID
+            ) else {
+                log.warning("Sync Now: could not locate \(appBundleID, privacy: .public) to launch")
+                return
+            }
+
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = false
+
+            do {
+                _ = try await NSWorkspace.shared.openApplication(
+                    at: appURL,
+                    configuration: configuration
+                )
+                // A cold-launched app registers its observer during startup, so
+                // the notification posted above arrived too early for it. Give
+                // it a moment to come up, then post again.
+                try? await Task.sleep(for: .seconds(2))
+                DarwinNotification.post(notificationName)
+            } catch {
+                log.warning("Sync Now: failed to launch app: \(DiagnosticFailure(error).summary, privacy: .public)")
+            }
+        }
     }
 }

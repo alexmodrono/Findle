@@ -7,6 +7,17 @@ import FileProvider
 import UniformTypeIdentifiers
 import SharedDomain
 
+/// Whether `item` is a file or folder the user created in the personal files store.
+/// Stand-ins are `local-`-less rows that recreate Moodle folders, so they are excluded.
+func isUserItem(_ item: LocalItem) -> Bool {
+    item.isLocal && item.id.hasPrefix("local-")
+}
+
+/// Whether `item` can hold children, whichever kind of directory it is.
+func isContainer(_ item: LocalItem) -> Bool {
+    item.isDirectory
+}
+
 /// Adapts a LocalItem to NSFileProviderItem for the File Provider framework.
 final class FileProviderItem: NSObject, NSFileProviderItem {
     private let localItem: LocalItem
@@ -27,7 +38,7 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
     }
 
     var capabilities: NSFileProviderItemCapabilities {
-        if localItem.isLocal {
+        if isUserItem(localItem) {
             var caps: NSFileProviderItemCapabilities = [
                 .allowsReading, .allowsWriting, .allowsRenaming,
                 .allowsReparenting, .allowsDeleting
@@ -38,7 +49,10 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
             }
             return caps
         }
-        if localItem.isDirectory {
+        if isContainer(localItem) {
+            // Moodle folders and stand-ins are read-only containers. Users can still
+            // add their own files and folders inside them; those are stored in the
+            // personal files folder, so a course refresh cannot delete them.
             return [.allowsReading, .allowsContentEnumerating, .allowsAddingSubItems]
         }
         return [.allowsReading]
@@ -72,10 +86,10 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
 
     var itemVersion: NSFileProviderItemVersion {
         let contentVersion = localItem.contentVersion ?? "1"
-        let versionData = Data(contentVersion.utf8)
+        let metadataVersion = localItem.modificationDate.map { String($0.timeIntervalSince1970) } ?? contentVersion
         return NSFileProviderItemVersion(
-            contentVersion: versionData,
-            metadataVersion: versionData
+            contentVersion: Data(contentVersion.utf8),
+            metadataVersion: Data(metadataVersion.utf8)
         )
     }
 
@@ -88,7 +102,7 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
     }
 
     var isUploaded: Bool {
-        true // Local items are never uploaded; remote items are always "uploaded"
+        !isUserItem(localItem)
     }
 
     var isUploading: Bool {
