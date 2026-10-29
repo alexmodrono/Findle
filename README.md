@@ -129,7 +129,7 @@ xcodebuild build \
 
 Use the signed Nightly app for the manual checklist: SSO completion, Finder integration, restart/session restore, sync, and file materialization.
 
-> **Note:** Pull requests targeting `main` automatically build an unsigned Nightly artifact via GitHub Actions. A download link is posted as a comment on the PR.
+> **Note:** Pull requests targeting `main` automatically build an unsigned Nightly artifact via GitHub Actions. The download link is in the job summary of that PR's Actions run.
 
 ## Architecture
 

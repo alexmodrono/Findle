@@ -70,4 +70,5 @@ jobs:
             echo
             echo "Unsigned build of $GITHUB_SHA (the PR merge commit)."
             echo "File Provider registration and real SSO require a signed build."
+            echo "Only open builds you trust. [Apple’s first-launch guidance](https://support.apple.com/102445)."
           } >> "$GITHUB_STEP_SUMMARY"
