@@ -608,7 +608,7 @@
     {
       "id": "DS-04",
       "title": "Make database transitions and provider reset recoverable",
-      "state": "done",
+      "state": "doing",
       "group": "DS",
       "deps": ["DS-03"],
       "at": "2026-10-29T00:06:36Z",
@@ -644,6 +644,21 @@
           "at": "2026-10-29T11:28:12Z",
           "by": "codex",
           "text": "Accepted again after the real hosted rerun: Xcode 26.6 Debug and optimized Nightly both passed, with CI required green in run 40863555651 at head 17e751d. The no-op migration write lock was removed, genuine upgrades retain transactional checks, and the new held-writer regression plus repeated concurrent openers passed locally and in the hosted suite. Earlier recovery, fallback, unsupported-schema and personal-file preservation evidence remains valid. Signed operating-system upgrade/reset qualification remains RR-03."
+        },
+        {
+          "at": "2026-10-29T12:39:59Z",
+          "by": "codex",
+          "text": "Reopened: current hosted CI Nightly and two stress lanes reproduced the original concurrent schema-upgrade failure (SQLite3850 at BEGIN). A new standalone C reproduction now captures errno9 EBADF locally, proving the earlier successful rerun and no-op-lock fix did not resolve this separate defect. Investigating readonly preflight/writer connection lifetimes without retrying I/O errors or weakening recovery safeguards. All experiments use disposable databases."
+        },
+        {
+          "at": "2026-10-29T13:03:36Z",
+          "by": "codex",
+          "text": "Root cause confirmed: Apple SQLite attempts an OFD write lock on a live read-only probe descriptor, returning EBADF. Added a process-local gate around all initializer probes/schema/WAL setup and read-only diagnostic captures; normal database operations remain concurrent. Independent lock-order review found no blocker. All 98 optimized persistence tests pass. The new diagnostic/migration regression fails against the original source on its first fixture with the exact hosted SQLite3850, then passes with the fix. Repetition and hosted qualification are still pending."
+        },
+        {
+          "at": "2026-10-29T13:07:32Z",
+          "by": "codex",
+          "text": "Committed 678ef07 after 98 optimized persistence tests and 120 passing executions across six regression tests (20 repetitions each, stop on first failure). The new regression was also run against the original production code and failed immediately with the same SQLite3850. Source hashes were frozen and unrelated concurrent UI edits excluded. Retained source/logs/xcresults: /Volumes/Pheidippides/Developer/Xcode/DerivedData/findle-sqlite-lock-fix.1nddr24d. Keep task open until fresh hosted qualification passes."
         }
       ]
     },
@@ -850,7 +865,7 @@
       "title": "Qualify the major release with a soak and go/no-go record",
       "state": "todo",
       "group": "RR",
-      "deps": ["RR-03", "RS-04", "RS-06", "FN-04", "AR-03", "AR-04", "GH-04", "GH-06"],
+      "deps": ["RR-03", "RS-04", "RS-06", "FN-04", "AR-03", "AR-04", "GH-04", "GH-06", "RS-08"],
       "at": "2026-10-29T00:06:36Z",
       "by": "codex",
       "desc": "Approve a specific release candidate only after the stability work and the current interface reviews have passed.\nPriority: final release gate.\n\nProposed acceptance:\n- Run a 48-hour signed-build soak with at least 100 sync cycles, including offline/online transitions, sleep/wake, extension restart, repeated file materialization and app relaunch.\n- Before/after manifests show zero personal-file loss or corruption; no reproducible crash, hang, stuck download or permanently disabled provider remains.\n- All automated suites pass for the candidate revision; signed upgrade and FN-02 results identify the same build, dependencies and tested platforms.\n- Record CPU/memory trends under a fixed workload; investigate sustained growth. Every known issue has severity, reproduction and disposition.\n- Zero unresolved P0/P1 stability defects at sign-off; any proposed exception requires an explicit owner decision and is not counted as a pass.\n- The release owner records go/no-go, recovery instructions and symbol/artifact locations. Repeat affected checks after any candidate change.\n\nP0 means data safety, broken core access or build/release blocker; P1 means other reliability work required before shipping. Existing website review WB-01 remains separate. Completing this card is release qualification, not publication.",
@@ -930,6 +945,11 @@
           "at": "2026-10-29T12:18:10Z",
           "by": "codex",
           "text": "Dependabot PR #30 is merged after exact-head build and CodeRabbit success. Both verified security findings were fixed: immutable checkout SHA and disabled credential persistence. The addressed review thread is resolved. Its Node 24 action updates are integrated into the complete stability workflows; an automatic merge duplicated one identical YAML key, removed before validation and publication. Actual external-fork qualification remains outstanding."
+        },
+        {
+          "at": "2026-10-29T12:39:17Z",
+          "by": "codex",
+          "text": "The new required CI aggregate correctly failed when Nightly reproduced the concurrent schema-opener fault. Debug, unsigned artifact build, onboarding and workflow checks passed. This confirms the fault remains unresolved despite the earlier current-schema no-op improvement; no green run is being substituted for these failures."
         }
       ]
     },
@@ -983,6 +1003,16 @@
           "at": "2026-10-29T12:10:25Z",
           "by": "codex",
           "text": "Reviewed baseline-only PR #31 is merged after successful CI and advisory review. Both language baselines reference the real scanned merge 9395de83 and contain no accepted findings. The implementation branch has merged this reviewed main baseline; the next PR event will perform a full scan against it. Remote required-check enforcement remains pending that exact fresh success."
+        },
+        {
+          "at": "2026-10-29T12:21:28Z",
+          "by": "codex",
+          "text": "PR #26 now requests a fresh full CodeQL run 40872153696 at c62356d against the separately reviewed baseline on main. The initial zero-finding/full-extraction evidence and rejected canary remain retained. Do not mark the gate qualified or enforce its context until the fresh run passes."
+        },
+        {
+          "at": "2026-10-29T13:03:36Z",
+          "by": "codex",
+          "text": "Full CodeQL run 40872153696 at c62356d completed successfully: Actions, Swift, and CodeQL required all passed against the separately reviewed main baseline. Subsequent persistence and token-destination fixes will change source, so the final implementation still needs a fresh full security run; this green result is not reused as qualification for those changes."
         }
       ]
     },
@@ -1000,6 +1030,11 @@
           "at": "2026-10-29T02:12:59Z",
           "by": "codex",
           "text": "Added concise PR and bug/crash templates, private security-reporting guidance and contributor instructions. Sole-maintainer review avoids impossible required self-approval. Main rulesets remain pending successful exact CI/security qualification; no red check has been bypassed."
+        },
+        {
+          "at": "2026-10-29T12:25:09Z",
+          "by": "codex",
+          "text": "Basic protection is now active and independently read back: main ruleset 26120414 requires PRs and resolved discussions, blocks deletion/force-push, and permits only alexmodrono to use a PR-only emergency bypass. Zero approvals avoids impossible self-review. Version-tag ruleset 26120416 prevents v* updates/deletion with no bypass. Required CI/CodeQL contexts and good/failing/stale/docs-only qualification remain pending; no missing checks were imposed. Full policy evidence and prepared next-stage payload are retained at /Volumes/Pheidippides/Developer/findle-repository-protection.rphxdgaq."
         }
       ]
     },
@@ -1115,6 +1150,16 @@
           "at": "2026-10-29T10:14:01Z",
           "by": "codex",
           "text": "Release review closed two promotion defects: retries now reject Homebrew downgrades and same-version checksum changes; promotion publishes without latest, verifies final immutable release/asset attestations and raw-tag-to-source binding, then advances latest monotonically. Verified the release-attestation parser against GitHub CLI's official decoded fixture (repository is owner/repo; annotated tags bind the raw tag object separately from the peeled commit). All 28 release-tool tests pass; all workflows pass actionlint. Added checksum-verified create-dmg 1.3.0 at immutable commit a2b71d0fda6d0df2a86dc7f67082d4d73e84c59f before signing import. Actual disposable DMG creation and read-only inspection preserved app/Applications icon positions, 100px icons and 600x400 layout; evidence: /tmp/findle-create-dmg-layout.3Fgesk/layout-verification.json. Signed archive/notarization and live immutable publication still require the planned rehearsal. No release, tag, tap update or other remote mutation was performed in this review."
+        },
+        {
+          "at": "2026-10-29T12:25:59Z",
+          "by": "codex",
+          "text": "Version-tag ruleset 26120416 now prevents updating or deleting v* tags; read-back confirms no bypass. Both release environments already have reviewer/ref restrictions. A remaining isolation gap is recorded: signing/tap secret names exist at repository scope, but environment-scoped secrets are empty. Move credentials securely to the appropriate protected environments only after replacement values can be supplied and verified; never delete working repository secrets first. No release tag, signing execution, or public release was created."
+        },
+        {
+          "at": "2026-10-29T13:29:57Z",
+          "by": "codex",
+          "text": "Addressed the review finding that promotion relied on uninstalled ripgrep after publication: immutable-release verification now uses the gh API result and shell test, preserving API failure propagation. actionlint and28 release-tool tests pass. No publishing or signing step was executed."
         }
       ]
     },
@@ -1142,6 +1187,21 @@
           "at": "2026-10-29T12:10:25Z",
           "by": "codex",
           "text": "Measured coverage-only PR #32 is merged after successful CI and review. The implementation branch preserves those exact Xcode 26.6 Debug fractions from main, so its next PR event will enforce the measured floors rather than trust a head-edited baseline. Four opt-in stress lanes are ready to run on the new source."
+        },
+        {
+          "at": "2026-10-29T12:21:28Z",
+          "by": "codex",
+          "text": "Published c62356d and enabled the stability-stress label on PR #26. Actual four-lane run 40872262289 has started; its results remain unqualified until completed and inspected. Fresh CI run 40872153678 uses the measured coverage baseline from main. No further source pushes are planned while these exact-revision runs finish."
+        },
+        {
+          "at": "2026-10-29T12:39:17Z",
+          "by": "codex",
+          "text": "Fresh stress run 40872262289 passed ASan and macOS15 optimized lanes but failed macOS26 optimized/TSan on the same database-opening regression as full CI Nightly. Artifacts are retained; no rerun or failure retry was used. A standalone SQLite C harness reproduced the exact IOERR_LOCK3850 locally, with system errno9 (bad file descriptor). Investigating connection lifetime/access mode; this is not evidence of a sanitizer race or ordinary SQLITE_BUSY."
+        },
+        {
+          "at": "2026-10-29T13:29:57Z",
+          "by": "codex",
+          "text": "Latest frozen integration passes399 local Debug tests and399 optimized Nightly tests with no skips. Database regression has red-before/green-after evidence plus120 passing repeated executions. Commit08628a4 also addresses the CodeRabbit credential-destination issue. All four hosted stress lanes will rerun automatically on the labeled PR; earlier failed lane evidence remains retained."
         }
       ]
     },
@@ -1184,6 +1244,53 @@
           "at": "2026-10-29T00:36:08Z",
           "by": "codex",
           "text": "Reviewed bounded parser/transport and real listener readiness. All 43 helper tests pass, including malformed lengths, fragmentation, authentication, absolute read timeout/recovery, occupied port, connection/handler admission and disconnect recovery. Limits: 16 KiB headers, 1 MiB bodies, 16 admitted connections/handlers; slow tool handlers cannot block request parsing. Database lifecycle work remains in RS-05."
+        }
+      ]
+    },
+    {
+      "id": "AR-05",
+      "title": "Adapt Crono onboarding to Airlock and Findle",
+      "state": "proposed",
+      "group": "AR",
+      "at": "2026-10-29T12:41:58Z",
+      "by": "codex",
+      "desc": "Requested directly in this conversation: reproduce Crono’s compact centered welcome, grouped forms, and footer in Airlock and Findle, retain the hello animation and segmented glass navigation pill, and open an isolated demo. Verify sample sign-in, course selection, navigation, and completion without touching the installed account.",
+      "notes": [
+        {
+          "at": "2026-10-29T12:42:18Z",
+          "by": "codex",
+          "text": "Implementation is explicitly authorized by the user’s request in this conversation. Work is being tracked here without changing the human-controlled approval state. Crono is a read-only reference; the deliverable will be the isolated Findle onboarding demo."
+        },
+        {
+          "at": "2026-10-29T12:57:29Z",
+          "by": "codex",
+          "text": "Implemented and opened the isolated Findle demo using Crono’s onboarding composition: 540×520 window, centered Welcome with three feature rows, grouped native forms, and large footer actions at the right. The hello intro, full one-shot sound, fading intro glow, and segmented glass navigation remain. The standalone Airlock demo uses the same composition.\n\nVerification: 43 Airlock tests and 6 onboarding-preview tests pass. Layout tests cover 540×520 and 500×480, rapid navigation, and closing during transitions. Visually checked all six Findle pages and completed sample sign-in, optional Finder access, and simulated sync. No installed account or files were changed.\n\nUI review:\n| Before | After | Why |\n| --- | --- | --- |\n| Horizontal product banner on server page | Centered Welcome with useful feature rows | Match Crono’s introduction |\n| Large independent headings and spread footer buttons | 22-point form headings and adjacent large actions | Match Crono’s hierarchy |\n| Window and form backgrounds resolve identically | Subtle opaque group fill | Keep grouping visible on current macOS |\n| Counter candidates: 0 | Counter candidates: 0 | Retained meaningful icons, real state, and accessible controls |\n\nThe demo overrides Airlock to the sibling local checkout. Production retains its immutable published dependency; publishing the matching Airlock changes and updating that pin is still required before release integration. This task remains in the board’s human-controlled approval state; its implementation was directly requested in the conversation."
+        }
+      ]
+    },
+    {
+      "id": "RS-08",
+      "title": "Keep Moodle credentials scoped to their trusted download destination",
+      "state": "doing",
+      "group": "RS",
+      "at": "2026-10-29T13:00:17Z",
+      "by": "codex",
+      "desc": "Prevent course links and redirected downloads from receiving Moodle credentials. Priority P1, required before release. Generate web-location files locally without network requests or token access; require explicit site context for authenticated downloads; reject insecure, foreign-origin and credential-forwarding redirects in both File Provider and pinned-app download paths. Preserve cancellation, exactly-once completion and validated publication. Verify with disposable fixtures and hostile initial URL/redirect cases; no real account credentials in tests.",
+      "notes": [
+        {
+          "at": "2026-10-29T13:00:17Z",
+          "by": "codex",
+          "text": "Verified CodeRabbit finding affects both extension and pinned downloads. Implement shared destination policy and local web-location publication, then run controlled network/cancellation regressions. Existing-account checks remain nondestructive."
+        },
+        {
+          "at": "2026-10-29T13:15:04Z",
+          "by": "codex",
+          "text": "Implementation now passes explicit site context through file downloads, course covers, password sign-in and REST token calls. Credential destinations are restricted to the persisted canonical HTTPS origin including port; URL credentials/token query parameters and cross-origin/downgrade redirects are rejected. LMS URL resources are generated locally as bookmarks before Keychain access. Deliberate compatibility limit: HTTP-only sites and alternate-origin authenticated CDN files fail closed until a credential-free download contract exists. Focused transport/cancellation/publication tests and independent review are in progress."
+        },
+        {
+          "at": "2026-10-29T13:29:57Z",
+          "by": "codex",
+          "text": "Committed 08628a4 after independent review and real URLSession redirect tests. The focused security suites pass24 tests; the complete frozen-source suites pass399 in Debug and399 in optimized Nightly, zero failures/skips. Denied redirects cancel once and produce a security error before retry/auth-expiry handling. Local bookmarks, token-free paths, wrong-site rejection, stale publication and cancellation are covered. New error-copy review counted0 before/after. Evidence: /Volumes/Pheidippides/Developer/Xcode/DerivedData/findle-sqlite-lock-fix.1nddr24d. Fresh hosted qualification is next; no real account or installed app was changed."
         }
       ]
     }
