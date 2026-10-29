@@ -973,6 +973,11 @@
           "at": "2026-10-29T12:03:41Z",
           "by": "codex",
           "text": "Complete Swift scan finished successfully in run 40863555679: zero findings at every severity, no unresolved AST nodes, and all seven module extraction counts verified independently. Initial security baseline with no exceptions is proposed separately in PR #31. This does not bypass PR-base comparison: after merge, a fresh full run on the updated implementation branch is still required."
+        },
+        {
+          "at": "2026-10-29T12:10:25Z",
+          "by": "codex",
+          "text": "Reviewed baseline-only PR #31 is merged after successful CI and advisory review. Both language baselines reference the real scanned merge 9395de83 and contain no accepted findings. The implementation branch has merged this reviewed main baseline; the next PR event will perform a full scan against it. Remote required-check enforcement remains pending that exact fresh success."
         }
       ]
     },
@@ -1127,6 +1132,11 @@
           "at": "2026-10-29T11:42:17Z",
           "by": "codex",
           "text": "Successful hosted run 40863555651 confirms 373 logical tests per Debug/Nightly configuration (375 parameterized executions), zero failures/skips. Raw coverage and independent xcresult extraction agree across seven modules. Provisional measured baseline is retained for review; no arbitrary percentage floor. Added opt-in stability-stress PR label support so the four prepared lanes can be qualified before the workflow reaches main."
+        },
+        {
+          "at": "2026-10-29T12:10:25Z",
+          "by": "codex",
+          "text": "Measured coverage-only PR #32 is merged after successful CI and review. The implementation branch preserves those exact Xcode 26.6 Debug fractions from main, so its next PR event will enforce the measured floors rather than trust a head-edited baseline. Four opt-in stress lanes are ready to run on the new source."
         }
       ]
     },
