@@ -1,0 +1,15 @@
+# Disposable analyzer fixture. NEVER MERGE; keep this new filename absent from main.
+name: CodeQL qualification canary - NEVER MERGE
+on:
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: write
+jobs:
+  inert-canary:
+    if: ${{ false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - name: Intentional static injection finding - must never execute
+        run: echo '${{ github.event.pull_request.title }}'
