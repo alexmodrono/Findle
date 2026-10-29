@@ -564,59 +564,22 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             return Progress()
         }
 
-        // Non-local (synced) items: only tag edits from Finder are accepted.
-        // Use NSFileProviderError so the OS reverts the user's local change
-        // gracefully instead of leaving Finder in an inconsistent state.
-        var unsupportedFields = changedFields
-        unsupportedFields.remove(.tagData)
-        guard changedFields.contains(.tagData), unsupportedFields.isEmpty else {
-            completionHandler(
-                nil,
-                changedFields,
-                false,
-                NSFileProviderError(.cannotSynchronize)
+        do {
+            let result = try SyncedItemModification.apply(
+                to: localItem,
+                changedFields: changedFields,
+                tagData: item.tagData ?? nil,
+                hasNewContents: newContents != nil,
+                siteID: siteID,
+                database: db
             )
-            return Progress()
+            completionHandler(result.item, result.stillPendingFields, false, nil)
+        } catch let error as NSFileProviderError where error.code == .cannotSynchronize {
+            completionHandler(nil, changedFields, false, error)
+        } catch {
+            logger.error("Failed to update synced item metadata: \(DiagnosticFailure(error).summary, privacy: .public)")
+            completionHandler(nil, [], false, error)
         }
-
-        if changedFields.contains(.tagData) {
-            let incomingTagData = item.tagData ?? nil
-            let parts = itemID.split(separator: "-")
-            if parts.first == "course", let courseID = parts.last.flatMap({ Int($0) }),
-               let siteID = self.siteID {
-                // Course root: keep course_tags table in sync so colors persist across re-syncs.
-                do {
-                    let newTags = incomingTagData.map { FinderTag.parseTags(from: $0) } ?? []
-                    try db.saveCourseTags(newTags, courseID: courseID, siteID: siteID)
-                    let tagData = FinderTag.tagData(from: newTags)
-                    try db.updateItemTagData(id: itemID, tagData: tagData)
-                    if let updatedItem = try db.fetchItem(id: itemID) {
-                        completionHandler(FileProviderItem(localItem: updatedItem), [], false, nil)
-                    } else {
-                        completionHandler(nil, [], false, NSFileProviderError(.noSuchItem))
-                    }
-                } catch {
-                    logger.error("Failed to update course tags from Finder: \(DiagnosticFailure(error).summary, privacy: .public)")
-                    completionHandler(nil, [], false, error)
-                }
-                return Progress()
-            } else {
-                do {
-                    try db.updateItemTagData(id: itemID, tagData: incomingTagData)
-                    if let updatedItem = try db.fetchItem(id: itemID) {
-                        completionHandler(FileProviderItem(localItem: updatedItem), [], false, nil)
-                    } else {
-                        completionHandler(nil, [], false, NSFileProviderError(.noSuchItem))
-                    }
-                } catch {
-                    logger.error("Failed to update item tags: \(DiagnosticFailure(error).summary, privacy: .public)")
-                    completionHandler(nil, [], false, error)
-                }
-                return Progress()
-            }
-        }
-
-        completionHandler(nil, [], false, NSFileProviderError(.cannotSynchronize))
         return Progress()
     }
 

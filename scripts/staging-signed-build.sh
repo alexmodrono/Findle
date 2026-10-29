@@ -10,6 +10,19 @@ SOURCE_REVISION="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 if [[ -n "$(git -C "$ROOT_DIR" status --porcelain --untracked-files=normal)" ]]; then
   SOURCE_REVISION="$SOURCE_REVISION-dirty"
 fi
+# fileproviderd retries cannotSynchronize items after an extension update.
+# Reusing build 1 for every signed Nightly makes that update ambiguous.
+if [[ -z "${FINDLE_BUILD_NUMBER:-}" ]]; then
+  if [[ "$SOURCE_REVISION" == *-dirty || "$(git -C "$ROOT_DIR" rev-parse --is-shallow-repository)" == true ]]; then
+    echo "Set FINDLE_BUILD_NUMBER for a dirty or shallow checkout; choose a value newer than the installed Nightly." >&2
+    exit 1
+  fi
+  FINDLE_BUILD_NUMBER="$(git -C "$ROOT_DIR" rev-list --count HEAD)"
+fi
+if [[ ! "$FINDLE_BUILD_NUMBER" =~ '^[1-9][0-9]{0,3}$' ]]; then
+  echo "FINDLE_BUILD_NUMBER must be an integer from 1 through 9999." >&2
+  exit 1
+fi
 
 if [[ -n "${DEVELOPMENT_TEAM:-}" ]]; then
   DEVELOPMENT_TEAM_ARG=("DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM")
@@ -29,6 +42,7 @@ xcodebuild \
   -disableAutomaticPackageResolution \
   -onlyUsePackageVersionsFromResolvedFile \
   FINDLE_SOURCE_REVISION="$SOURCE_REVISION" \
+  CURRENT_PROJECT_VERSION="$FINDLE_BUILD_NUMBER" \
   OBJROOT="$DERIVED_DATA_PATH/Build/Intermediates.noindex" \
   SYMROOT="$DERIVED_DATA_PATH/Build/Products" \
   SHARED_PRECOMPS_DIR="$DERIVED_DATA_PATH/Build/Intermediates.noindex/PrecompiledHeaders" \
@@ -41,6 +55,7 @@ cat <<EOF
 
 Signed Nightly build passed.
 Source: $SOURCE_REVISION
+Build: $FINDLE_BUILD_NUMBER
 
 Built app:
   $APP_PATH

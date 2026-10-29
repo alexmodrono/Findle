@@ -12,6 +12,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
+    CURRENT_PROJECT_VERSION: "1"
     FINDLE_SOURCE_REVISION: unknown
     MACOSX_DEPLOYMENT_TARGET: "15.0"
     ENABLE_HARDENED_RUNTIME: true
@@ -462,6 +463,7 @@ targets:
       - path: Sources/FileProviderExtension/ItemEnumerator.swift
       - path: Sources/FileProviderExtension/ProviderAccess.swift
       - path: Sources/FileProviderExtension/DownloadPublication.swift
+      - path: Sources/FileProviderExtension/SyncedItemModification.swift
     dependencies:
       - target: SharedDomain
       - target: FindleNetworking

@@ -502,7 +502,7 @@
     {
       "id": "RR-02",
       "title": "Require automated regression checks in CI",
-      "state": "doing",
+      "state": "done",
       "group": "RR",
       "deps": ["RR-01"],
       "at": "2026-10-29T00:06:36Z",
@@ -523,6 +523,11 @@
           "at": "2026-10-29T11:05:23Z",
           "by": "codex",
           "text": "Qualify the real GitHub regression pipeline. Nightly and preview already pass; fix the captured Debug database race, then verify a fresh exact-source run and required-check enforcement."
+        },
+        {
+          "at": "2026-10-29T11:28:12Z",
+          "by": "codex",
+          "text": "The live regression pipeline passes all seven main suites in Debug and optimized Nightly, plus isolated onboarding and repository checks, on Xcode 26.6. Reports are retained in run 40863555651 (head 17e751d). Actual session, provider enumeration and recovery seams now have behavioral regressions. The first run caught the concurrent database-open failure and made CI required fail; the fixed revision is green. Release qualification verifies checks for the exact source revision and pinned inputs.\n\nThis accepts the tested CI pipeline. Remote branch protection is still GH-04 and must be enabled after security-baseline qualification; signed Finder/SSO and distribution evidence remain FN-02/RR-03. No unqualified application changes have been merged to main."
         }
       ]
     },
@@ -598,7 +603,7 @@
     {
       "id": "DS-04",
       "title": "Make database transitions and provider reset recoverable",
-      "state": "doing",
+      "state": "done",
       "group": "DS",
       "deps": ["DS-03"],
       "at": "2026-10-29T00:06:36Z",
@@ -629,6 +634,11 @@
           "at": "2026-10-29T11:12:06Z",
           "by": "codex",
           "text": "Added a regression that fails on the old code while an ordinary data writer is active: opening an already-current schema unnecessarily attempts BEGIN IMMEDIATE and times out. Current-schema opens now validate the version without taking that write transaction; genuine upgrades retain the transaction and version recheck. All 96 persistence tests pass in Debug and Nightly, plus 100 repetitions of three opener scenarios per configuration (600 executions). The original hosted SQLite 3850 was not reproduced locally; keep this task open until the Xcode 26.6 rerun confirms the fix."
+        },
+        {
+          "at": "2026-10-29T11:28:12Z",
+          "by": "codex",
+          "text": "Accepted again after the real hosted rerun: Xcode 26.6 Debug and optimized Nightly both passed, with CI required green in run 40863555651 at head 17e751d. The no-op migration write lock was removed, genuine upgrades retain transactional checks, and the new held-writer regression plus repeated concurrent openers passed locally and in the hosted suite. Earlier recovery, fallback, unsupported-schema and personal-file preservation evidence remains valid. Signed operating-system upgrade/reset qualification remains RR-03."
         }
       ]
     },
@@ -650,6 +660,16 @@
           "at": "2026-10-29T01:52:04Z",
           "by": "codex",
           "text": "22 provider regressions pass for enumeration, anchors, failed reads, cancellation, truncated or invalid content, disk-full publication, stale versions, zero-byte and sparse large files, and duplicate callbacks. Read-only installed-app inspection has not reproduced the original -2005 incident; signed diagnosis and materialization remain open."
+        },
+        {
+          "at": "2026-10-29T11:16:08Z",
+          "by": "codex",
+          "text": "Private installed-provider diagnostics captured 13 retained cannotSynchronize (-2005) failures with no scheduled retry. All 13 join to metadata-upload rows whose only field is modification time. The synced-item modifyItem guard rejects that field; this is a concrete source/operation match, unlike the earlier generic registration hypothesis. Implementing a targeted metadata fix and regression harness; signed runtime proof remains open. Native computer-use calls currently fail with cgWindowNotFound for both Findle and Finder."
+        },
+        {
+          "at": "2026-10-29T11:28:12Z",
+          "by": "codex",
+          "text": "Targeted production metadata handler now returns unsupported modification-time fields without a permanent error or database write, while preserving tags and remote-content restrictions. All 28 optimized File Provider tests pass, including six incident regressions; production app/extension compile for both architectures. Signed Nightly builds now receive an explicit newer build number so the OS can recognize extension updates and retry parked failures. No reset or broad error-clearing operation was used; live recovery is not yet proven."
         }
       ]
     },
@@ -885,6 +905,11 @@
           "at": "2026-10-29T11:08:06Z",
           "by": "codex",
           "text": "Actual PR #26 unsigned Nightly artifact, optimized tests and preview passed with read-only build permissions and job-summary links. Debug intentionally remains red on the captured SQLite race, demonstrating required aggregate failure. Focused PR #27 rolls out fork-safe artifact reporting on current main; actual fork and dependency-bot event evidence remains outstanding."
+        },
+        {
+          "at": "2026-10-29T11:16:08Z",
+          "by": "codex",
+          "text": "PR #27 first same-repository run passed using only contents:read, pinned checkout/upload actions and a job-summary artifact link. Its two valid CodeRabbit documentation findings are fixed in 8167a1f; the follow-up run is pending."
         }
       ]
     },
@@ -917,7 +942,14 @@
       "deps": ["RR-01", "GH-01"],
       "at": "2026-10-29T00:16:50Z",
       "by": "codex",
-      "desc": "Find security defects in authentication, local HTTP handling and workflow code before they reach a release.\nPriority: P1, required baseline.\n\nDone when:\n- Configure CodeQL advanced setup for Swift with an explicit unsigned XcodeGen/xcodebuild build on a compatible macOS runner, and scan GitHub Actions workflows.\n- Verify CodeQL supports the pinned Swift/Xcode toolchain. Ensure the actual app, extension, helper and shared modules are analyzed; do not accept a green scan that extracted no relevant code.\n- Run on pull requests and trusted main, plus a weekly scan for updated queries. Do not reuse compiled outputs that prevent CodeQL extraction.\n- Triage the initial alert baseline and enforce new actionable high/critical findings after the baseline is understood.\n- Preserve secret scanning and push protection already enabled; document private reporting and alert ownership.\n\nCheck a disposable known-bad fixture to verify analysis and reporting, then remove it. Reference: https://docs.github.com/en/code-security/reference/code-scanning/codeql/build-options-for-compiled-languages"
+      "desc": "Find security defects in authentication, local HTTP handling and workflow code before they reach a release.\nPriority: P1, required baseline.\n\nDone when:\n- Configure CodeQL advanced setup for Swift with an explicit unsigned XcodeGen/xcodebuild build on a compatible macOS runner, and scan GitHub Actions workflows.\n- Verify CodeQL supports the pinned Swift/Xcode toolchain. Ensure the actual app, extension, helper and shared modules are analyzed; do not accept a green scan that extracted no relevant code.\n- Run on pull requests and trusted main, plus a weekly scan for updated queries. Do not reuse compiled outputs that prevent CodeQL extraction.\n- Triage the initial alert baseline and enforce new actionable high/critical findings after the baseline is understood.\n- Preserve secret scanning and push protection already enabled; document private reporting and alert ownership.\n\nCheck a disposable known-bad fixture to verify analysis and reporting, then remove it. Reference: https://docs.github.com/en/code-security/reference/code-scanning/codeql/build-options-for-compiled-languages",
+      "notes": [
+        {
+          "at": "2026-10-29T11:16:08Z",
+          "by": "codex",
+          "text": "First hosted Actions scan exposed query-pack rule metadata in SARIF extensions and diff-informed analysis. Fixed component-aware parsing and required full scans; 31 automation tests pass after independent SARIF-spec review. Fresh clean run is on PR #26 head 17e751d. Disposable draft PR #28 adds only a guarded, nonexecuting critical-finding fixture to verify real analyzer rejection. Never merge #28. No baseline has been approved yet."
+        }
+      ]
     },
     {
       "id": "GH-04",
@@ -1049,12 +1081,19 @@
     {
       "id": "GH-08",
       "title": "Schedule stress tests and report coverage changes",
-      "state": "todo",
+      "state": "doing",
       "group": "GH",
       "deps": ["RR-02"],
       "at": "2026-10-29T00:16:50Z",
       "by": "codex",
-      "desc": "Detect intermittent failures and test-coverage gaps without slowing every pull request.\nPriority: P2, adopt after the required PR pipeline is stable.\n\nDone when:\n- Report coverage from xcresult in Actions summaries/artifacts, including changed critical modules; begin with a measured baseline and ratchet rather than an arbitrary project-wide percentage.\n- Run scheduled and manual disposable-fixture suites for migration, cancellation, concurrent database access, malformed HTTP and repeated sync, with deterministic seeds and failure logs.\n- Use separate supported Thread Sanitizer and Address Sanitizer jobs where they add value; keep optimization-specific regressions in Nightly tests.\n- Add minimum/current macOS coverage where runner availability permits. Track execution time and flakes; do not retry failures into an unexplained green result.\n- Bound runtime/artifact retention, and make failures visible to the maintainer through normal GitHub checks/notifications.\n\nThese jobs do not replace signed File Provider, institutional SSO or the 48-hour live soak in FN-02/RR-04. Start with native coverage reports; a hosted coverage dashboard can wait until it solves a demonstrated need."
+      "desc": "Detect intermittent failures and test-coverage gaps without slowing every pull request.\nPriority: P2, adopt after the required PR pipeline is stable.\n\nDone when:\n- Report coverage from xcresult in Actions summaries/artifacts, including changed critical modules; begin with a measured baseline and ratchet rather than an arbitrary project-wide percentage.\n- Run scheduled and manual disposable-fixture suites for migration, cancellation, concurrent database access, malformed HTTP and repeated sync, with deterministic seeds and failure logs.\n- Use separate supported Thread Sanitizer and Address Sanitizer jobs where they add value; keep optimization-specific regressions in Nightly tests.\n- Add minimum/current macOS coverage where runner availability permits. Track execution time and flakes; do not retry failures into an unexplained green result.\n- Bound runtime/artifact retention, and make failures visible to the maintainer through normal GitHub checks/notifications.\n\nThese jobs do not replace signed File Provider, institutional SSO or the 48-hour live soak in FN-02/RR-04. Start with native coverage reports; a hosted coverage dashboard can wait until it solves a demonstrated need.",
+      "notes": [
+        {
+          "at": "2026-10-29T11:28:12Z",
+          "by": "codex",
+          "text": "Qualify coverage from the successful hosted Debug artifact and run the prepared stress lanes; keep the security and release baselines separate."
+        }
+      ]
     },
     {
       "id": "GH-09",

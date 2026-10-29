@@ -132,15 +132,20 @@ xcodebuild build \
 
 This builds an unsigned optimized app suitable for fast validation of optimized code paths. It is not suitable for File Provider registration or end-to-end SSO/Finder checks because the extension is not code signed.
 
-For real pre-ship runtime validation, build a signed Nightly app from Xcode by selecting the `Findle-Nightly` scheme with your Development Team configured, or pass it from the command line:
+For real runtime validation, use the signed Nightly script with your Development
+Team configured:
 
 ```bash
-xcodebuild build \
-  -project Findle.xcodeproj \
-  -scheme Findle-Nightly \
-  -configuration Nightly \
-  DEVELOPMENT_TEAM=ABCDE12345
+DEVELOPMENT_TEAM=ABCDE12345 ./scripts/staging-signed-build.sh
 ```
+
+The script uses the full-history commit count as the development build number.
+For dirty or shallow checkouts, or when switching to a branch with a lower
+commit count, set `FINDLE_BUILD_NUMBER` to an integer from 1 through 9999 newer
+than the installed Nightly. The host, extension and owned frameworks share that
+number. A versioned extension update allows macOS to retry previously parked
+File Provider errors; verify recovery in the running app. This development
+numbering does not replace the release workflow's candidate version/build.
 
 Use the signed Nightly app for the manual checklist: SSO completion, Finder integration, restart/session restore, sync, and file materialization.
 
