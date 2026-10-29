@@ -356,6 +356,7 @@ targets:
     info:
       path: Resources/Info/FileProvider-Info.plist
       properties:
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         CFBundleIcons:
           CFBundlePrimaryIcon:
             CFBundleSymbolName: graduationcap
