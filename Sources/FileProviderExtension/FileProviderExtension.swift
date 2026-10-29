@@ -804,12 +804,12 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                 try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
                 continue
             } catch {
-                logger.info("Could not move \(path, privacy: .public) to the Trash, deleting it: \(DiagnosticFailure(error).summary, privacy: .public)")
+                logger.info("Could not move \(path, privacy: .private) to the Trash, deleting it: \(DiagnosticFailure(error).summary, privacy: .public)")
             }
             do {
                 try FileManager.default.removeItem(atPath: path)
             } catch {
-                logger.warning("Failed to remove content for deleted item at \(path, privacy: .public): \(DiagnosticFailure(error).summary, privacy: .public)")
+                logger.warning("Failed to remove content for deleted item at \(path, privacy: .private): \(DiagnosticFailure(error).summary, privacy: .public)")
             }
         }
     }

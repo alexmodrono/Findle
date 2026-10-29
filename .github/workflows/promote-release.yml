@@ -81,7 +81,8 @@ jobs:
           if [[ "$DRAFT" = true ]]; then
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
           fi
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.immutable' | rg '^true$'
+          IMMUTABLE_RELEASE=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.immutable')
+          test "$IMMUTABLE_RELEASE" = true
           # Publication locks the assets and tag. Verify those final locked bytes
           # before the public latest appcast or Homebrew can point at this release.
           gh release verify "$TAG" --repo "$GITHUB_REPOSITORY" --format json > "$RUNNER_TEMP/release-verification.json"

@@ -9,10 +9,9 @@ Spotlight, updates, and the MCP helper remain in use.
 ## Repositories
 
 - Findle: `fix/stability` in `findle-stability`.
-- Airlock: `feat/appkit-onboarding` in the sibling `Airlock` repository.
-- `project.yml` currently resolves Airlock from `../Airlock`. Publish the
-  Airlock branch and select a remote revision before distributing this change
-  through CI or preparing a release.
+- Airlock: `project.yml` pins a published GitHub revision, also recorded in
+  the canonical `Package.resolved`. CI uses that remote dependency without a
+  sibling checkout.
 
 ## Finder behavior
 
