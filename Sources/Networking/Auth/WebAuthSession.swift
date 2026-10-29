@@ -31,18 +31,19 @@ public final class WebAuthSession: NSObject {
         @escaping (URL?, Error?) -> Void
     ) -> any WebAuthenticationSessionProtocol
 
-    /// Strong reference to the active session. ASWebAuthenticationSession does not
-    /// retain itself — the caller must keep a reference until the callback fires.
-    /// Without this, ARC can deallocate the session mid-flow, causing Safari to
-    /// show "cannot open the page because the address is invalid."
-    private var activeSession: (any WebAuthenticationSessionProtocol)?
-
-    /// ASWebAuthenticationSession keeps a weak reference to its presentation context
-    /// provider, so retain it for the full duration of the browser flow.
-    private var activePresentationContext: (any ASWebAuthenticationPresentationContextProviding)?
+    private struct Attempt {
+        let id: UUID
+        let continuation: CheckedContinuation<URL, Error>
+        let session: any WebAuthenticationSessionProtocol
+        // ASWebAuthenticationSession holds its presentation context weakly.
+        let presentationContext: any ASWebAuthenticationPresentationContextProviding
+    }
+    private var activeAttempt: Attempt?
     private let sessionFactory: SessionFactory
+    private let passportGenerator: () throws -> String
 
     public override init() {
+        self.passportGenerator = { try SSONonce.generate() }
         self.sessionFactory = { url, callbackURLScheme, completionHandler in
             ASWebAuthenticationSession(
                 url: url,
@@ -53,8 +54,10 @@ public final class WebAuthSession: NSObject {
         super.init()
     }
 
-    init(sessionFactory: @escaping SessionFactory) {
+    init(passportGenerator: @escaping () throws -> String = { try SSONonce.generate() },
+         sessionFactory: @escaping SessionFactory) {
         self.sessionFactory = sessionFactory
+        self.passportGenerator = passportGenerator
         super.init()
     }
 
@@ -73,7 +76,9 @@ public final class WebAuthSession: NSObject {
         site: MoodleSite,
         presentationContext: ASWebAuthenticationPresentationContextProviding
     ) async throws -> (token: AuthToken, passport: String) {
-        let passport = generatePassport()
+        try Task.checkCancellation()
+        cancel()
+        let passport = try passportGenerator()
         let callbackScheme = MoodleSite.callbackScheme
         let logger = self.logger
 
@@ -82,90 +87,70 @@ public final class WebAuthSession: NSObject {
         do {
             buildResult = try MoodleSSOLaunchURLBuilder.build(for: site, passport: passport, callbackScheme: callbackScheme)
         } catch {
-            logger.error("SSO launch URL build failed for \(site.displayName, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            logger.error("SSO launch URL build failed for \(site.displayName, privacy: .private): \(DiagnosticFailure(error).summary, privacy: .public)")
             throw error
         }
 
         let launchURL = buildResult.url
 
-        logger.info("Starting SSO authentication for \(site.displayName, privacy: .public)")
+        logger.info("Starting SSO authentication for \(site.displayName, privacy: .private)")
         logger.info("Login type: \(String(describing: site.capabilities.loginType), privacy: .public)")
-        logger.info("Discovered launchurl: \(site.capabilities.launchURL ?? "<none>", privacy: .public)")
         logger.info("Launch URL source: \(buildResult.source == .advertised ? "advertised" : "fallback", privacy: .public)")
-        // The launch URL embeds the passport nonce used to sign the SSO
-        // callback — log only the host publicly, keep the full URL private.
-        logger.info("Final SSO launch URL host: \(launchURL.host ?? "<unknown>", privacy: .public)")
-        logger.debug("Final SSO launch URL: \(launchURL.absoluteString, privacy: .private)")
 
-        let callbackURL: URL
-        do {
-            callbackURL = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
-                let completionGate = SessionCompletionGate()
+        let attemptID = UUID()
+        let callbackURL = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: FindleError.cancelled)
+                    return
+                }
+                // A retry explicitly retires the old waiter, even if the system
+                // never invokes its completion handler after cancel().
                 let session = sessionFactory(launchURL, callbackScheme) { [weak self] url, error in
                     Task { @MainActor [weak self] in
-                        guard completionGate.markCompleted() else {
-                            logger.error("Ignoring duplicate ASWebAuthenticationSession completion for \(site.displayName, privacy: .public)")
-                            return
-                        }
-
-                        // Clear the strong reference now that the session has completed.
-                        self?.activeSession = nil
-                        self?.activePresentationContext = nil
-
-                        if let error = error {
+                        let result: Result<URL, Error>
+                        if let error {
                             let nsError = error as NSError
-                            logger.error("SSO authentication session failed for \(site.displayName, privacy: .public) with \(nsError.domain, privacy: .public) (\(nsError.code, privacy: .public)): \(error.localizedDescription, privacy: .public)")
-                            if nsError.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
-                                continuation.resume(throwing: FindleError.cancelled)
+                            if nsError.domain == ASWebAuthenticationSessionError.errorDomain,
+                               nsError.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
+                                result = .failure(FindleError.cancelled)
                             } else {
-                                continuation.resume(throwing: FindleError.ssoCallbackInvalid(
+                                result = .failure(FindleError.ssoCallbackInvalid(
                                     detail: "SSO authentication failed: \(error.localizedDescription)"
                                 ))
                             }
-                            return
+                        } else if let url {
+                            result = .success(url)
+                        } else {
+                            result = .failure(FindleError.ssoCallbackInvalid(detail: "No callback URL received from SSO."))
                         }
-
-                        guard let url else {
-                            continuation.resume(throwing: FindleError.ssoCallbackInvalid(
-                                detail: "No callback URL received from SSO."
-                            ))
-                            return
-                        }
-
-                        continuation.resume(returning: url)
+                        self?.finish(attemptID: attemptID, result: result)
                     }
                 }
-
                 session.presentationContextProvider = presentationContext
                 session.prefersEphemeralWebBrowserSession = false
-
-                self.activePresentationContext = presentationContext
-                // Retain the session for the duration of the auth flow.
-                self.activeSession = session
-
+                activeAttempt = Attempt(id: attemptID, continuation: continuation,
+                                        session: session, presentationContext: presentationContext)
                 if !session.start() {
-                    self.activeSession = nil
-                    self.activePresentationContext = nil
-                    guard completionGate.markCompleted() else {
-                        logger.error("Ignoring duplicate ASWebAuthenticationSession start failure for \(site.displayName, privacy: .public)")
-                        return
-                    }
-                    continuation.resume(throwing: FindleError.ssoSessionStartFailed(
+                    finish(attemptID: attemptID, result: .failure(FindleError.ssoSessionStartFailed(
                         detail: "The browser authentication session could not be started for \(site.displayName)."
-                    ))
+                    )))
                 }
             }
-        } catch {
-            activeSession = nil
-            activePresentationContext = nil
-            throw error
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.cancel(attemptID: attemptID)
+            }
         }
+        try Task.checkCancellation()
 
         // Log high-signal callback metadata without leaking the token payload.
         if let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false) {
             let hasToken = components.queryItems?.contains(where: { $0.name == "token" }) == true
                 || callbackURL.absoluteString.contains("://token=")
-            logger.info("SSO callback received — scheme: \(components.scheme ?? "<none>", privacy: .public), host: \(components.host ?? "<none>", privacy: .public), hasToken: \(hasToken, privacy: .public)")
+            // In Moodle's scheme://token=payload syntax, the URL host is the
+            // credential payload. Do not submit it to logging, even as private.
+            logger.info("SSO callback received — scheme: \(components.scheme ?? "<none>", privacy: .private), hasToken: \(hasToken, privacy: .public)")
         } else {
             logger.info("SSO callback received")
         }
@@ -181,27 +166,23 @@ public final class WebAuthSession: NSObject {
         return (token, passport)
     }
 
-    /// Generate a random passport string for SSO verification.
-    private func generatePassport() -> String {
-        var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        return bytes.map { String(format: "%02x", $0) }.joined()
+    /// Cancel without depending on a callback from AuthenticationServices.
+    public func cancel() {
+        guard let id = activeAttempt?.id else { return }
+        cancel(attemptID: id)
     }
-}
 
-private final class SessionCompletionGate: @unchecked Sendable {
-    private let lock = NSLock()
-    private var hasCompleted = false
-
-    func markCompleted() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-
-        guard !hasCompleted else {
-            return false
-        }
-
-        hasCompleted = true
-        return true
+    private func cancel(attemptID: UUID) {
+        guard let attempt = activeAttempt, attempt.id == attemptID else { return }
+        activeAttempt = nil
+        attempt.session.cancel()
+        attempt.continuation.resume(throwing: FindleError.cancelled)
     }
+
+    private func finish(attemptID: UUID, result: Result<URL, Error>) {
+        guard let attempt = activeAttempt, attempt.id == attemptID else { return }
+        activeAttempt = nil
+        attempt.continuation.resume(with: result)
+    }
+
 }

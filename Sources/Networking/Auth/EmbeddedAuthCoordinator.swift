@@ -27,11 +27,36 @@ public final class EmbeddedAuthCoordinator: NSObject {
     /// The WKWebView managed by this coordinator. Callers embed this in their view hierarchy.
     public private(set) var webView: WKWebView!
 
-    private var continuation: CheckedContinuation<EmbeddedAuthResult, Error>?
+    private var attempt: AuthenticationResult<EmbeddedAuthResult>?
     private var passport: String = ""
     private var site: MoodleSite?
     private var pendingRequest: URLRequest?
-    private var dataStoreIdentifier: UUID?
+    private var attemptFinished = true
+    private let cleanup: EmbeddedWebDataStoreCleanup
+    private let storeFactory: @MainActor (UUID) -> WKWebsiteDataStore
+    private let passportGenerator: @MainActor () throws -> String
+
+    public override init() {
+        cleanup = .shared
+        storeFactory = { WKWebsiteDataStore(forIdentifier: $0) }
+        passportGenerator = { try SSONonce.generate() }
+        super.init()
+    }
+
+    init(cleanup: EmbeddedWebDataStoreCleanup,
+         storeFactory: @escaping @MainActor (UUID) -> WKWebsiteDataStore,
+         passportGenerator: @escaping @MainActor () throws -> String = { try SSONonce.generate() }) {
+        self.cleanup = cleanup
+        self.storeFactory = storeFactory
+        self.passportGenerator = passportGenerator
+        super.init()
+    }
+
+    /// Resume interrupted cleanup once when the host starts. Live attempts are
+    /// still protected if a caller invokes this again after startup.
+    public static func resumePendingCleanup() {
+        EmbeddedWebDataStoreCleanup.shared.retryPending(maximum: 32)
+    }
 
     /// Configure the embedded web view for SSO authentication without loading the page.
     ///
@@ -40,35 +65,40 @@ public final class EmbeddedAuthCoordinator: NSObject {
     ///
     /// - Parameter site: The Moodle site to authenticate with.
     public func configure(site: MoodleSite) throws {
+        cancel()
+        attempt = nil
         self.site = site
-        self.passport = generatePassport()
+        self.passport = try passportGenerator()
 
         // Build the launch URL.
         let buildResult = try MoodleSSOLaunchURLBuilder.build(for: site, passport: passport)
         let launchURL = buildResult.url
+        cleanup.retryPending()
+        let storeID = try cleanup.registerAttempt()
+        let attempt = AuthenticationResult<EmbeddedAuthResult>()
+        self.attempt = attempt
+        attemptFinished = false
 
-        logger.info("Starting embedded SSO for \(site.displayName, privacy: .public)")
+        logger.info("Starting embedded SSO for \(site.displayName, privacy: .private)")
         logger.info("Launch URL source: \(buildResult.source == .advertised ? "advertised" : "fallback", privacy: .public)")
 
         // Create a fresh persistent data store for each SSO attempt so that
         // ITP starts with a clean slate while cookies persist across the
         // redirect chain.
-        let storeID = UUID()
-        self.dataStoreIdentifier = storeID
-
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = WKWebsiteDataStore(forIdentifier: storeID)
+        config.websiteDataStore = storeFactory(storeID)
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
         // Register all known Moodle/Open LMS callback schemes with the web view.
+        let attemptID = attempt.id
         let schemeHandler = SSOCallbackSchemeHandler { [weak self] urlString in
-            self?.completeWithCallbackURL(urlString)
+            self?.completeWithCallbackURL(urlString, attemptID: attemptID)
         }
         for scheme in MoodleSite.acceptedCallbackSchemes {
             config.setURLSchemeHandler(schemeHandler, forURLScheme: scheme)
         }
 
-        let webView = WKWebView(frame: .zero, configuration: config)
+        let webView = EmbeddedAuthenticationWebView(configuration: config, storeIdentifier: storeID, cleanup: cleanup)
         webView.navigationDelegate = self
         webView.uiDelegate = self
         self.webView = webView
@@ -98,54 +128,62 @@ public final class EmbeddedAuthCoordinator: NSObject {
     }
 
     /// Wait for the embedded SSO callback.
+    ///
+    /// Cancelling the calling task cancels the flow, so the continuation is always resumed.
     public func waitForResult() async throws -> EmbeddedAuthResult {
-        return try await withCheckedThrowingContinuation { continuation in
-            self.continuation = continuation
+        guard let attempt else { throw FindleError.cancelled }
+        return try await withTaskCancellationHandler {
+            let value = try await attempt.wait()
+            try Task.checkCancellation()
+            return value
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.cancel(attemptID: attempt.id)
+            }
         }
     }
 
-    /// Cancel the embedded SSO flow.
+    /// Cancel this attempt even when WebKit never produces a navigation callback.
     public func cancel() {
-        webView?.stopLoading()
-        cleanUpWebData()
-        let pending = continuation
-        continuation = nil
-        pending?.resume(throwing: FindleError.cancelled)
+        guard let id = attempt?.id else { return }
+        cancel(attemptID: id)
+    }
+
+    private func cancel(attemptID: UUID) {
+        guard attempt?.id == attemptID else { return }
+        finish(.failure(FindleError.cancelled))
     }
 
     // MARK: - Private
 
-    private func cleanUpWebData() {
-        guard let id = dataStoreIdentifier else { return }
-        dataStoreIdentifier = nil
-        Task {
-            try? await WKWebsiteDataStore.remove(forIdentifier: id)
-        }
+    private func finish(_ result: Result<EmbeddedAuthResult, Error>) {
+        guard let attempt, !attemptFinished else { return }
+        attemptFinished = true
+        pendingRequest = nil
+        let view = webView
+        webView = nil
+        view?.stopLoading()
+        view?.navigationDelegate = nil
+        view?.uiDelegate = nil
+        view?.removeFromSuperview()
+        // A caller may still retain the view. Its persistent store stays live
+        // until EmbeddedAuthenticationWebView's actual deallocation.
+        attempt.resolve(result)
     }
 
-    private func generatePassport() -> String {
-        var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        return bytes.map { String(format: "%02x", $0) }.joined()
-    }
-
-    private func completeWithCallbackURL(_ urlString: String) {
-        guard let site = site, let pending = continuation else { return }
-        continuation = nil
-        cleanUpWebData()
-
+    private func completeWithCallbackURL(_ urlString: String, attemptID: UUID? = nil) {
+        guard let site, let attempt, !attemptFinished,
+              attemptID == nil || attemptID == attempt.id else { return }
         do {
-            let client = MoodleClient()
-            let token = try client.parseTokenFromSSOCallback(
-                callbackURLString: urlString,
-                site: site,
-                passport: passport
+            let token = try MoodleClient().parseTokenFromSSOCallback(
+                callbackURLString: urlString, site: site, passport: passport
             )
-            pending.resume(returning: EmbeddedAuthResult(token: token, passport: passport))
+            finish(.success(EmbeddedAuthResult(token: token, passport: passport)))
         } catch {
-            pending.resume(throwing: error)
+            finish(.failure(error))
         }
     }
+
 }
 
 // MARK: - WKNavigationDelegate
@@ -157,6 +195,7 @@ extension EmbeddedAuthCoordinator: WKNavigationDelegate {
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
     ) {
+        guard webView === self.webView else { decisionHandler(.cancel); return }
         guard let url = navigationAction.request.url else {
             decisionHandler(.allow)
             return
@@ -169,7 +208,7 @@ extension EmbeddedAuthCoordinator: WKNavigationDelegate {
         let isHTTP = scheme == "http" || scheme == "https"
 
         if !isHTTP && urlString.contains("token=") {
-            logger.info("Intercepted SSO callback with scheme: \(scheme, privacy: .public)")
+            logger.info("Intercepted SSO callback")
             decisionHandler(.cancel)
             completeWithCallbackURL(urlString)
             return
@@ -178,38 +217,25 @@ extension EmbeddedAuthCoordinator: WKNavigationDelegate {
         decisionHandler(.allow)
     }
 
-    public func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        let host = webView.url?.host ?? "<unknown>"
-        logger.info("Navigation started: \(host, privacy: .public)")
-    }
-
-    public func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
-        let host = webView.url?.host ?? "<unknown>"
-        logger.info("Server redirect to: \(host, privacy: .public)")
-    }
-
-    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        let host = webView.url?.host ?? "<unknown>"
-        logger.info("Navigation finished: \(host, privacy: .public)")
-    }
-
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        guard webView === self.webView else { return }
         let nsError = error as NSError
         if isExpectedNavigationError(nsError) { return }
-        logger.error("Navigation failed: \(nsError.domain, privacy: .public) \(nsError.code, privacy: .public) — \(error.localizedDescription, privacy: .public)")
+        logger.error("Navigation failed: \(DiagnosticFailure(error).summary, privacy: .public)")
+        finish(.failure(FindleError.ssoCallbackInvalid(
+            detail: "The sign-in page failed. Try signing in again."
+        )))
     }
 
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        guard webView === self.webView else { return }
         let nsError = error as NSError
         if isExpectedNavigationError(nsError) { return }
 
-        logger.error("Provisional navigation failed: \(error.localizedDescription, privacy: .public)")
-        cleanUpWebData()
-        let pending = continuation
-        continuation = nil
-        pending?.resume(throwing: FindleError.ssoCallbackInvalid(
-            detail: "The embedded sign-in page failed to load: \(error.localizedDescription)"
-        ))
+        logger.error("Provisional navigation failed: \(DiagnosticFailure(error).summary, privacy: .public)")
+        finish(.failure(FindleError.ssoCallbackInvalid(
+            detail: "The sign-in page could not load. Check your connection and try again."
+        )))
     }
 
     public func webView(
@@ -218,6 +244,13 @@ extension EmbeddedAuthCoordinator: WKNavigationDelegate {
         completionHandler: @escaping @MainActor @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
         completionHandler(.performDefaultHandling, nil)
+    }
+
+    public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard webView === self.webView else { return }
+        finish(.failure(FindleError.ssoCallbackInvalid(
+            detail: "The sign-in page stopped. Try signing in again."
+        )))
     }
 
     private func isExpectedNavigationError(_ error: NSError) -> Bool {
@@ -231,12 +264,18 @@ extension EmbeddedAuthCoordinator: WKNavigationDelegate {
 
 extension EmbeddedAuthCoordinator: WKUIDelegate {
 
+    public func webViewDidClose(_ webView: WKWebView) {
+        guard webView === self.webView else { return }
+        finish(.failure(FindleError.cancelled))
+    }
+
     public func webView(
         _ webView: WKWebView,
         createWebViewWith configuration: WKWebViewConfiguration,
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
+        guard webView === self.webView else { return nil }
         if navigationAction.targetFrame == nil || navigationAction.targetFrame?.isMainFrame == false {
             if let url = navigationAction.request.url {
                 let urlString = url.absoluteString

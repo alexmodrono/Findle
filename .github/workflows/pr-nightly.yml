@@ -6,23 +6,38 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
-  actions: read
+
+concurrency:
+  group: pr-nightly-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 env:
   APP_NAME: Findle Nightly
   SCHEME: Findle-Nightly
   CONFIGURATION: Nightly
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
 
 jobs:
   build:
     runs-on: macos-26
+    timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Check build prerequisites
+        run: bash scripts/ci-preflight.sh
 
       - name: Install XcodeGen
-        run: brew install xcodegen
+        run: bash scripts/install-ci-tools.sh
+
+      - name: Restore resolved package sources
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/SourcePackages
+          key: spm-${{ runner.os }}-${{ runner.arch }}-xcode26.6-nightly-artifact-${{ hashFiles('Findle.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
       - name: Generate Xcode project
         run: xcodegen generate
@@ -34,13 +49,18 @@ jobs:
             -scheme "$SCHEME" \
             -configuration "$CONFIGURATION" \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution \
+            FINDLE_SOURCE_REVISION="$GITHUB_SHA" \
+            -onlyUsePackageVersionsFromResolvedFile \
             CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
 
       - name: Package app
         run: |
-          APP_PATH=$(find "$RUNNER_TEMP/DerivedData" -name "$APP_NAME.app" -type d | head -1)
-          if [ -z "$APP_PATH" ]; then
+          APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/$CONFIGURATION/$APP_NAME.app"
+          if [ ! -d "$APP_PATH" ]; then
             echo "Error: $APP_NAME.app not found"
             exit 1
           fi
@@ -48,25 +68,21 @@ jobs:
 
       - name: Upload artifact
         id: upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Findle-Nightly
           path: ${{ runner.temp }}/Findle Nightly.zip
           retention-days: 14
+          if-no-files-found: error
 
-      - name: Comment download link on PR
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: nightly-build
-          message: |
-            ### Nightly Build
-
-            **[Download Findle Nightly](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts/${{ steps.upload.outputs.artifact-id }})** (unsigned)
-
-            Built from ${{ github.event.pull_request.head.sha }}.
-
-            > [!IMPORTANT]
-            > This build is unsigned. macOS will block it on first launch. To open it:
-            > 1. Try to open the app normally — macOS will show a warning and refuse.
-            > 2. Go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**.
-            > 3. The File Provider extension requires code signing and won't work in this build.
+      # A job summary works for forks and Dependabot without a PR write token.
+      - name: Record download link
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          {
+            echo "[Download Findle Nightly]($ARTIFACT_URL)"
+            echo
+            echo "Unsigned build of $GITHUB_SHA (the PR merge commit)."
+            echo "File Provider registration and real SSO require a signed build."
+          } >> "$GITHUB_STEP_SUMMARY"

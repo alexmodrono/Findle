@@ -703,8 +703,171 @@ final class MoodleClientTests: XCTestCase {
 
         XCTAssertEqual(module.id, 2001)
         XCTAssertEqual(module.modname, "resource")
-        XCTAssertEqual(module.contents?.count, 1)
-        XCTAssertEqual(module.contents?[0].filename, "syllabus.pdf")
+        XCTAssertEqual(module.contents?.elements.count, 1)
+        XCTAssertEqual(module.contents?.elements[0].filename, "syllabus.pdf")
+    }
+
+    // MARK: - Lossy Course Decoding
+
+    private static let sectionsWithMalformedModule = """
+    [
+      {
+        "id": 10,
+        "name": null,
+        "section": 1,
+        "visible": 1,
+        "modules": [
+          { "id": 101, "name": "Syllabus", "modname": "resource", "visible": 1, "contents": [
+            { "type": "file", "filename": "syllabus.pdf", "filesize": 1024 },
+            { "type": "file", "filesize": 12 }
+          ] },
+          { "id": "not-a-number", "name": "Broken", "modname": "url" },
+          { "id": 103, "name": "Forum", "modname": "forum", "visible": 0 }
+        ]
+      }
+    ]
+    """
+
+    func testLossyDecodingSkipsOnlyTheMalformedModule() throws {
+        let data = Data(Self.sectionsWithMalformedModule.utf8)
+        let sections = try JSONDecoder().decode(LossyArray<SectionResponse>.self, from: data)
+
+        XCTAssertEqual(sections.elements.count, 1)
+        XCTAssertEqual(sections.discardedCount, 0)
+        let section = try XCTUnwrap(sections.elements.first)
+        XCTAssertNil(section.name)
+
+        let modules = try XCTUnwrap(section.modules?.elements)
+        XCTAssertEqual(modules.map(\.id), [101, 103])
+        XCTAssertEqual(section.modules?.discardedCount, 1)
+        XCTAssertEqual(modules[0].contents?.elements.count, 2)
+    }
+
+    func testCourseContentsRejectsIncompleteSnapshots() async throws {
+        let invalidSnapshots = [
+            Self.sectionsWithMalformedModule,
+            // A malformed root section, module, or content element must not disappear silently.
+            #"[{"id":"bad","section":1,"modules":[]}]"#,
+            #"[{"id":10,"section":1,"modules":[{"id":"bad","modname":"forum"}]}]"#,
+            #"[{"id":10,"section":1,"modules":[{"id":101,"modname":"resource","contents":[{"filename":42}]}]}]"#,
+            // Successfully decoded entries can still lack information needed to map a complete tree.
+            #"[{"id":10,"section":1}]"#,
+            #"[{"id":10,"section":1,"modules":[{"id":101}]}]"#,
+            #"[{"id":10,"section":1,"modules":[{"id":101,"modname":"resource"}]}]"#,
+            #"[{"id":10,"section":1,"modules":[{"id":101,"modname":"resource","contents":[{"type":"file"}]}]}]"#,
+            #"[{"id":10,"section":1,"modules":[{"id":101,"modname":"url","contents":[{"filename":"link"}]}]}]"#,
+            // A truncated transport response must fail too.
+            #"[{"id":10,"section":1,"modules":["#,
+        ]
+        for json in invalidSnapshots {
+            let client = makeWebServiceClient(responses: ["core_course_get_contents": json])
+            do {
+                _ = try await client.fetchCourseContents(site: makeSite(), token: AuthToken(token: "testtoken"), courseID: 7)
+                XCTFail("Accepted incomplete snapshot: \(json)")
+            } catch {
+                // Any failed snapshot stays out of the successful LMSProvider result.
+            }
+        }
+    }
+
+    func testCompleteCourseContentsAllowsOptionalMetadataAndExplicitEmptyLists() async throws {
+        let json = #"[{"id":10,"name":null,"section":1,"modules":[{"id":101,"modname":"resource","contents":[{"filename":"syllabus.pdf"}]},{"id":102,"modname":"folder","contents":[]},{"id":103,"name":"Forum","modname":"forum","visible":0}]}]"#
+        let client = makeWebServiceClient(responses: ["core_course_get_contents": json])
+        let sections = try await client.fetchCourseContents(site: makeSite(), token: AuthToken(token: "testtoken"), courseID: 7)
+        let section = try XCTUnwrap(sections.first)
+        XCTAssertEqual(section.name, "Section 1")
+        XCTAssertEqual(section.modules.map(\.id), [101, 102, 103])
+        XCTAssertEqual(section.modules[0].contents.map(\.fileName), ["syllabus.pdf"])
+        XCTAssertEqual(section.modules[0].contents.first?.type, "file")
+        XCTAssertTrue(section.modules[1].contents.isEmpty)
+        XCTAssertTrue(section.modules[2].contents.isEmpty)
+
+        let emptyClient = makeWebServiceClient(responses: ["core_course_get_contents": "[]"])
+        let empty = try await emptyClient.fetchCourseContents(site: makeSite(), token: AuthToken(token: "testtoken"), courseID: 7)
+        XCTAssertTrue(empty.isEmpty)
+    }
+
+    // MARK: - Moodle Error Classification
+
+    /// Routes mock responses by `wsfunction`. Unknown functions get an invalidparameter error.
+    private func makeWebServiceClient(responses: [String: String]) -> MoodleClient {
+        makeMockedClient { request in
+            let url = try XCTUnwrap(request.url)
+            let body = String(data: Self.bodyData(of: request), encoding: .utf8) ?? ""
+            let function = body.components(separatedBy: "&")
+                .first { $0.hasPrefix("wsfunction=") }
+                .map { String($0.dropFirst("wsfunction=".count)) } ?? ""
+            let fallback = #"{"exception":"moodle_exception","errorcode":"invalidparameter","message":"Unknown function"}"#
+            let json = responses[function] ?? fallback
+            return (self.makeHTTPResponse(url: url), Data(json.utf8))
+        }
+    }
+
+    /// URLSession hands the body to URLProtocol as a stream, so read it from there.
+    private static func bodyData(of request: URLRequest) -> Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count <= 0 { break }
+            data.append(buffer, count: count)
+        }
+        return data
+    }
+
+    private static let accessExceptionJSON = #"{"exception":"required_capability_exception","errorcode":"accessexception","message":"Access control exception"}"#
+
+    private static let siteInfoJSON = #"{"sitename":"Example","username":"jdoe","fullname":"Jane Doe","userid":42,"siteurl":"https://moodle.example.edu"}"#
+
+    func testAccessExceptionWithValidTokenReportsRequestFailedNotTokenExpired() async {
+        let client = makeWebServiceClient(responses: [
+            "core_course_get_contents": Self.accessExceptionJSON,
+            "core_webservice_get_site_info": Self.siteInfoJSON
+        ])
+
+        do {
+            _ = try await client.fetchCourseContents(site: makeSite(), token: AuthToken(token: "testtoken"), courseID: 7)
+            XCTFail("Expected the call to fail")
+        } catch FindleError.requestFailed(_, let detail) {
+            XCTAssertEqual(detail, "Access control exception")
+        } catch {
+            XCTFail("Expected requestFailed, got \(error)")
+        }
+    }
+
+    func testAccessExceptionWithRejectedTokenThrowsTokenExpired() async {
+        let client = makeWebServiceClient(responses: [
+            "core_course_get_contents": Self.accessExceptionJSON,
+            "core_webservice_get_site_info": #"{"errorcode":"invalidtoken","message":"Invalid token"}"#
+        ])
+
+        do {
+            _ = try await client.fetchCourseContents(site: makeSite(), token: AuthToken(token: "testtoken"), courseID: 7)
+            XCTFail("Expected the call to fail")
+        } catch FindleError.tokenExpired {
+            // Expected: the token itself is dead.
+        } catch {
+            XCTFail("Expected tokenExpired, got \(error)")
+        }
+    }
+
+    func testHTMLResponseBodyThrowsInvalidResponse() async {
+        let client = makeWebServiceClient(responses: [
+            "core_course_get_contents": "<html><body>Please sign in through the portal</body></html>"
+        ])
+
+        do {
+            _ = try await client.fetchCourseContents(site: makeSite(), token: AuthToken(token: "testtoken"), courseID: 7)
+            XCTFail("Expected the call to fail")
+        } catch FindleError.invalidResponse {
+            // Expected: non-JSON bodies are not handed to the decoder.
+        } catch {
+            XCTFail("Expected invalidResponse, got \(error)")
+        }
     }
 }
 

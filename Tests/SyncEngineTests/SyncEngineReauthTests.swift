@@ -35,17 +35,17 @@ final class SyncEngineReauthTests: XCTestCase {
         try? FileManager.default.removeItem(atPath: tempPath)
     }
 
-    func testSyncAllCoursesRethrowsAuthenticationFailure() async throws {
+    func testSyncAllCoursesReportsAuthenticationFailureAndSkipsUnstartedCourses() async throws {
         let provider = ThrowingLMSProvider(error: .tokenExpired)
         let engine = SyncEngine(provider: provider, database: database)
-        let courses = [MoodleCourse(id: 1, shortName: "C1", fullName: "Course 1", siteID: site.id)]
-
-        do {
-            try await engine.syncAllCourses(site: site, token: token, courses: courses)
-            XCTFail("Expected syncAllCourses to rethrow the authentication failure")
-        } catch let error as FindleError {
-            XCTAssertTrue(error.requiresReauthentication)
-        }
+        let courses = (1...3).map { MoodleCourse(id: $0, shortName: "C", fullName: "Course", siteID: site.id) }
+        let report = await engine.syncAllCourses(site: site, token: token, courses: courses, maxConcurrentCourses: 1)
+        XCTAssertTrue(report.requiresReauthentication)
+        XCTAssertFalse(report.allSucceeded)
+        XCTAssertEqual(report.failedCount, 1)
+        XCTAssertEqual(report.skippedCount, 2)
+        XCTAssertEqual(report.failure?.kind, "tokenExpired")
+        XCTAssertNil(report.successfulCompletionDate)
     }
 
     func testSyncAllCoursesContinuesPastNonAuthFailure() async throws {
@@ -57,8 +57,11 @@ final class SyncEngineReauthTests: XCTestCase {
             MoodleCourse(id: 2, shortName: "C2", fullName: "Course 2", siteID: site.id),
         ]
 
-        // Should complete without throwing even though every course errors.
-        try await engine.syncAllCourses(site: site, token: token, courses: courses)
+        let report = await engine.syncAllCourses(site: site, token: token, courses: courses)
+        XCTAssertEqual(report.failedCount, 2)
+        XCTAssertFalse(report.allSucceeded)
+        XCTAssertFalse(report.requiresReauthentication)
+        XCTAssertNil(report.successfulCompletionDate)
     }
 }
 

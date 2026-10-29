@@ -15,7 +15,9 @@ public actor SyncEngine {
     private let database: Database
     private let logger = Logger(subsystem: "es.amodrono.findle.sync", category: "SyncEngine")
 
-    private var activeTasks: [Int: Task<Void, Error>] = [:]
+    private var activeTasks: [Int: Task<Date?, Error>] = [:]
+    /// Pinned-item downloads in flight, tracked so `stopAllSyncs` can cancel and await them.
+    private var pinnedDownloadTasks: Set<Task<[Int: DiagnosticFailure], Error>> = []
     private var syncProgress: [Int: SyncProgress] = [:]
     private var isStopping = false
 
@@ -44,123 +46,144 @@ public actor SyncEngine {
     /// connections to a shared institutional Moodle.
     public static let defaultCourseConcurrency = 4
 
-    /// The terminal outcome of a `syncAllCourses` run.
-    private enum RunOutcome {
-        case ok
-        case authenticationFailed(Error)
-        case cancelled
-    }
-
-    /// Sync all subscribed courses for a site.
-    ///
-    /// Courses are fetched with bounded concurrency. `onCourseSynced` fires as
-    /// soon as each individual course lands in the database, so callers can
-    /// publish that course's files immediately instead of waiting for the whole
-    /// run — a slow course no longer hides the ones that already finished.
-    ///
-    /// Throws if a course fails with an authentication error (`tokenExpired`
-    /// etc.) — such failures affect every course, so we stop early and let the
-    /// caller prompt the user to reconnect. Per-course non-auth failures are
-    /// logged and the sync continues with the remaining courses.
+    /// Sync selected courses with bounded concurrency and account for every outcome.
+    /// Authentication failures stop scheduling and cancel siblings. Other failures
+    /// preserve committed courses and allow the remaining selections to proceed.
+    @discardableResult
     public func syncAllCourses(
         site: MoodleSite,
         token: AuthToken,
         courses: [MoodleCourse],
         maxConcurrentCourses: Int = SyncEngine.defaultCourseConcurrency,
         onCourseSynced: (@Sendable (Int) -> Void)? = nil
-    ) async throws {
-        logger.info("Starting sync for \(courses.count) courses on \(site.displayName, privacy: .public)")
-
-        // Reset progress up front so a re-sync doesn't briefly report the
-        // previous run's completion state to progress observers.
-        for course in courses {
-            syncProgress[course.id] = SyncProgress(
-                courseID: course.id,
-                totalItems: 0,
-                processedItems: 0,
-                state: .syncing
-            )
+    ) async -> SyncRunReport {
+        let attemptID = UUID()
+        let startedAt = Date()
+        let journal = DiagnosticJournal(databasePath: database.filePath)
+        // A duplicate selection must not produce duplicate callbacks or inflated counts.
+        var seen = Set<Int>()
+        let selected = courses.filter { seen.insert($0.id).inserted }
+        guard !selected.isEmpty else {
+            return SyncRunReport(id: attemptID, siteID: site.id, startedAt: startedAt, courses: [])
+        }
+        journal?.record(DiagnosticEvent(attemptID: attemptID, process: .app, operation: .sync, outcome: .started))
+        for course in selected {
+            syncProgress[course.id] = SyncProgress(courseID: course.id, totalItems: 0, processedItems: 0, state: .syncing)
         }
 
-        guard !courses.isEmpty else { return }
-        let limit = max(1, min(maxConcurrentCourses, courses.count))
+        var outcomes: [Int: SyncCourseOutcome] = [:]
+        var wasCancelled = Task.isCancelled || isStopping
+        var authenticationFailed = false
+        var runFailure: DiagnosticFailure?
+        let limit = max(1, min(maxConcurrentCourses, selected.count))
 
-        let outcome = await withTaskGroup(
-            of: (Int, Error?).self,
-            returning: RunOutcome.self
-        ) { group in
-            var outcome = RunOutcome.ok
+        await withTaskGroup(of: (SyncCourseOutcome, Bool).self) { group in
             var next = 0
-
-            while next < limit {
-                let course = courses[next]
+            if !wasCancelled {
+                while next < min(limit, selected.count) {
+                    let course = selected[next]
+                    group.addTask { [self] in
+                        await syncCourseCapturingOutcome(site: site, token: token, course: course)
+                    }
+                    next += 1
+                }
+            }
+            while let (result, needsAuthentication) = await group.next() {
+                outcomes[result.courseID] = result
+                if result.outcome == .succeeded {
+                    onCourseSynced?(result.courseID)
+                } else {
+                    syncProgress[result.courseID]?.state = result.outcome == .failed ? .error : .stale
+                }
+                if needsAuthentication {
+                    authenticationFailed = true
+                    runFailure = result.failure
+                    group.cancelAll()
+                } else if result.outcome == .cancelled || Task.isCancelled {
+                    wasCancelled = true
+                    group.cancelAll()
+                }
+                guard !authenticationFailed, !wasCancelled, next < selected.count else { continue }
+                let course = selected[next]
                 group.addTask { [self] in
-                    await syncCourseCapturingError(site: site, token: token, course: course)
+                    await syncCourseCapturingOutcome(site: site, token: token, course: course)
                 }
                 next += 1
             }
+        }
 
-            while let (courseID, error) = await group.next() {
-                switch error {
-                case nil:
-                    logger.info("Sync completed for course \(courseID, privacy: .public)")
-                    onCourseSynced?(courseID)
+        wasCancelled = wasCancelled || Task.isCancelled
+        for course in selected where outcomes[course.id] == nil {
+            // These courses were selected but never started after cancellation/auth failure.
+            outcomes[course.id] = SyncCourseOutcome(
+                courseID: course.id, outcome: .skipped,
+                lastSuccessfulSync: (try? database.fetchSyncCursor(courseID: course.id, siteID: site.id))?.lastSyncDate
+            )
+            syncProgress[course.id]?.state = .stale
+        }
 
-                case let authError as FindleError where authError.requiresReauthentication:
-                    logger.error("Authentication failed during sync of course \(courseID, privacy: .public) — aborting")
-                    syncProgress[courseID]?.state = .stale
-                    // An auth failure affects every course, so stop scheduling
-                    // more work. It also outranks the cancellations it causes.
-                    if case .ok = outcome { outcome = .authenticationFailed(authError) }
-                    group.cancelAll()
-
-                case is CancellationError:
-                    if case .ok = outcome { outcome = .cancelled }
-                    group.cancelAll()
-
-                case .some(let error):
-                    logger.error("Sync failed for course \(courseID): \(error.localizedDescription, privacy: .public)")
-                    // Mark as no-longer-syncing so progress observers advance past it.
+        let published = Set(outcomes.values.filter { $0.outcome == .succeeded }.map(\.courseID))
+        if !wasCancelled, !authenticationFailed, !published.isEmpty {
+            do {
+                let failures = try await runPinnedDownloads(site: site, token: token, courseIDs: published)
+                for (courseID, failure) in failures {
+                    guard let previous = outcomes[courseID] else { continue }
+                    outcomes[courseID] = SyncCourseOutcome(
+                        courseID: courseID, outcome: .incomplete, startedAt: previous.startedAt,
+                        lastSuccessfulSync: previous.lastSuccessfulSync, failure: failure
+                    )
                     syncProgress[courseID]?.state = .stale
                 }
-
-                // Only refill the window while the run is still healthy.
-                guard case .ok = outcome, next < courses.count else { continue }
-                let course = courses[next]
-                group.addTask { [self] in
-                    await syncCourseCapturingError(site: site, token: token, course: course)
-                }
-                next += 1
+            } catch {
+                runFailure = DiagnosticFailure(error)
+                authenticationFailed = (error as? FindleError)?.requiresReauthentication == true
+                wasCancelled = Self.isCancellation(error) || Task.isCancelled
             }
-
-            return outcome
         }
-
-        switch outcome {
-        case .authenticationFailed(let error): throw error
-        case .cancelled: throw CancellationError()
-        case .ok: break
-        }
-
-        try Task.checkCancellation()
-
-        // Download pinned items once for the whole run. Doing this per course
-        // re-scanned and re-downloaded the site's entire pinned set N times.
-        try await downloadPinnedItems(site: site, token: token)
+        let report = SyncRunReport(
+            id: attemptID, siteID: site.id, startedAt: startedAt,
+            courses: selected.compactMap { outcomes[$0.id] }, wasCancelled: wasCancelled,
+            requiresReauthentication: authenticationFailed, failure: runFailure
+        )
+        let journalOutcome: DiagnosticEvent.Outcome = report.allSucceeded ? .succeeded
+            : report.requiresReauthentication ? .failed
+            : report.wasCancelled ? .cancelled
+            : report.succeededCount > 0 || report.incompleteCount > 0 ? .partial : .failed
+        journal?.record(DiagnosticEvent(
+            attemptID: report.id, process: .app, operation: .sync, outcome: journalOutcome,
+            failure: report.failure ?? report.courses.compactMap(\.failure).first
+        ))
+        return report
     }
 
-    /// Run one course sync and surface its failure as a value so a task group
-    /// can decide how the run as a whole should react.
-    private func syncCourseCapturingError(
-        site: MoodleSite,
-        token: AuthToken,
-        course: MoodleCourse
-    ) async -> (Int, Error?) {
+    private static func isCancellation(_ error: any Error) -> Bool {
+        error is CancellationError || (error as? FindleError)?.isCancelled == true
+            || (error as? URLError)?.code == .cancelled
+    }
+
+    private func syncCourseCapturingOutcome(
+        site: MoodleSite, token: AuthToken, course: MoodleCourse
+    ) async -> (SyncCourseOutcome, Bool) {
+        let startedAt = Date()
+        var lastSuccess: Date?
         do {
-            try await syncCourseTracked(site: site, token: token, course: course)
-            return (course.id, nil)
+            lastSuccess = try database.fetchSyncCursor(courseID: course.id, siteID: site.id)?.lastSyncDate
+            try Task.checkCancellation()
+            guard course.isSyncEnabled else {
+                return (SyncCourseOutcome(courseID: course.id, outcome: .skipped, startedAt: startedAt,
+                                          lastSuccessfulSync: lastSuccess), false)
+            }
+            let committedAt = try await syncCourseTracked(site: site, token: token, course: course)
+            return (SyncCourseOutcome(courseID: course.id, outcome: committedAt == nil ? .skipped : .succeeded,
+                                      startedAt: startedAt, lastSuccessfulSync: committedAt ?? lastSuccess), false)
         } catch {
-            return (course.id, error)
+            let outcome: SyncCourseOutcome.Outcome
+            if Self.isCancellation(error) { outcome = .cancelled }
+            else if case .invalidResponse = error as? FindleError { outcome = .incomplete }
+            else { outcome = .failed }
+            return (SyncCourseOutcome(courseID: course.id, outcome: outcome, startedAt: startedAt,
+                                      lastSuccessfulSync: lastSuccess, failure: DiagnosticFailure(error)),
+                    (error as? FindleError)?.requiresReauthentication == true)
         }
     }
 
@@ -168,19 +191,28 @@ public actor SyncEngine {
     /// downloading. Batch runs use `syncCourseTracked` directly and download
     /// pinned items once at the end instead.
     public func syncCourse(site: MoodleSite, token: AuthToken, course: MoodleCourse) async throws {
-        try await syncCourseTracked(site: site, token: token, course: course)
-        try await downloadPinnedItems(site: site, token: token)
+        guard try await syncCourseTracked(site: site, token: token, course: course) != nil else { return }
+        let failures = try await runPinnedDownloads(site: site, token: token, courseIDs: [course.id])
+        if !failures.isEmpty {
+            throw FindleError.downloadFailed(itemID: "course-\(course.id)", reason: "Pinned files could not finish downloading. Try again.")
+        }
     }
 
     /// Sync a single course: enumerate content, diff against local state, update database.
-    private func syncCourseTracked(site: MoodleSite, token: AuthToken, course: MoodleCourse) async throws {
+    private func syncCourseTracked(site: MoodleSite, token: AuthToken, course: MoodleCourse) async throws -> Date? {
         if isStopping {
             throw CancellationError()
         }
 
         if let activeTask = activeTasks[course.id] {
-            try await activeTask.value
-            return
+            do {
+                return try await activeTask.value
+            } catch is CancellationError {
+                // The task we joined was cancelled by someone else. That must not
+                // take down this run unless this caller was cancelled too.
+                if Task.isCancelled { throw CancellationError() }
+                throw FindleError.syncFailed(courseID: course.id, reason: "Joined sync was cancelled")
+            }
         }
 
         let task = Task { [self] in
@@ -188,20 +220,33 @@ public actor SyncEngine {
         }
         activeTasks[course.id] = task
 
-        do {
-            try await withTaskCancellationHandler {
-                try await task.value
-            } onCancel: {
-                task.cancel()
-            }
-        } catch {
-            activeTasks[course.id] = nil
-            throw error
+        defer { clearActiveTask(task, courseID: course.id) }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
         }
-        activeTasks[course.id] = nil
     }
 
-    private func performSyncCourse(site: MoodleSite, token: AuthToken, course: MoodleCourse) async throws {
+    /// Remove a course's entry only if it still refers to `task`. A newer task
+    /// may have been registered for the same course while this one was running.
+    private func clearActiveTask(_ task: Task<Date?, Error>, courseID: Int) {
+        if activeTasks[courseID] == task {
+            activeTasks[courseID] = nil
+        }
+    }
+
+    /// Whether the user still has this course subscribed. Writes from a sync
+    /// that started before an unsubscribe would otherwise resurrect its items.
+    /// A course row that no longer exists is treated as still subscribed.
+    private func isCourseSubscribed(courseID: Int, siteID: String) throws -> Bool {
+        guard let course = try database.fetchCourses(siteID: siteID).first(where: { $0.id == courseID }) else {
+            return true
+        }
+        return course.isSyncEnabled
+    }
+
+    private func performSyncCourse(site: MoodleSite, token: AuthToken, course: MoodleCourse) async throws -> Date? {
         logger.info("Syncing course: \(course.fullName, privacy: .public)")
 
         syncProgress[course.id] = SyncProgress(
@@ -284,19 +329,18 @@ public actor SyncEngine {
 
         try Task.checkCancellation()
 
-        // Apply changes
-        if !changes.added.isEmpty || !changes.modified.isEmpty {
-            try database.saveItems(changes.added + changes.modified)
-        }
-        // Removed items: actually delete them and record tombstones so the
-        // File Provider extension can report the deletions to Finder.
-        if !changes.removed.isEmpty {
-            try database.deleteItemsWithTombstone(ids: changes.removed.map(\.id))
+        // The network round trips above can be long. If the user unsubscribed in
+        // the meantime, drop these results rather than writing the course back.
+        guard try isCourseSubscribed(courseID: course.id, siteID: site.id) else {
+            logger.info("Course \(course.id) was unsubscribed during sync; discarding results")
+            syncProgress[course.id]?.state = .stale
+            return nil
         }
 
+        // Cancellation is safe before publication. Once SQLite starts the
+        // synchronous commit, publish every part of the course or roll it all back.
         try Task.checkCancellation()
 
-        // Update sync cursor
         let cursor = SyncCursor(
             courseID: course.id,
             siteID: site.id,
@@ -304,58 +348,60 @@ public actor SyncEngine {
             lastModified: Date(),
             itemCount: allItems.count
         )
-        try database.saveSyncCursor(cursor)
-        try database.saveCourseOutline(
-            CourseOutlineSnapshot(courseID: course.id, sections: sections),
-            siteID: site.id
+        try database.commitCourseSync(
+            items: changes.added + changes.modified,
+            deletingItemIDs: changes.removed.map(\.id),
+            cursor: cursor,
+            outline: CourseOutlineSnapshot(courseID: course.id, sections: sections)
         )
 
         syncProgress[course.id]?.processedItems = allItems.count
         syncProgress[course.id]?.state = .synced
         logger.info("Course \(course.id) sync complete: \(allItems.count) items")
+        return cursor.lastSyncDate
     }
 
-    /// Download all pinned items that are not yet materialized.
-    private func downloadPinnedItems(site: MoodleSite, token: AuthToken) async throws {
-        do {
-            let pinnedItems = try database.fetchPinnedItems(siteID: site.id)
-            let pending = pinnedItems.filter { $0.syncState != .materialized }
-
-            guard !pending.isEmpty else { return }
-            logger.info("Downloading \(pending.count) pinned items")
-
-            for item in pending {
-                try Task.checkCancellation()
-                guard item.remoteURL != nil else { continue }
-                // Use item.id as the temp filename to avoid collisions between
-                // different items that share a basename (e.g. "Slides.pdf").
-                let pathExtension = (item.filename as NSString).pathExtension
-                let baseName = item.id.replacingOccurrences(of: "/", with: "_")
-                let tempFilename = pathExtension.isEmpty ? baseName : "\(baseName).\(pathExtension)"
-                let destination = FileManager.default.temporaryDirectory
-                    .appendingPathComponent(tempFilename)
-                do {
-                    try await downloadItem(
-                        itemID: item.id,
-                        site: site,
-                        token: token,
-                        destination: destination
-                    )
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch {
-                    if Task.isCancelled {
-                        throw CancellationError()
-                    }
-                    logger.error("Failed to download pinned item \(item.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
-                }
-            }
-        } catch {
-            if error is CancellationError || Task.isCancelled {
-                throw CancellationError()
-            }
-            logger.error("Failed to fetch pinned items: \(error.localizedDescription, privacy: .public)")
+    /// Track downloads so database replacement can cancel and await them too.
+    private func runPinnedDownloads(
+        site: MoodleSite, token: AuthToken, courseIDs: Set<Int>
+    ) async throws -> [Int: DiagnosticFailure] {
+        if isStopping { throw CancellationError() }
+        let task = Task { [self] in
+            try await downloadPinnedItems(site: site, token: token, courseIDs: courseIDs)
         }
+        pinnedDownloadTasks.insert(task)
+        defer { pinnedDownloadTasks.remove(task) }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    /// Failed materializations remain retryable and make their course incomplete.
+    private func downloadPinnedItems(
+        site: MoodleSite, token: AuthToken, courseIDs: Set<Int>
+    ) async throws -> [Int: DiagnosticFailure] {
+        let pending = try database.fetchPinnedItems(siteID: site.id).filter {
+            courseIDs.contains($0.courseID) && $0.syncState != .materialized
+        }
+        var failures: [Int: DiagnosticFailure] = [:]
+        for item in pending {
+            try Task.checkCancellation()
+            guard item.remoteURL != nil else { continue }
+            let pathExtension = (item.filename as NSString).pathExtension
+            let baseName = item.id.replacingOccurrences(of: "/", with: "_")
+            let tempFilename = pathExtension.isEmpty ? baseName : "\(baseName).\(pathExtension)"
+            let destination = FileManager.default.temporaryDirectory.appendingPathComponent(tempFilename)
+            do {
+                try await downloadItem(itemID: item.id, site: site, token: token, destination: destination)
+            } catch {
+                if Self.isCancellation(error) || Task.isCancelled { throw CancellationError() }
+                if (error as? FindleError)?.requiresReauthentication == true { throw error }
+                failures[item.courseID] = DiagnosticFailure(error)
+            }
+        }
+        return failures
     }
 
     // MARK: - Item Building
@@ -371,26 +417,7 @@ public actor SyncEngine {
 
         switch module.resourceType {
         case .file:
-            for content in module.contents where content.type == "file" {
-                let itemID = "file-\(siteID)-\(courseID)-\(module.id)-\(content.fileName)"
-                let item = LocalItem(
-                    id: itemID,
-                    parentID: parentID,
-                    siteID: siteID,
-                    courseID: courseID,
-                    remoteID: module.id,
-                    filename: FileNameSanitizer.sanitize(content.fileName, preserveExtension: true),
-                    isDirectory: false,
-                    contentType: content.mimeType,
-                    fileSize: content.fileSize,
-                    creationDate: content.timeCreated,
-                    modificationDate: content.timeModified,
-                    syncState: .placeholder,
-                    remoteURL: content.fileURL,
-                    contentVersion: content.timeModified.map { String(Int($0.timeIntervalSince1970)) }
-                )
-                items.append(item)
-            }
+            items.append(contentsOf: fileItems(for: module, parentID: parentID, siteID: siteID, courseID: courseID))
 
         case .folder:
             let folderID = "folder-\(siteID)-\(courseID)-\(module.id)"
@@ -407,26 +434,8 @@ public actor SyncEngine {
             )
             items.append(folder)
 
-            for content in module.contents where content.type == "file" {
-                let itemID = "file-\(siteID)-\(courseID)-\(module.id)-\(content.fileName)"
-                let item = LocalItem(
-                    id: itemID,
-                    parentID: folderID,
-                    siteID: siteID,
-                    courseID: courseID,
-                    remoteID: module.id,
-                    filename: FileNameSanitizer.sanitize(content.fileName, preserveExtension: true),
-                    isDirectory: false,
-                    contentType: content.mimeType,
-                    fileSize: content.fileSize,
-                    creationDate: content.timeCreated,
-                    modificationDate: content.timeModified,
-                    syncState: .placeholder,
-                    remoteURL: content.fileURL,
-                    contentVersion: content.timeModified.map { String(Int($0.timeIntervalSince1970)) }
-                )
-                items.append(item)
-            }
+            // Files from subfolders are kept flat under the folder item.
+            items.append(contentsOf: fileItems(for: module, parentID: folderID, siteID: siteID, courseID: courseID))
 
         case .url:
             // Represent URL resources as .webloc files
@@ -474,6 +483,85 @@ public actor SyncEngine {
         return items
     }
 
+    /// Build the file items for a file or folder module.
+    private func fileItems(
+        for module: MoodleModule,
+        parentID: String,
+        siteID: String,
+        courseID: Int
+    ) -> [LocalItem] {
+        let files = module.contents.filter { $0.type == "file" }
+        let filenames = displayFilenames(for: files)
+
+        return zip(files, filenames).map { content, filename in
+            LocalItem(
+                id: fileItemID(siteID: siteID, courseID: courseID, moduleID: module.id, content: content),
+                parentID: parentID,
+                siteID: siteID,
+                courseID: courseID,
+                remoteID: module.id,
+                filename: filename,
+                isDirectory: false,
+                contentType: content.mimeType,
+                fileSize: content.fileSize,
+                creationDate: content.timeCreated,
+                modificationDate: content.timeModified,
+                syncState: .placeholder,
+                remoteURL: content.fileURL,
+                contentVersion: content.timeModified.map { String(Int($0.timeIntervalSince1970)) }
+            )
+        }
+    }
+
+    /// Item ID for a file inside a module. Root-level files keep the original ID so
+    /// existing items aren't deleted and recreated. Files in a subdirectory include
+    /// their path, so `a/index.html` and `b/index.html` don't share an ID.
+    private func fileItemID(siteID: String, courseID: Int, moduleID: Int, content: MoodleFileContent) -> String {
+        let base = "file-\(siteID)-\(courseID)-\(moduleID)"
+        let subdirectories = (content.filePath ?? "").split(separator: "/")
+        guard !subdirectories.isEmpty else {
+            return "\(base)-\(content.fileName)"
+        }
+        return "\(base)-\(subdirectories.joined(separator: "_"))-\(content.fileName)"
+    }
+
+    /// Display names for the files of one module. When several files would share a
+    /// filename (typically `index.html` in different subfolders), the ones inside a
+    /// subfolder get the folder name appended, e.g. `index (b).html`.
+    private func displayFilenames(for contents: [MoodleFileContent]) -> [String] {
+        let sanitized = contents.map { FileNameSanitizer.sanitize($0.fileName, preserveExtension: true) }
+        var counts: [String: Int] = [:]
+        for name in sanitized {
+            counts[name, default: 0] += 1
+        }
+
+        var used = Set<String>()
+        return zip(contents, sanitized).map { content, name in
+            var candidate = name
+            if counts[name, default: 0] > 1,
+               let folder = content.filePath?.split(separator: "/").last {
+                candidate = suffixedFilename(name, suffix: FileNameSanitizer.sanitize(String(folder)))
+            }
+
+            // Last resort if the suffixed name still collides with another file.
+            var unique = candidate
+            var counter = 2
+            while used.contains(unique) {
+                unique = suffixedFilename(candidate, suffix: "\(counter)")
+                counter += 1
+            }
+            used.insert(unique)
+            return unique
+        }
+    }
+
+    /// Insert ` (suffix)` before the file extension.
+    private func suffixedFilename(_ filename: String, suffix: String) -> String {
+        let stem = (filename as NSString).deletingPathExtension
+        let pathExtension = (filename as NSString).pathExtension
+        return pathExtension.isEmpty ? "\(stem) (\(suffix))" : "\(stem) (\(suffix)).\(pathExtension)"
+    }
+
     // MARK: - Diffing
 
     private struct DiffResult {
@@ -483,8 +571,14 @@ public actor SyncEngine {
     }
 
     private func diffItems(existing: [LocalItem], incoming: [LocalItem]) -> DiffResult {
-        let existingByID = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
-        let incomingByID = Dictionary(incoming.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+        let existingByID = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { _, new in
+            logger.warning("Dropping duplicate existing item id \(new.id, privacy: .private)")
+            return new
+        })
+        let incomingByID = Dictionary(incoming.map { ($0.id, $0) }, uniquingKeysWith: { _, new in
+            logger.warning("Dropping duplicate incoming item id \(new.id, privacy: .private)")
+            return new
+        })
 
         var added: [LocalItem] = []
         var modified: [LocalItem] = []
@@ -497,8 +591,13 @@ public actor SyncEngine {
                 item.tagData = existing.tagData
 
                 if existing.contentVersion != item.contentVersion ||
-                   existing.fileSize != item.fileSize ||
-                   existing.filename != item.filename {
+                   existing.fileSize != item.fileSize {
+                    // Content changed: keep the placeholder reset so it re-downloads.
+                    modified.append(item)
+                } else if existing.filename != item.filename {
+                    // Only the display name changed. Keep any materialized copy.
+                    item.syncState = existing.syncState
+                    item.localPath = existing.localPath
                     modified.append(item)
                 }
             } else {
@@ -553,9 +652,14 @@ public actor SyncEngine {
 
     // MARK: - Cancellation
 
-    public func cancelSync(courseID: Int) {
-        activeTasks[courseID]?.cancel()
-        activeTasks[courseID] = nil
+    /// Cancel a course's in-flight sync and wait for it to finish, so callers can
+    /// safely delete that course's items afterwards.
+    public func cancelSync(courseID: Int) async {
+        if let task = activeTasks[courseID] {
+            task.cancel()
+            _ = try? await task.value
+            clearActiveTask(task, courseID: courseID)
+        }
         syncProgress[courseID]?.state = .stale
     }
 
@@ -565,19 +669,21 @@ public actor SyncEngine {
             syncProgress[id]?.state = .stale
         }
         activeTasks.removeAll()
+        for task in pinnedDownloadTasks {
+            task.cancel()
+        }
     }
 
-    /// Cancel and await every in-flight course task before callers replace or
-    /// delete the database those tasks may still be writing.
+    /// Cancel and await every in-flight course and pinned-download task before
+    /// callers replace or delete the database those tasks may still be writing.
     public func stopAllSyncs() async {
         isStopping = true
         let tasks = Array(activeTasks.values)
-        for task in tasks {
-            task.cancel()
-        }
-        for task in tasks {
-            _ = try? await task.value
-        }
+        let pinnedTasks = Array(pinnedDownloadTasks)
+        for task in tasks { task.cancel() }
+        for task in pinnedTasks { task.cancel() }
+        for task in tasks { _ = try? await task.value }
+        for task in pinnedTasks { _ = try? await task.value }
         for id in activeTasks.keys {
             syncProgress[id]?.state = .stale
         }

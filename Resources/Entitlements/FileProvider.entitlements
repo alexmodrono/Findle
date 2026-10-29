@@ -14,5 +14,12 @@
     <array>
         <string>$(AppIdentifierPrefix)$(FINDLE_BUNDLE_PREFIX)</string>
     </array>
+    <!-- Lets the extension read and write the user's personal files in
+         "Findle Personal Files" under Application Support, outside its sandbox
+         container. Permitted for non-Mac-App-Store builds. -->
+    <key>com.apple.security.temporary-exception.files.home-relative-path.read-write</key>
+    <array>
+        <string>/Library/Application Support/$(FINDLE_PERSONAL_FILES_FOLDER)/</string>
+    </array>
 </dict>
 </plist>

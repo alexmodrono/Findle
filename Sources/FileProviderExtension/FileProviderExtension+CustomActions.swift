@@ -33,7 +33,7 @@ extension FileProviderExtension: NSFileProviderCustomAction {
         }
 
         guard let site = try? db.fetchSite(id: siteID) else {
-            logger.error("Custom action failed: site not found for ID \(siteID, privacy: .public)")
+            logger.error("Custom action failed: site not found for ID \(siteID, privacy: .private)")
             completionHandler(NSFileProviderError(.serverUnreachable))
             progress.completedUnitCount = 1
             return progress
@@ -74,7 +74,7 @@ extension FileProviderExtension: NSFileProviderCustomAction {
             } else {
                 url = site.baseURL
             }
-            logger.info("Opening in Moodle: \(url.absoluteString, privacy: .public)")
+            logger.info("Opening in Moodle: \(url.absoluteString, privacy: .private)")
             NSWorkspace.shared.open(url)
             completionHandler(nil)
 
@@ -95,7 +95,7 @@ extension FileProviderExtension: NSFileProviderCustomAction {
             } else {
                 url = site.baseURL
             }
-            logger.info("Copying Moodle link: \(url.absoluteString, privacy: .public)")
+            logger.info("Copying Moodle link: \(url.absoluteString, privacy: .private)")
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             pasteboard.setString(url.absoluteString, forType: .string)
@@ -115,7 +115,7 @@ extension FileProviderExtension: NSFileProviderCustomAction {
             } else {
                 courseURL = site.baseURL
             }
-            logger.info("Opening course page: \(courseURL.absoluteString, privacy: .public)")
+            logger.info("Opening course page: \(courseURL.absoluteString, privacy: .private)")
             NSWorkspace.shared.open(courseURL)
             completionHandler(nil)
 
@@ -128,7 +128,7 @@ extension FileProviderExtension: NSFileProviderCustomAction {
                 signalChanges()
                 completionHandler(nil)
             } catch {
-                logger.error("Failed to pin items: \(error.localizedDescription, privacy: .public)")
+                logger.error("Failed to pin items: \(DiagnosticFailure(error).summary, privacy: .public)")
                 completionHandler(error)
             }
 
@@ -141,7 +141,7 @@ extension FileProviderExtension: NSFileProviderCustomAction {
                 signalChanges()
                 completionHandler(nil)
             } catch {
-                logger.error("Failed to unpin items: \(error.localizedDescription, privacy: .public)")
+                logger.error("Failed to unpin items: \(DiagnosticFailure(error).summary, privacy: .public)")
                 completionHandler(error)
             }
 
@@ -203,7 +203,7 @@ extension FileProviderExtension: NSFileProviderCustomAction {
                 try? await Task.sleep(for: .seconds(2))
                 DarwinNotification.post(notificationName)
             } catch {
-                log.warning("Sync Now: failed to launch app: \(error.localizedDescription, privacy: .public)")
+                log.warning("Sync Now: failed to launch app: \(DiagnosticFailure(error).summary, privacy: .public)")
             }
         }
     }

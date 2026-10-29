@@ -12,8 +12,8 @@ import SharedDomain
 enum TestDB {
     static let siteID = "TESTSITE"
 
-    static func make(seed: Bool = true) throws -> Database {
-        let path = NSTemporaryDirectory() + "findle-mcp-test-\(UUID().uuidString).db"
+    static func make(seed: Bool = true, path suppliedPath: String? = nil) throws -> Database {
+        let path = suppliedPath ?? NSTemporaryDirectory() + "findle-mcp-test-\(UUID().uuidString).db"
         let db = try Database(path: path)
         guard seed else { return db }
 
@@ -67,6 +67,7 @@ enum TestDB {
             MoodleQuizAttempt(id: 8001, quizID: 701, attemptNumber: 1, state: "finished", sumGrades: 9.0)
         ], siteID: siteID)
 
+        try db.setSeedComplete(true)
         return db
     }
 }

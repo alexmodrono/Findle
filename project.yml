@@ -6,11 +6,13 @@ options:
   xcodeVersion: "16.0"
   groupSortPosition: top
   generateEmptyDirectories: true
+  createIntermediateGroups: true
   minimumXcodeGenVersion: "2.38"
 
 settings:
   base:
     SWIFT_VERSION: "6.0"
+    FINDLE_SOURCE_REVISION: unknown
     MACOSX_DEPLOYMENT_TARGET: "15.0"
     ENABLE_HARDENED_RUNTIME: true
     CODE_SIGN_STYLE: Automatic
@@ -19,6 +21,7 @@ settings:
     FINDLE_BUNDLE_PREFIX: es.amodrono.findle
     APP_GROUP_IDENTIFIER: group.es.amodrono.findle
     FINDLE_APPCAST_URL: https://github.com/alexmodrono/Findle/releases/latest/download/appcast.xml
+    FINDLE_PERSONAL_FILES_FOLDER: "Findle Personal Files"
   configs:
     Nightly:
       FINDLE_BUNDLE_PREFIX: es.amodrono.findle.nightly
@@ -27,6 +30,9 @@ settings:
       # Leaving the release feed here would let a Nightly install "update"
       # itself into the production build. An empty feed disables Sparkle.
       FINDLE_APPCAST_URL: ""
+      # Nightly is a separate installation with its own database, so it gets its
+      # own personal files folder and never imports the release build's files.
+      FINDLE_PERSONAL_FILES_FOLDER: "Findle Nightly Personal Files"
 
 configs:
   Debug: debug
@@ -34,6 +40,16 @@ configs:
   Release: release
 
 schemes:
+  Findle-OnboardingPreview:
+    build:
+      targets:
+        FindleOnboardingPreview: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - OnboardingPreviewTests
   Findle:
     build:
       targets:
@@ -50,6 +66,7 @@ schemes:
         - PersistenceTests
         - SyncEngineTests
         - FindleMCPTests
+        - AppInterfaceTests
     profile:
       config: Release
     analyze:
@@ -78,6 +95,7 @@ schemes:
         - PersistenceTests
         - SyncEngineTests
         - FindleMCPTests
+        - AppInterfaceTests
     profile:
       config: Nightly
     analyze:
@@ -87,19 +105,95 @@ schemes:
 
 packages:
   Airlock:
-    url: https://github.com/alexmodrono/Airlock
-    from: 0.2.1
+    url: https://github.com/alexmodrono/Airlock.git
+    revision: b0b90268d7610aedf9fc27f40eb3e42ead3d5aad
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     from: 2.6.0
-  WhatsNewKit:
-    url: https://github.com/SvenTiigi/WhatsNewKit
-    from: 2.2.1
   MCP:
     url: https://github.com/modelcontextprotocol/swift-sdk
     from: 0.12.1
 
 targets:
+  # These targets share the actual setup views, but substitute sample-only
+  # AppState and FinderWindowObserver types. Do not add Sources/App wholesale:
+  # the production lifecycle, account storage, and File Provider stay excluded.
+  FindleOnboardingPreview:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/OnboardingPreview
+      - path: Sources/App/Onboarding
+      - path: Sources/App/Interface/NativeUI.swift
+      - path: Sources/App/Settings/CourseSelectionView.swift
+      - path: Resources/Assets.xcassets
+        buildPhase: resources
+    dependencies:
+      - target: SharedDomain
+      - target: FindleNetworking
+      - package: Airlock
+        product: Airlock
+    settings:
+      base:
+        PRODUCT_NAME: Findle Onboarding Preview
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.onboarding-preview
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Findle Onboarding Preview
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/OnboardingPreview.entitlements
+        ENABLE_APP_SANDBOX: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        LD_RUNPATH_SEARCH_PATHS:
+          - "@executable_path/../Frameworks"
+
+  OnboardingPreviewTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/OnboardingPreviewTests
+      - path: Sources/OnboardingPreview
+        excludes:
+          - OnboardingPreviewApp.swift
+      - path: Sources/App/Onboarding
+      - path: Sources/App/Interface/NativeUI.swift
+      - path: Sources/App/Settings/CourseSelectionView.swift
+    dependencies:
+      - target: SharedDomain
+      - target: FindleNetworking
+      - package: Airlock
+        product: Airlock
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.onboarding-preview-tests
+        GENERATE_INFOPLIST_FILE: YES
+
+  AppInterfaceTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/AppInterfaceTests
+      - path: Sources/App/Companion/FinderPanelPlacement.swift
+      - path: Sources/App/Companion/FinderFolderResolver.swift
+      - path: Sources/App/Companion/CompanionNode.swift
+      - path: Sources/App/Companion/CompanionPresentation.swift
+      - path: Sources/App/Companion/FinderWindowObserver.swift
+      - path: Sources/App/Companion/CompanionFrameAnimator.swift
+      - path: Sources/App/Companion/CompanionMotion.swift
+      - path: Sources/App/Companion/CompanionPanel.swift
+      - path: Sources/App/Services/LegacySettingsMigration.swift
+      - path: Sources/App/Services/DiagnosticsReportBuilder.swift
+      - path: Sources/App/Services/SyncReportPresentation.swift
+      - path: Sources/App/Services/SessionWorkCoordinator.swift
+      - path: Sources/App/Services/ProviderResetCoordinator.swift
+    dependencies:
+      - target: SharedDomain
+      - target: FindlePersistence
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.interface-tests
+
   Findle:
     type: application
     platform: macOS
@@ -138,7 +232,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle
         INFOPLIST_FILE: Resources/Info/App-Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/Findle.entitlements
-        ENABLE_APP_SANDBOX: YES
+        ENABLE_APP_SANDBOX: NO
         COMBINE_HIDPI_IMAGES: true
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         LD_RUNPATH_SEARCH_PATHS:
@@ -160,7 +254,11 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.shared-domain
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
-        CODE_SIGN_IDENTITY: "-"
+      configs:
+        Debug:
+          CODE_SIGN_IDENTITY: "-"
+        Nightly:
+          CODE_SIGN_IDENTITY: "-"
 
   FindleNetworking:
     type: framework
@@ -176,7 +274,11 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.networking
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
-        CODE_SIGN_IDENTITY: "-"
+      configs:
+        Debug:
+          CODE_SIGN_IDENTITY: "-"
+        Nightly:
+          CODE_SIGN_IDENTITY: "-"
 
   FindlePersistence:
     type: framework
@@ -192,7 +294,11 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.persistence
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
-        CODE_SIGN_IDENTITY: "-"
+      configs:
+        Debug:
+          CODE_SIGN_IDENTITY: "-"
+        Nightly:
+          CODE_SIGN_IDENTITY: "-"
 
   FindleSyncEngine:
     type: framework
@@ -210,7 +316,11 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.sync-engine
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
-        CODE_SIGN_IDENTITY: "-"
+      configs:
+        Debug:
+          CODE_SIGN_IDENTITY: "-"
+        Nightly:
+          CODE_SIGN_IDENTITY: "-"
 
   FindleFileProvider:
     type: app-extension
@@ -248,6 +358,7 @@ targets:
         CFBundleIcons:
           CFBundlePrimaryIcon:
             CFBundleSymbolName: graduationcap
+        FindlePersonalFilesFolderName: $(FINDLE_PERSONAL_FILES_FOLDER)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.fileprovider-nonui
           NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).FileProviderExtension"
@@ -279,7 +390,7 @@ targets:
     configFiles:
       Debug: Config/MCP.xcconfig
       Nightly: Config/MCP.xcconfig
-      Release: Config/MCP.xcconfig
+      Release: Config/Release-MCP.xcconfig
     sources:
       - path: Sources/FindleMCP
     dependencies:
@@ -348,6 +459,9 @@ targets:
       - path: Tests/FileProviderTests
       - path: Sources/FileProviderExtension/FileDownloader.swift
       - path: Sources/FileProviderExtension/FileProviderItem.swift
+      - path: Sources/FileProviderExtension/ItemEnumerator.swift
+      - path: Sources/FileProviderExtension/ProviderAccess.swift
+      - path: Sources/FileProviderExtension/DownloadPublication.swift
     dependencies:
       - target: SharedDomain
       - target: FindleNetworking

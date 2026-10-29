@@ -18,10 +18,11 @@ enum SyncAnchorCoding {
         NSFileProviderSyncAnchor(Data(String(value).utf8))
     }
 
-    static func decode(_ anchor: NSFileProviderSyncAnchor) -> Int64 {
+    static func decode(_ anchor: NSFileProviderSyncAnchor) throws -> Int64 {
         guard let s = String(data: anchor.rawValue, encoding: .utf8),
-              let value = Int64(s) else {
-            return 0
+              !s.isEmpty, s.utf8.allSatisfy({ (48...57).contains($0) }),
+              let value = Int64(s), value >= 0 else {
+            throw NSFileProviderError(.syncAnchorExpired)
         }
         return value
     }
@@ -46,9 +47,10 @@ final class ItemEnumerator: NSObject, NSFileProviderEnumerator {
         for observer: NSFileProviderEnumerationObserver,
         startingAt page: NSFileProviderPage
     ) {
-        logger.debug("Enumerating items for container: \(self.containerIdentifier.rawValue, privacy: .public)")
+        logger.debug("Enumerating items for container: \(self.containerIdentifier.rawValue, privacy: .private)")
 
         do {
+            guard let siteID, !siteID.isEmpty, try database.isSeedComplete() else { throw NSFileProviderError(.serverUnreachable) }
             let parentID: String?
             if containerIdentifier == .rootContainer {
                 parentID = nil
@@ -56,21 +58,18 @@ final class ItemEnumerator: NSObject, NSFileProviderEnumerator {
                 parentID = containerIdentifier.rawValue
             }
 
-            let items: [LocalItem]
-            if let siteID {
-                items = try database.fetchItems(parentID: parentID, siteID: siteID)
-            } else {
-                items = try database.fetchItems(parentID: parentID)
-            }
+            let items = try database.fetchItems(parentID: parentID, siteID: siteID)
             let providerItems = items.map { FileProviderItem(localItem: $0) }
 
-            logger.debug("Enumerated \(providerItems.count, privacy: .public) items for \(self.containerIdentifier.rawValue, privacy: .public)")
+            logger.debug("Enumerated \(providerItems.count, privacy: .public) items for \(self.containerIdentifier.rawValue, privacy: .private)")
 
             observer.didEnumerate(providerItems)
             observer.finishEnumerating(upTo: nil)
         } catch {
-            logger.error("Enumeration failed: \(error.localizedDescription, privacy: .public)")
-            observer.finishEnumeratingWithError(error)
+            DiagnosticJournal(databasePath: database.filePath)?.record(.init(
+                process: .fileProvider, operation: .enumeration, outcome: .failed, failure: DiagnosticFailure(error)))
+            logger.error("Enumeration failed: \(DiagnosticFailure(error).summary, privacy: .public)")
+            observer.finishEnumeratingWithError(ProviderAccess.enumerationError(error))
         }
     }
 
@@ -78,9 +77,10 @@ final class ItemEnumerator: NSObject, NSFileProviderEnumerator {
         for observer: NSFileProviderChangeObserver,
         from anchor: NSFileProviderSyncAnchor
     ) {
-        logger.debug("Enumerating changes for container: \(self.containerIdentifier.rawValue, privacy: .public)")
+        logger.debug("Enumerating changes for container: \(self.containerIdentifier.rawValue, privacy: .private)")
 
         do {
+            guard let siteID, !siteID.isEmpty, try database.isSeedComplete() else { throw NSFileProviderError(.serverUnreachable) }
             let parentID: String?
             if containerIdentifier == .rootContainer {
                 parentID = nil
@@ -88,33 +88,17 @@ final class ItemEnumerator: NSObject, NSFileProviderEnumerator {
                 parentID = containerIdentifier.rawValue
             }
 
-            let fromCounter = SyncAnchorCoding.decode(anchor)
+            let fromCounter = try SyncAnchorCoding.decode(anchor)
             let upperBound = try database.currentChangeCounter()
+            guard fromCounter <= upperBound else { throw NSFileProviderError(.syncAnchorExpired) }
             // Only items whose updated_at exceeds the incoming anchor; the
             // trigger on writes guarantees updated_at is strictly increasing.
-            let changedItems: [LocalItem]
-            if let siteID {
-                changedItems = try database.fetchItemsChangedSince(
-                    anchor: fromCounter,
-                    parentID: parentID,
-                    siteID: siteID,
-                    through: upperBound
-                )
-            } else {
-                changedItems = try database.fetchItemsChangedSince(anchor: fromCounter, parentID: parentID, through: upperBound)
-            }
+            let changedItems = try database.fetchItemsChangedSince(
+                anchor: fromCounter, parentID: parentID, siteID: siteID, through: upperBound)
             let providerItems = changedItems.map { FileProviderItem(localItem: $0) }
 
-            if !providerItems.isEmpty {
-                observer.didUpdate(providerItems)
-            }
-
-            let deletedIDs: [String]
-            if let siteID {
-                deletedIDs = try database.fetchPendingDeletionsSince(anchor: fromCounter, siteID: siteID, through: upperBound)
-            } else {
-                deletedIDs = try database.fetchPendingDeletionsSince(anchor: fromCounter, through: upperBound)
-            }
+            let deletedIDs = try database.fetchPendingDeletionsSince(anchor: fromCounter, siteID: siteID, through: upperBound)
+            if !providerItems.isEmpty { observer.didUpdate(providerItems) }
             if !deletedIDs.isEmpty {
                 let identifiers = deletedIDs.map { NSFileProviderItemIdentifier($0) }
                 observer.didDeleteItems(withIdentifiers: identifiers)
@@ -122,14 +106,22 @@ final class ItemEnumerator: NSObject, NSFileProviderEnumerator {
 
             observer.finishEnumeratingChanges(upTo: SyncAnchorCoding.encode(upperBound), moreComing: false)
         } catch {
-            logger.error("Change enumeration failed: \(error.localizedDescription, privacy: .public)")
-            observer.finishEnumeratingWithError(error)
+            DiagnosticJournal(databasePath: database.filePath)?.record(.init(
+                process: .fileProvider, operation: .enumeration, outcome: .failed, failure: DiagnosticFailure(error)))
+            logger.error("Change enumeration failed: \(DiagnosticFailure(error).summary, privacy: .public)")
+            observer.finishEnumeratingWithError(ProviderAccess.enumerationError(error))
         }
     }
 
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
-        let counter = (try? database.currentChangeCounter()) ?? 0
-        completionHandler(SyncAnchorCoding.encode(counter))
+        do {
+            guard siteID?.isEmpty == false, try database.isSeedComplete() else { throw NSFileProviderError(.serverUnreachable) }
+            completionHandler(SyncAnchorCoding.encode(try database.currentChangeCounter()))
+        } catch {
+            DiagnosticJournal(databasePath: database.filePath)?.record(.init(
+                process: .fileProvider, operation: .enumeration, outcome: .failed, failure: DiagnosticFailure(error)))
+            completionHandler(nil)
+        }
     }
 }
 
@@ -153,13 +145,8 @@ final class WorkingSetEnumerator: NSObject, NSFileProviderEnumerator {
         logger.debug("Enumerating working set")
 
         do {
-            let items: [LocalItem]
-            if let siteID {
-                items = try database.fetchAllItems(siteID: siteID)
-            } else {
-                // Fall back to root items if siteID unknown
-                items = try database.fetchItems(parentID: nil)
-            }
+            guard let siteID, !siteID.isEmpty, try database.isSeedComplete() else { throw NSFileProviderError(.serverUnreachable) }
+            let items = try database.fetchAllItems(siteID: siteID)
 
             let providerItems = items.map { FileProviderItem(localItem: $0) }
             logger.debug("Working set: \(providerItems.count, privacy: .public) items")
@@ -167,8 +154,10 @@ final class WorkingSetEnumerator: NSObject, NSFileProviderEnumerator {
             observer.didEnumerate(providerItems)
             observer.finishEnumerating(upTo: nil)
         } catch {
-            logger.error("Working set enumeration failed: \(error.localizedDescription, privacy: .public)")
-            observer.finishEnumeratingWithError(error)
+            DiagnosticJournal(databasePath: database.filePath)?.record(.init(
+                process: .fileProvider, operation: .enumeration, outcome: .failed, failure: DiagnosticFailure(error)))
+            logger.error("Working set enumeration failed: \(DiagnosticFailure(error).summary, privacy: .public)")
+            observer.finishEnumeratingWithError(ProviderAccess.enumerationError(error))
         }
     }
 
@@ -177,27 +166,16 @@ final class WorkingSetEnumerator: NSObject, NSFileProviderEnumerator {
         from anchor: NSFileProviderSyncAnchor
     ) {
         do {
-            let fromCounter = SyncAnchorCoding.decode(anchor)
+            guard let siteID, !siteID.isEmpty, try database.isSeedComplete() else { throw NSFileProviderError(.serverUnreachable) }
+            let fromCounter = try SyncAnchorCoding.decode(anchor)
             let upperBound = try database.currentChangeCounter()
-            let changedItems: [LocalItem]
-            if let siteID {
-                changedItems = try database.fetchItemsChangedSince(anchor: fromCounter, siteID: siteID, through: upperBound)
-            } else {
-                changedItems = try database.fetchItemsChangedSince(anchor: fromCounter, parentID: nil, through: upperBound)
-            }
+            guard fromCounter <= upperBound else { throw NSFileProviderError(.syncAnchorExpired) }
+            let changedItems = try database.fetchItemsChangedSince(anchor: fromCounter, siteID: siteID, through: upperBound)
 
             let providerItems = changedItems.map { FileProviderItem(localItem: $0) }
 
-            if !providerItems.isEmpty {
-                observer.didUpdate(providerItems)
-            }
-
-            let deletedIDs: [String]
-            if let siteID {
-                deletedIDs = try database.fetchPendingDeletionsSince(anchor: fromCounter, siteID: siteID, through: upperBound)
-            } else {
-                deletedIDs = try database.fetchPendingDeletionsSince(anchor: fromCounter, through: upperBound)
-            }
+            let deletedIDs = try database.fetchPendingDeletionsSince(anchor: fromCounter, siteID: siteID, through: upperBound)
+            if !providerItems.isEmpty { observer.didUpdate(providerItems) }
             if !deletedIDs.isEmpty {
                 let identifiers = deletedIDs.map { NSFileProviderItemIdentifier($0) }
                 observer.didDeleteItems(withIdentifiers: identifiers)
@@ -205,12 +183,20 @@ final class WorkingSetEnumerator: NSObject, NSFileProviderEnumerator {
 
             observer.finishEnumeratingChanges(upTo: SyncAnchorCoding.encode(upperBound), moreComing: false)
         } catch {
-            observer.finishEnumeratingWithError(error)
+            DiagnosticJournal(databasePath: database.filePath)?.record(.init(
+                process: .fileProvider, operation: .enumeration, outcome: .failed, failure: DiagnosticFailure(error)))
+            observer.finishEnumeratingWithError(ProviderAccess.enumerationError(error))
         }
     }
 
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
-        let counter = (try? database.currentChangeCounter()) ?? 0
-        completionHandler(SyncAnchorCoding.encode(counter))
+        do {
+            guard siteID?.isEmpty == false, try database.isSeedComplete() else { throw NSFileProviderError(.serverUnreachable) }
+            completionHandler(SyncAnchorCoding.encode(try database.currentChangeCounter()))
+        } catch {
+            DiagnosticJournal(databasePath: database.filePath)?.record(.init(
+                process: .fileProvider, operation: .enumeration, outcome: .failed, failure: DiagnosticFailure(error)))
+            completionHandler(nil)
+        }
     }
 }

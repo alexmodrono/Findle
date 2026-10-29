@@ -4,6 +4,7 @@
 // You may obtain a copy of the License in the LICENSE file at the root of this repository.
 
 import Foundation
+import OSLog
 
 /// Token endpoint response.
 struct TokenResponse: Decodable {
@@ -11,6 +12,45 @@ struct TokenResponse: Decodable {
     let privatetoken: String?
     let error: String?
     let errorcode: String?
+    let message: String?
+}
+
+/// Decodes an array element by element, dropping elements that fail to decode
+/// instead of failing the whole array. Consumers must inspect discardedCount
+/// before treating the decoded elements as a complete remote snapshot.
+struct LossyArray<Element: Decodable>: Decodable {
+    private static var logger: Logger {
+        Logger(subsystem: "es.amodrono.findle.networking", category: "MoodleResponses")
+    }
+
+    let elements: [Element]
+    let discardedCount: Int
+
+    init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        var elements: [Element] = []
+        var discardedCount = 0
+        while !container.isAtEnd {
+            // FailableDecodable always succeeds, so the container advances past bad entries.
+            let wrapper = try container.decode(FailableDecodable<Element>.self)
+            if let element = wrapper.base {
+                elements.append(element)
+            } else {
+                discardedCount += 1
+                Self.logger.error("Skipped a \(String(describing: Element.self), privacy: .public) entry that failed to decode")
+            }
+        }
+        self.elements = elements
+        self.discardedCount = discardedCount
+    }
+
+    private struct FailableDecodable<Base: Decodable>: Decodable {
+        let base: Base?
+
+        init(from decoder: Decoder) throws {
+            base = try? Base(from: decoder)
+        }
+    }
 }
 
 /// Site info response from core_webservice_get_site_info.
@@ -51,27 +91,31 @@ struct OverviewFileResponse: Decodable {
 /// Section response from core_course_get_contents.
 struct SectionResponse: Decodable {
     let id: Int
-    let name: String
+    /// Moodle can return a null name for unnamed sections.
+    let name: String?
     let summary: String?
     let section: Int
     let visible: Int?
-    let modules: [ModuleResponse]
+    let modules: LossyArray<ModuleResponse>?
 }
 
 /// Module response within a section.
 struct ModuleResponse: Decodable {
     let id: Int
-    let name: String
-    let modname: String
+    let name: String?
+    /// Module type (e.g. "resource", "url"). A missing type makes the course snapshot incomplete.
+    let modname: String?
     let modicon: String?
     let visible: Int?
-    let contents: [ContentResponse]?
+    let contents: LossyArray<ContentResponse>?
 }
 
 /// File content response within a module.
 struct ContentResponse: Decodable {
-    let type: String
-    let filename: String
+    /// Content kind ("file", "url", "content"). Defaults to "file" when Moodle omits it.
+    let type: String?
+    /// Display name. A missing name makes the course snapshot incomplete.
+    let filename: String?
     let filepath: String?
     let filesize: Int64?
     let fileurl: String?
@@ -80,14 +124,6 @@ struct ContentResponse: Decodable {
     let mimetype: String?
     let author: String?
     let sortorder: Int?
-}
-
-/// Moodle error response structure.
-struct MoodleErrorResponse: Decodable {
-    let errorcode: String?
-    let message: String?
-    let exception: String?
-    let debuginfo: String?
 }
 
 // MARK: - Coursework Tracking Responses

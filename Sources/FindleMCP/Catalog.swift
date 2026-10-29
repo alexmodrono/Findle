@@ -21,11 +21,21 @@ struct Catalog {
     let indexStore: IndexStore?
     /// On-device embedder for semantic search. Optional like `indexStore`.
     let embedder: Embedder?
+    let storageRoot: URL?
+    let applicationURL: URL?
+
+    init(database: Database, indexStore: IndexStore?, embedder: Embedder?, storageRoot: URL? = nil, applicationURL: URL? = nil) {
+        self.database = database
+        self.indexStore = indexStore
+        self.embedder = embedder
+        self.storageRoot = storageRoot
+        self.applicationURL = applicationURL
+    }
 
     /// The site the user is signed into. Derived from the first account so the
     /// server keeps working if Findle finishes signing in after launch.
     var siteID: String? {
-        (try? database.fetchAccounts())?.first?.siteID
+        (try? database.fetchAccounts())?.first(where: { $0.state.isConnected })?.siteID
     }
 
     // MARK: - Tools
@@ -208,7 +218,7 @@ struct Catalog {
 
     func getItem(id: String) -> String {
         do {
-            guard let item = try database.fetchItem(id: id) else {
+            guard let item = try database.fetchItem(id: id), item.siteID == siteID else {
                 return Self.errorJSON(message: "No item with id \(id)")
             }
             return Self.encode(ItemOut(item))
@@ -236,7 +246,7 @@ struct Catalog {
                         options: [.caseInsensitive, .diacriticInsensitive]
                     ) != nil
                 }
-                .prefix(max(1, limit))
+                .prefix(max(1, min(limit, 100)))
                 .map(ItemOut.init)
             return Self.encode(Array(matches))
         } catch {
@@ -246,7 +256,7 @@ struct Catalog {
 
     func readItem(id: String, maxChars: Int, offset: Int) -> String {
         do {
-            guard let item = try database.fetchItem(id: id) else {
+            guard let item = try database.fetchItem(id: id), item.siteID == siteID else {
                 return Self.errorJSON(message: "No item with id \(id)")
             }
             if item.isDirectory {
@@ -287,7 +297,9 @@ struct Catalog {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return Self.errorJSON(message: "Empty query") }
 
-        let hits = indexStore.search(query: trimmed, courseID: courseID, limit: limit)
+        let hits = indexStore.search(query: trimmed, courseID: courseID, limit: limit).filter {
+            isCurrentIndexEntry(itemID: $0.itemID, courseID: $0.courseID, contentVersion: $0.contentVersion)
+        }
         let out = hits.map {
             SearchHit(
                 id: $0.itemID,
@@ -319,7 +331,9 @@ struct Catalog {
             return Self.errorJSON(message: "Could not embed the query.")
         }
 
-        let candidates = indexStore.fetchEmbeddings(language: embedded.language.rawValue, courseID: courseID)
+        let candidates = indexStore.fetchEmbeddings(language: embedded.language.rawValue, courseID: courseID).filter {
+            isCurrentIndexEntry(itemID: $0.itemID, courseID: $0.courseID, contentVersion: $0.contentVersion)
+        }
         if candidates.isEmpty {
             return Self.encode(SemanticResult(matches: [], note: "Nothing embedded for this language yet. Run index_course on the relevant course first."))
         }
@@ -327,7 +341,7 @@ struct Catalog {
         let ranked = candidates
             .map { (hit: $0, score: Embedder.cosineSimilarity(embedded.vector, $0.vector)) }
             .sorted { $0.score > $1.score }
-            .prefix(max(1, k))
+            .prefix(max(1, min(k, 50)))
             .map { scored in
                 SemanticHit(
                     id: scored.hit.itemID,
@@ -396,16 +410,18 @@ struct Catalog {
     /// current content version, otherwise materialized (File Provider download),
     /// extracted, and cached. Returns a user-facing message on failure.
     private func fullText(for item: LocalItem) -> TextResult {
+        let scoped = storageRoot?.startAccessingSecurityScopedResource() ?? false
+        defer { if scoped { storageRoot?.stopAccessingSecurityScopedResource() } }
         let version = item.contentVersion ?? ""
-        if let cached = indexStore?.cachedText(itemID: item.id, contentVersion: version) {
+        if !version.isEmpty, let cached = indexStore?.cachedText(itemID: item.id, contentVersion: version) {
             return .success(cached)
         }
 
         guard let fileURL = (try? resolveFileURL(for: item)) ?? nil else {
-            return .failure("Could not locate the File Provider folder for this item.")
+            return .failure("The File Provider location is unavailable. Reconnect the assistant from this Findle installation.")
         }
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            return .failure("File not on disk at \(fileURL.path)")
+            return .failure("The file is not available locally. Open it in Finder, then retry.")
         }
         // Reading the file triggers File Provider materialization if it isn't
         // local yet — the extension holds the token.
@@ -443,7 +459,10 @@ struct Catalog {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         // -g: hand the URL to the app without bringing it to the foreground.
-        process.arguments = ["-g", urlString]
+        guard let applicationURL else {
+            return Self.errorJSON(message: "Run the helper bundled inside Findle to request a sync.")
+        }
+        process.arguments = ["-g", "-a", applicationURL.path, urlString]
         do {
             try process.run()
             return Self.encode(TriggerSyncOut(
@@ -458,10 +477,10 @@ struct Catalog {
 
     func getMoodleURL(id: String) -> String {
         do {
-            guard let item = try database.fetchItem(id: id) else {
+            guard let item = try database.fetchItem(id: id), item.siteID == siteID else {
                 return Self.errorJSON(message: "No item with id \(id)")
             }
-            guard let url = item.remoteURL?.absoluteString else {
+            guard let url = Self.publicMoodleURL(item.remoteURL) else {
                 return Self.errorJSON(message: "Item \(id) has no Moodle URL")
             }
             return Self.encode(["id": id, "moodleURL": url])
@@ -568,7 +587,7 @@ struct Catalog {
     /// older course folder lacks the "[CODE]" suffix the DB now stores), so each
     /// component is matched exact → case/diacritic-insensitive → prefix.
     private func resolveFileURL(for item: LocalItem) throws -> URL? {
-        guard let root = Self.cloudStorageRoot() else { return nil }
+        guard let root = storageRoot else { return nil }
 
         var names: [String] = []
         var current: LocalItem? = item
@@ -586,13 +605,6 @@ struct Catalog {
             url = match
         }
         return url
-    }
-
-    private static func cloudStorageRoot() -> URL? {
-        let base = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
-            .appendingPathComponent("Library/CloudStorage", isDirectory: true)
-        let entries = (try? FileManager.default.contentsOfDirectory(at: base, includingPropertiesForKeys: nil)) ?? []
-        return entries.first { $0.lastPathComponent.hasPrefix("Findle") }
     }
 
     private func itemPath(for item: LocalItem) -> String {
@@ -880,7 +892,7 @@ struct Catalog {
             fileSize = item.fileSize
             syncState = item.syncState.rawValue
             downloaded = item.syncState == .materialized
-            moodleURL = item.remoteURL?.absoluteString
+            moodleURL = Catalog.publicMoodleURL(item.remoteURL)
         }
     }
 
@@ -922,8 +934,32 @@ struct Catalog {
             ?? #"{"error":"Failed to encode response"}"#
     }
 
-    private static func errorJSON(_ error: Error) -> String {
-        errorJSON(message: error.localizedDescription)
+    static func errorJSON(_ error: Error) -> String {
+        // SQLite/Cocoa descriptions can contain paths, URLs or remote text.
+        // Only helper-owned messages are allowed across the assistant boundary.
+        let message = (error as? HelperFailure)?.errorDescription ?? "The requested data is unavailable. Retry after Findle finishes syncing."
+        return errorJSON(message: message)
+    }
+
+    private func isCurrentIndexEntry(itemID: String, courseID: Int, contentVersion: String?) -> Bool {
+        guard let version = contentVersion, !version.isEmpty,
+              let item = try? database.fetchItem(id: itemID),
+              item.siteID == siteID, item.courseID == courseID, !item.isDirectory else { return false }
+        return item.contentVersion == version
+    }
+
+    private static func publicMoodleURL(_ url: URL?) -> String? {
+        guard let url, var parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              ["http", "https"].contains(parts.scheme?.lowercased() ?? "") else { return nil }
+        parts.user = nil
+        parts.password = nil
+        parts.fragment = nil
+        // Keep only navigational query fields; arbitrary token names must not
+        // accidentally turn an item response into a credential export.
+        let allowed: Set<String> = ["id", "course", "section", "page", "redirect", "forcedownload"]
+        parts.queryItems = parts.queryItems?.filter { allowed.contains($0.name.lowercased()) && $0.value?.allSatisfy(\.isNumber) == true }
+        if parts.queryItems?.isEmpty == true { parts.queryItems = nil }
+        return parts.string
     }
 
     private static func errorJSON(message: String) -> String {

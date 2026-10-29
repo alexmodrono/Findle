@@ -129,4 +129,36 @@ final class CatalogTests: XCTestCase {
         let object = parseJSON(try makeCatalog(seed: false).listCourses()) as! [String: Any]
         XCTAssertNotNil(object["error"])
     }
+
+    func testIndexSearchFiltersDeletedChangedAndOtherSiteItems() throws {
+        let db = try TestDB.make()
+        var item = try XCTUnwrap(db.fetchItem(id: "f1"))
+        item.contentVersion = "current"
+        try db.saveItems([item])
+        let index = try IndexStore(path: ":memory:")
+        for (id, version) in [("f1", "current"), ("f2", "stale"), ("deleted", "v1")] {
+            index.upsert(itemID: id, courseID: 100, filename: "x", content: "private keyword", contentVersion: version)
+        }
+        let catalog = Catalog(database: db, indexStore: index, embedder: nil)
+        let result = try XCTUnwrap(parseJSON(catalog.searchText(query: "keyword", courseID: nil, limit: 10)) as? [String: Any])
+        let hits = try XCTUnwrap(result["matches"] as? [[String: Any]])
+        XCTAssertEqual(hits.compactMap { $0["id"] as? String }, ["f1"])
+        item.contentVersion = "new-version"
+        try db.saveItems([item])
+        let changed = try XCTUnwrap(parseJSON(catalog.searchText(query: "keyword", courseID: nil, limit: 10)) as? [String: Any])
+        XCTAssertEqual((changed["matches"] as? [[String: Any]])?.count, 0)
+    }
+
+    func testMoodleURLsDoNotExposeCredentials() throws {
+        let db = try TestDB.make()
+        var item = try XCTUnwrap(db.fetchItem(id: "f1"))
+        item.remoteURL = URL(string: "https://user:password@moodle.test/file?id=7&token=secret&wstoken=other&custom_secret=value#secret")
+        try db.saveItems([item])
+        let catalog = Catalog(database: db, indexStore: nil, embedder: nil)
+        for response in [catalog.getItem(id: "f1"), catalog.getMoodleURL(id: "f1")] {
+            let result = try XCTUnwrap(parseJSON(response) as? [String: Any])
+            XCTAssertEqual(result["moodleURL"] as? String, "https://moodle.test/file?id=7")
+        }
+        XCTAssertFalse(Catalog.errorJSON(NSError(domain: "Secret", code: 1, userInfo: [NSLocalizedDescriptionKey: "token=private"])).contains("private"))
+    }
 }

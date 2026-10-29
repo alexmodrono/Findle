@@ -6,6 +6,7 @@
 import Foundation
 import MCP
 import FindlePersistence
+import SharedDomain
 
 /// Findle's MCP server: a local, stdio, read-only bridge that lets an agent
 /// query the user's synced Moodle coursework without manual uploads.
@@ -16,21 +17,22 @@ import FindlePersistence
 @main
 struct FindleMCP {
     static func main() async {
-        guard let dbPath = resolveDatabasePath() else {
-            failStartup("no complete database found. Open Findle and sign in first.")
-        }
-
-        let database: Database
+        let configuration: HelperConfiguration
         do {
-            database = try Database(path: dbPath, readOnly: true)
+            configuration = try HelperConfiguration()
         } catch {
-            failStartup("could not open database: \(error.localizedDescription)")
+            failStartup((error as? HelperFailure)?.errorDescription ?? "Invalid helper configuration.")
         }
-
-        // The full-text index and embedder are best-effort; the catalog tools
-        // work without them (only text/semantic search need them).
-        let indexStore = try? IndexStore()
-        let catalog = Catalog(database: database, indexStore: indexStore, embedder: Embedder())
+        let initialSession = HelperSession(configuration: configuration)
+        let storageRoot: URL?
+        let account = try? initialSession.connectedAccount()
+        if let account {
+            storageRoot = await HelperFileLocation.resolve(channel: configuration.channel, siteID: account.siteID)
+        } else {
+            storageRoot = nil
+        }
+        let session = HelperSession(configuration: configuration, storageRoot: storageRoot, storageAccount: account,
+                                    storageSourceIdentity: initialSession.sourceIdentity, embedder: Embedder())
 
         let server = Server(
             name: "findle",
@@ -45,19 +47,19 @@ struct FindleMCP {
         await server.withMethodHandler(CallTool.self) { params in
             let args = params.arguments
             let reader = ArgReader(string: { stringArg(args, $0) }, int: { intArg(args, $0) })
-            let result = catalog.callTool(named: params.name, args: reader)
+            let result = session.callTool(named: params.name, args: reader)
             return .init(content: [.text(text: result.text, annotations: nil, _meta: nil)], isError: result.isError)
         }
 
         // HTTP (Streamable HTTP + bearer token) when requested, otherwise stdio.
-        if let http = HTTPOptions.fromArguments() {
-            runHTTP(http, catalog: catalog)
+        if let http = configuration.http {
+            runHTTP(http, session: session)
         } else {
             do {
                 try await server.start(transport: StdioTransport())
                 await server.waitUntilCompleted()
             } catch {
-                failStartup("server error: \(error.localizedDescription)")
+                failStartup("Server transport failed. Reconnect the assistant.")
             }
         }
     }
@@ -65,14 +67,17 @@ struct FindleMCP {
     /// Serve the tools over HTTP (for tunnelling to remote clients like ChatGPT)
     /// and block forever. Bearer-token gated; `trigger_sync` is intentionally not
     /// exposed remotely (it's a local side effect).
-    static func runHTTP(_ options: HTTPOptions, catalog: Catalog) -> Never {
+    static func runHTTP(_ options: HTTPOptions, session: HelperSession) -> Never {
         let httpTools = tools.filter { !httpExcludedTools.contains($0.name) }
         let server = HTTPServer(port: options.port, token: options.token) { body in
-            processHTTPBody(body, catalog: catalog, tools: httpTools)
+            processHTTPBody(body, session: session, tools: httpTools)
         }
         do {
-            try server.start()
-            FileHandle.standardError.write(Data("findle-mcp: HTTP server listening on 127.0.0.1:\(options.port)\n".utf8))
+            try server.start(onReady: { port in
+                FileHandle.standardError.write(Data("findle-mcp: HTTP server listening on 127.0.0.1:\(port)\n".utf8))
+            }, onFailure: { error in
+                failStartup("HTTP listener failed: \(error.localizedDescription)")
+            })
         } catch {
             failStartup("could not start HTTP server: \(error.localizedDescription)")
         }
@@ -342,17 +347,17 @@ struct FindleMCP {
     /// Parse a request body (single message or batch), dispatch each, and
     /// serialize the response(s). Returns nil when there's nothing to send back
     /// (e.g. only notifications).
-    static func processHTTPBody(_ body: Data, catalog: Catalog, tools: [Tool]) -> Data? {
+    static func processHTTPBody(_ body: Data, session: HelperSession, tools: [Tool]) -> Data? {
         guard let json = try? JSONSerialization.jsonObject(with: body) else {
             let parseError: [String: Any] = ["jsonrpc": "2.0", "id": NSNull(), "error": ["code": -32700, "message": "Parse error"]]
             return try? JSONSerialization.data(withJSONObject: parseError)
         }
         if let batch = json as? [[String: Any]] {
-            let responses = batch.compactMap { handleRPC($0, catalog: catalog, tools: tools) }
+            let responses = batch.compactMap { handleRPC($0, session: session, tools: tools) }
             guard !responses.isEmpty else { return nil }
             return try? JSONSerialization.data(withJSONObject: responses)
         }
-        if let single = json as? [String: Any], let response = handleRPC(single, catalog: catalog, tools: tools) {
+        if let single = json as? [String: Any], let response = handleRPC(single, session: session, tools: tools) {
             return try? JSONSerialization.data(withJSONObject: response)
         }
         return nil
@@ -360,7 +365,7 @@ struct FindleMCP {
 
     /// Process a single JSON-RPC message for the HTTP transport. Returns the
     /// response object, or nil for notifications (which get no response).
-    static func handleRPC(_ message: [String: Any], catalog: Catalog, tools: [Tool]) -> [String: Any]? {
+    static func handleRPC(_ message: [String: Any], session: HelperSession, tools: [Tool]) -> [String: Any]? {
         let method = message["method"] as? String
         let id = message["id"]
 
@@ -395,12 +400,12 @@ struct FindleMCP {
                 string: { arguments[$0] as? String },
                 int: { key in
                     if let i = arguments[key] as? Int { return i }
-                    if let d = arguments[key] as? Double { return Int(d) }
+                    if let d = arguments[key] as? Double { return Int(exactly: d) }
                     if let s = arguments[key] as? String { return Int(s) }
                     return nil
                 }
             )
-            let result = catalog.callTool(named: name, args: reader)
+            let result = session.callTool(named: name, args: reader)
             return ok(["content": [["type": "text", "text": result.text]], "isError": result.isError])
         default:
             return fail(-32601, "Method not found: \(method ?? "nil")")
@@ -410,65 +415,6 @@ struct FindleMCP {
 
 // MARK: - Helpers
 
-/// HTTP serving options parsed from `--http <port> --token <secret>` (token may
-/// also come from `FINDLE_MCP_TOKEN`). Refuses to run unauthenticated.
-struct HTTPOptions {
-    let port: UInt16
-    let token: String
-
-    static func fromArguments() -> HTTPOptions? {
-        let args = CommandLine.arguments
-        guard let index = args.firstIndex(of: "--http"), index + 1 < args.count else { return nil }
-
-        var portString = args[index + 1]
-        if portString.hasPrefix(":") { portString.removeFirst() }
-        guard let port = UInt16(portString) else {
-            failStartup("--http needs a port, e.g. --http 8080")
-        }
-
-        let flagToken = args.firstIndex(of: "--token").flatMap { i in i + 1 < args.count ? args[i + 1] : nil }
-        let token = flagToken ?? ProcessInfo.processInfo.environment["FINDLE_MCP_TOKEN"]
-        guard let token, !token.isEmpty else {
-            failStartup("HTTP mode requires --token <secret> (or FINDLE_MCP_TOKEN) — refusing to serve unauthenticated")
-        }
-        return HTTPOptions(port: port, token: token)
-    }
-}
-
-/// Resolve the database path: `FINDLE_DB_PATH` env, then a `--db-path` argument,
-/// then the default shared App Group container location.
-private func resolveDatabasePath() -> String? {
-    let env = ProcessInfo.processInfo.environment
-    let args = CommandLine.arguments
-    let configuredPath = env["FINDLE_DB_PATH"].flatMap { $0.isEmpty ? nil : $0 }
-        ?? args.firstIndex(of: "--db-path").flatMap { index in
-            index + 1 < args.count ? args[index + 1] : nil
-        }
-    let defaultPath = Database.sharedContainerDatabasePath
-    let candidates = [configuredPath, defaultPath].compactMap { $0 }
-
-    for path in candidates where isUsableDatabase(at: path) {
-        return path
-    }
-
-    return nil
-}
-
-private func isUsableDatabase(at path: String) -> Bool {
-    guard FileManager.default.fileExists(atPath: path),
-          let database = try? Database(path: path, readOnly: true),
-          let accounts = try? database.fetchAccounts(),
-          accounts.contains(where: { $0.state.isConnected }) else {
-        return false
-    }
-
-    // State-directory databases are explicitly marked complete by the app.
-    // If an update/reset left the configured path stale or half-seeded, fall
-    // back to the bootstrap App Group snapshot instead of feeding an agent an
-    // empty or partial catalog.
-    return (try? database.isSeedComplete()) == true
-}
-
 private func stringArg(_ args: [String: Value]?, _ key: String) -> String? {
     args?[key]?.stringValue
 }
@@ -476,7 +422,7 @@ private func stringArg(_ args: [String: Value]?, _ key: String) -> String? {
 private func intArg(_ args: [String: Value]?, _ key: String) -> Int? {
     guard let value = args?[key] else { return nil }
     if let int = value.intValue { return int }
-    if let double = value.doubleValue { return Int(double) }
+    if let double = value.doubleValue { return Int(exactly: double) }
     if let string = value.stringValue { return Int(string) }
     return nil
 }

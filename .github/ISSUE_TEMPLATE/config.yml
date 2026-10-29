@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/alexmodrono/Findle/security/advisories/new
+    about: Keep credentials and exploit details out of public issues.

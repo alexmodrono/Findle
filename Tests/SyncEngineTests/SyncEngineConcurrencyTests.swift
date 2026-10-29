@@ -50,7 +50,7 @@ final class SyncEngineConcurrencyTests: XCTestCase {
         let engine = SyncEngine(provider: provider, database: database)
         let synced = SyncedCourseRecorder()
 
-        try await engine.syncAllCourses(
+        await engine.syncAllCourses(
             site: site,
             token: token,
             courses: courses,
@@ -66,7 +66,7 @@ final class SyncEngineConcurrencyTests: XCTestCase {
         let provider = RecordingLMSProvider(fetchDelay: .milliseconds(50))
         let engine = SyncEngine(provider: provider, database: database)
 
-        try await engine.syncAllCourses(
+        await engine.syncAllCourses(
             site: site,
             token: token,
             courses: courses,
@@ -85,7 +85,7 @@ final class SyncEngineConcurrencyTests: XCTestCase {
         let provider = RecordingLMSProvider(fetchDelay: .milliseconds(20))
         let engine = SyncEngine(provider: provider, database: database)
 
-        try await engine.syncAllCourses(
+        await engine.syncAllCourses(
             site: site,
             token: token,
             courses: courses,
@@ -96,6 +96,24 @@ final class SyncEngineConcurrencyTests: XCTestCase {
         XCTAssertEqual(provider.completedFetchCount, courses.count)
     }
 
+    func testFailedPublicationDoesNotNotifyFinderOrAdvanceCursor() async throws {
+        let courses = makeCourses(1)
+        let provider = RecordingLMSProvider()
+        let engine = SyncEngine(provider: provider, database: database)
+        let synced = SyncedCourseRecorder()
+        try database.execute("CREATE TRIGGER reject_outline BEFORE INSERT ON course_outlines BEGIN SELECT RAISE(ABORT, 'injected failure'); END")
+        await engine.syncAllCourses(site: site, token: token, courses: courses, onCourseSynced: { synced.record($0) })
+        XCTAssertTrue(synced.ids.isEmpty)
+        XCTAssertTrue(try database.fetchItems(courseID: 1, siteID: site.id).isEmpty)
+        XCTAssertNil(try database.fetchSyncCursor(courseID: 1, siteID: site.id))
+        XCTAssertNil(try database.fetchCourseOutline(courseID: 1, siteID: site.id))
+        try database.execute("DROP TRIGGER reject_outline")
+        await engine.syncAllCourses(site: site, token: token, courses: courses, onCourseSynced: { synced.record($0) })
+        XCTAssertEqual(synced.ids, [1])
+        XCTAssertNotNil(try database.fetchSyncCursor(courseID: 1, siteID: site.id))
+        XCTAssertNotNil(try database.fetchCourseOutline(courseID: 1, siteID: site.id))
+    }
+
     func testFailedCourseDoesNotReportCompletion() async throws {
         let courses = makeCourses(4)
         // Course 3 fails with a non-auth error; the rest must still complete.
@@ -103,7 +121,7 @@ final class SyncEngineConcurrencyTests: XCTestCase {
         let engine = SyncEngine(provider: provider, database: database)
         let synced = SyncedCourseRecorder()
 
-        try await engine.syncAllCourses(
+        await engine.syncAllCourses(
             site: site,
             token: token,
             courses: courses,

@@ -3,6 +3,7 @@
 // Licensed under the Apache License, Version 2.0.
 // You may obtain a copy of the License in the LICENSE file at the root of this repository.
 
+import Combine
 import Sparkle
 
 @MainActor
@@ -24,13 +25,13 @@ final class UpdateController: ObservableObject {
 
     @Published var canCheckForUpdates = false
 
-    init() {
+    init(automaticallyStart: Bool = true) {
         let feedURL = (Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String) ?? ""
         let supported = !feedURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         self.updatesSupported = supported
 
         self.updaterController = SPUStandardUpdaterController(
-            startingUpdater: supported,
+            startingUpdater: supported && automaticallyStart,
             updaterDelegate: nil,
             userDriverDelegate: nil
         )

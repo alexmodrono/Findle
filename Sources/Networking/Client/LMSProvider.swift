@@ -39,7 +39,9 @@ public protocol LMSProvider: Sendable {
     /// Fetch courses accessible to the authenticated user.
     func fetchCourses(site: MoodleSite, token: AuthToken, userID: Int) async throws -> [MoodleCourse]
 
-    /// Fetch the content tree (sections and modules) for a course.
+    /// Fetch a complete content tree (sections and modules) for a course.
+    /// Throw if the response is incomplete or entries cannot be mapped safely:
+    /// sync interprets absent items in a successful result as remote deletions.
     func fetchCourseContents(site: MoodleSite, token: AuthToken, courseID: Int) async throws -> [MoodleSection]
 
     /// Download a file to a local path.

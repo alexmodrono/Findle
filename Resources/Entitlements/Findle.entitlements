@@ -2,32 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>com.apple.security.app-sandbox</key>
-    <true/>
-    <key>com.apple.security.network.client</key>
-    <true/>
-    <key>com.apple.security.files.user-selected.read-write</key>
-    <true/>
-    <key>com.apple.security.application-groups</key>
-    <array>
-        <string>$(APP_GROUP_IDENTIFIER)</string>
-    </array>
-    <key>keychain-access-groups</key>
-    <array>
-        <string>$(AppIdentifierPrefix)$(FINDLE_BUNDLE_PREFIX)</string>
-    </array>
-    <key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
-    <array>
-        <string>$(PRODUCT_BUNDLE_IDENTIFIER)-spks</string>
-        <string>$(PRODUCT_BUNDLE_IDENTIFIER)-spki</string>
-    </array>
-    <!-- Lets the "Connect to Claude" feature register the bundled MCP server by
-         writing the Claude Desktop / Claude Code config files. Scoped to exactly
-         those paths; permitted for non-Mac-App-Store (.dmg / Homebrew) builds. -->
-    <key>com.apple.security.temporary-exception.files.home-relative-path.read-write</key>
-    <array>
-        <string>/Library/Application Support/Claude/</string>
-        <string>/.claude.json</string>
-    </array>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>$(APP_GROUP_IDENTIFIER)</string>
+	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)$(FINDLE_BUNDLE_PREFIX)</string>
+	</array>
 </dict>
 </plist>

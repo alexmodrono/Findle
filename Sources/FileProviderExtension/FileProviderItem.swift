@@ -7,6 +7,17 @@ import FileProvider
 import UniformTypeIdentifiers
 import SharedDomain
 
+/// Whether `item` is a file or folder the user created in the personal files store.
+/// Stand-ins are `local-`-less rows that recreate Moodle folders, so they are excluded.
+func isUserItem(_ item: LocalItem) -> Bool {
+    item.isLocal && item.id.hasPrefix("local-")
+}
+
+/// Whether `item` can hold children, whichever kind of directory it is.
+func isContainer(_ item: LocalItem) -> Bool {
+    item.isDirectory
+}
+
 /// Adapts a LocalItem to NSFileProviderItem for the File Provider framework.
 final class FileProviderItem: NSObject, NSFileProviderItem {
     private let localItem: LocalItem
@@ -27,7 +38,7 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
     }
 
     var capabilities: NSFileProviderItemCapabilities {
-        if localItem.isLocal {
+        if isUserItem(localItem) {
             var caps: NSFileProviderItemCapabilities = [
                 .allowsReading, .allowsWriting, .allowsRenaming,
                 .allowsReparenting, .allowsDeleting
@@ -38,11 +49,11 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
             }
             return caps
         }
-        if localItem.isDirectory {
-            // Remote Moodle folders are read-only. Local work belongs in a
-            // provider-root workspace so a remote course refresh cannot delete
-            // or orphan it.
-            return [.allowsReading, .allowsContentEnumerating]
+        if isContainer(localItem) {
+            // Moodle folders and stand-ins are read-only containers. Users can still
+            // add their own files and folders inside them; those are stored in the
+            // personal files folder, so a course refresh cannot delete them.
+            return [.allowsReading, .allowsContentEnumerating, .allowsAddingSubItems]
         }
         return [.allowsReading]
     }
@@ -91,7 +102,7 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
     }
 
     var isUploaded: Bool {
-        !localItem.isLocal
+        !isUserItem(localItem)
     }
 
     var isUploading: Bool {

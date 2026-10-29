@@ -57,7 +57,7 @@ public enum MoodleSSOLaunchURLBuilder {
             baseURL: site.baseURL,
             requiredQueryItems: requiredQueryItems
         ) {
-            logger.info("Using advertised launch URL for \(site.displayName, privacy: .public)")
+            logger.info("Using advertised launch URL for \(site.displayName, privacy: .private)")
             return advertisedResult
         }
 
@@ -66,11 +66,11 @@ public enum MoodleSSOLaunchURLBuilder {
             baseURL: site.baseURL,
             requiredQueryItems: requiredQueryItems
         ) {
-            logger.info("Using fallback launch URL for \(site.displayName, privacy: .public)")
+            logger.info("Using fallback launch URL for \(site.displayName, privacy: .private)")
             return fallbackResult
         }
 
-        logger.error("Could not build any valid SSO launch URL for \(site.displayName, privacy: .public)")
+        logger.error("Could not build any valid SSO launch URL for \(site.displayName, privacy: .private)")
         throw FindleError.ssoLaunchURLUnavailable(
             detail: "Neither the site-advertised launch URL nor the default endpoint could produce a valid URL."
         )

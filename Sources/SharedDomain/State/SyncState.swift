@@ -49,6 +49,72 @@ public struct SyncCursor: Sendable, Codable, Equatable {
     }
 }
 
+/// One selected course's outcome. Failure details contain codes, never server text or credentials.
+public struct SyncCourseOutcome: Codable, Equatable, Sendable {
+    public enum Outcome: String, Codable, Sendable {
+        case succeeded, failed, cancelled, incomplete, skipped
+    }
+
+    public let courseID: Int
+    public let outcome: Outcome
+    public let startedAt: Date?
+    public let finishedAt: Date
+    public let lastSuccessfulSync: Date?
+    public let failure: DiagnosticFailure?
+
+    public init(courseID: Int, outcome: Outcome, startedAt: Date? = nil, finishedAt: Date = Date(),
+                lastSuccessfulSync: Date? = nil, failure: DiagnosticFailure? = nil) {
+        self.courseID = courseID
+        self.outcome = outcome
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.lastSuccessfulSync = lastSuccessfulSync
+        self.failure = failure
+    }
+}
+
+/// The complete accounting of a sync attempt, including work never started.
+public struct SyncRunReport: Codable, Equatable, Sendable {
+    public let id: UUID
+    public let siteID: String
+    public let startedAt: Date
+    public let finishedAt: Date
+    public let courses: [SyncCourseOutcome]
+    public let wasCancelled: Bool
+    public let requiresReauthentication: Bool
+    public let failure: DiagnosticFailure?
+
+    public init(id: UUID = UUID(), siteID: String, startedAt: Date, finishedAt: Date = Date(),
+                courses: [SyncCourseOutcome], wasCancelled: Bool = false,
+                requiresReauthentication: Bool = false, failure: DiagnosticFailure? = nil) {
+        self.id = id
+        self.siteID = siteID
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.courses = courses
+        self.wasCancelled = wasCancelled
+        self.requiresReauthentication = requiresReauthentication
+        self.failure = failure
+    }
+
+    public func count(_ outcome: SyncCourseOutcome.Outcome) -> Int {
+        courses.filter { $0.outcome == outcome }.count
+    }
+
+    public var succeededCount: Int { count(.succeeded) }
+    public var failedCount: Int { count(.failed) }
+    public var incompleteCount: Int { count(.incomplete) }
+    public var cancelledCount: Int { count(.cancelled) }
+    public var skippedCount: Int { count(.skipped) }
+    public var isNoOp: Bool { courses.isEmpty }
+    public var allSucceeded: Bool {
+        !isNoOp && succeededCount == courses.count && !wasCancelled && !requiresReauthentication && failure == nil
+    }
+
+    /// Only a fully successful, nonempty run may advance the overall timestamp or notify completion.
+    public var successfulCompletionDate: Date? { allSucceeded ? finishedAt : nil }
+}
+
 /// Represents a locally tracked item for the File Provider.
 public struct LocalItem: Sendable, Codable, Equatable, Identifiable {
     public let id: String

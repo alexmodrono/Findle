@@ -1,0 +1,147 @@
+name: CodeQL
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 5 * * 2'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: CodeQL (${{ matrix.language }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: swift
+            runner: macos-26
+            build-mode: manual
+          - language: actions
+            runner: ubuntu-24.04
+            build-mode: none
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Select supported Swift toolchain
+        if: matrix.language == 'swift'
+        run: |
+          echo 'DEVELOPER_DIR=/Applications/Xcode_26.6.app/Contents/Developer' >> "$GITHUB_ENV"
+      - name: Prepare fresh unsigned Swift build
+        if: matrix.language == 'swift'
+        run: |
+          bash scripts/ci-preflight.sh
+          bash scripts/install-ci-tools.sh
+      - name: Generate project
+        if: matrix.language == 'swift'
+        run: xcodegen generate
+      - name: Initialize CodeQL
+        id: init
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4, CLI 2.27.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          tools: linked
+          dependency-caching: false
+          db-location: ${{ runner.temp }}/codeql-databases
+          queries: security-extended
+      - name: Extract app, extension, helper and shared modules
+        if: matrix.language == 'swift'
+        run: |
+          set -o pipefail
+          # No DerivedData/module/object cache is restored. Both schemes compile
+          # under the extractor; the helper is explicit rather than assumed.
+          for scheme in Findle FindleMCP; do
+            xcodebuild build -project Findle.xcodeproj -scheme "$scheme" \
+              -configuration Debug -destination 'platform=macOS' \
+              -derivedDataPath "$RUNNER_TEMP/CodeQLDerivedData" \
+              -clonedSourcePackagesDirPath "$RUNNER_TEMP/CodeQLPackages" \
+              -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile \
+              OBJROOT="$RUNNER_TEMP/CodeQLObjects" SYMROOT="$RUNNER_TEMP/CodeQLProducts" \
+              SHARED_PRECOMPS_DIR="$RUNNER_TEMP/CodeQLPrecomps" \
+              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+              | tee "$RUNNER_TEMP/codeql-build-$scheme.log"
+          done
+      - name: Analyze and upload SARIF
+        id: analyze
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+        with:
+          category: /language:${{ matrix.language }}
+          output: ${{ runner.temp }}/sarif
+          upload: always
+          wait-for-processing: true
+      - name: Prove Swift declarations were extracted from every product
+        if: matrix.language == 'swift'
+        env:
+          CODEQL_BIN: ${{ steps.init.outputs.codeql-path }}
+        run: |
+          set -o pipefail
+          "$CODEQL_BIN" pack install .github/codeql
+          "$CODEQL_BIN" query run .github/codeql/extracted-source-files.ql \
+            --database="$RUNNER_TEMP/codeql-databases/swift" \
+            --output="$RUNNER_TEMP/extracted-files.bqrs"
+          "$CODEQL_BIN" bqrs decode "$RUNNER_TEMP/extracted-files.bqrs" \
+            --format=csv --output="$RUNNER_TEMP/extracted-files.csv"
+          python3 scripts/check-codeql.py extraction "$RUNNER_TEMP/extracted-files.csv" \
+            | tee "$RUNNER_TEMP/extraction-summary.json"
+      - name: Use reviewed baseline from PR base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [[ -n "$BASE_SHA" ]]; then
+            if ! git show "$BASE_SHA:.github/codeql-baseline.json" > "$RUNNER_TEMP/codeql-baseline.json"; then
+              echo '{"version":1,"languages":{}}' > "$RUNNER_TEMP/codeql-baseline.json"
+            fi
+          else
+            cp .github/codeql-baseline.json "$RUNNER_TEMP/codeql-baseline.json"
+          fi
+      - name: Reject unqualified baseline or new high and critical findings
+        env:
+          LANGUAGE: ${{ matrix.language }}
+        run: |
+          python3 scripts/check-codeql.py gate \
+            --sarif "$RUNNER_TEMP/sarif/$LANGUAGE.sarif" \
+            --baseline "$RUNNER_TEMP/codeql-baseline.json" --language "$LANGUAGE" \
+            --candidate "$RUNNER_TEMP/baseline-candidate.json"
+      - name: Retain security qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: codeql-${{ matrix.language }}
+          path: |
+            ${{ runner.temp }}/sarif
+            ${{ runner.temp }}/extracted-files.csv
+            ${{ runner.temp }}/extraction-summary.json
+            ${{ runner.temp }}/codeql-build-*.log
+            ${{ runner.temp }}/baseline-candidate.json
+          retention-days: 14
+          if-no-files-found: warn
+
+  required:
+    name: CodeQL required
+    if: always()
+    needs: scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require both languages and a qualified baseline
+        env:
+          RESULT: ${{ needs.scan.result }}
+        run: test "$RESULT" = success

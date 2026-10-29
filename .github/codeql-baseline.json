@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "languages": {
+    "swift": {"status": "unqualified", "accepted": {}},
+    "actions": {"status": "unqualified", "accepted": {}}
+  }
+}
