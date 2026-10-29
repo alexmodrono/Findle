@@ -1,7 +1,15 @@
 {
   "version": 1,
-  "status": "unqualified",
+  "status": "reviewed",
   "configuration": "Debug",
   "toolchain": "Xcode 26.6\nBuild version 17F113",
-  "modules": {}
+  "modules": {
+    "App": 0.08438324055083504,
+    "FileProviderExtension": 0.16417910447761194,
+    "FindleMCP": 0.7371615312791784,
+    "SharedDomain": 0.6706521739130434,
+    "Networking": 0.6410381978452497,
+    "Persistence": 0.8779024767801857,
+    "SyncEngine": 0.8401122019635343
+  }
 }
