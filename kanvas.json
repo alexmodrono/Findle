@@ -920,6 +920,11 @@
           "at": "2026-10-29T11:16:08Z",
           "by": "codex",
           "text": "PR #27 first same-repository run passed using only contents:read, pinned checkout/upload actions and a job-summary artifact link. Its two valid CodeRabbit documentation findings are fixed in 8167a1f; the follow-up run is pending."
+        },
+        {
+          "at": "2026-10-29T12:03:41Z",
+          "by": "codex",
+          "text": "Actual Dependabot PR #30 completed build/package/upload/summary with only Contents:read and Metadata:read in the setup log, confirming reduced-permission reporting. This matches GitHub’s fork-equivalent Dependabot restrictions; it does not exercise external-contributor approval or fork checkout. The reviewed checkout/upload updates use official verified full SHAs; replaced the remaining floating release checkout tag before merging that bot PR. Baseline-only PRs #31/#32 are under CI before the next full stability-branch run."
         }
       ]
     },
@@ -963,6 +968,11 @@
           "at": "2026-10-29T11:42:17Z",
           "by": "codex",
           "text": "Real Actions canary comparison passed: clean run 40863555679 full scan has zero findings; disposable run 40863941687 finds exactly actions/code-injection/critical severity 9 and the frozen gate rejects its new fingerprint. The canary workflow never executed; artifact hashes and exact merge SHAs are retained. PR #28 was closed without merging and its branch deleted; unnecessary remaining canary jobs were cancelled after evidence retention. Swift analysis and final baseline approval remain open."
+        },
+        {
+          "at": "2026-10-29T12:03:41Z",
+          "by": "codex",
+          "text": "Complete Swift scan finished successfully in run 40863555679: zero findings at every severity, no unresolved AST nodes, and all seven module extraction counts verified independently. Initial security baseline with no exceptions is proposed separately in PR #31. This does not bypass PR-base comparison: after merge, a fresh full run on the updated implementation branch is still required."
         }
       ]
     },
@@ -1058,6 +1068,11 @@
           "at": "2026-10-29T00:29:13Z",
           "by": "codex",
           "text": "Enabled GitHub vulnerability alerts and Dependabot security updates through the repository API; readback confirms enabled=true, paused=false. Canonical remote package resolution is now exposed for tracking through narrow .gitignore exceptions without tracking the generated project. Full Swift version-update automation still waits for the remote Airlock revision and source-of-truth updater."
+        },
+        {
+          "at": "2026-10-29T12:03:41Z",
+          "by": "codex",
+          "text": "Grouped weekly GitHub Actions version updates are now enabled on main via PR #29 and produced actual Dependabot PR #30. Independent review verified official checkout v7.0.1/upload-artifact v7.0.2 commits and Node 24 runner compatibility. The bot build passed with read-only permissions; no automatic approval/merge is enabled. Swift dependency discovery/update tooling remains in the stability branch and still needs live qualification."
         }
       ]
     },

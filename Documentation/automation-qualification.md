@@ -97,8 +97,12 @@ For this first-PR rollout:
    fails with **new high/critical findings** against the same file. An
    unqualified-baseline error alone does not demonstrate fixture rejection.
    Keep these qualification checks separate from the unchanged PR gate; never
-   add the fixture finding to accepted exceptions. Remove the fixture and
-   obtain a fresh complete scan before accepting the baseline.
+   add the fixture finding to accepted exceptions. If the fixture was added
+   to the implementation branch, remove it and obtain a fresh complete scan.
+   If it lived only in a separate disposable PR, close that PR without merging
+   and verify that the reviewed implementation checkout never contained it.
+   In either case, the updated implementation PR must pass a fresh full scan
+   against the reviewed base before its changes or required check are accepted.
 3. Have the maintainer review and merge a separate bootstrap PR containing
    **only `.github/codeql-baseline.json`**, with the evidence and exception
    review linked in its description and Kanvas. It approves that specific
