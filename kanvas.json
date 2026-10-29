@@ -925,6 +925,11 @@
           "at": "2026-10-29T12:03:41Z",
           "by": "codex",
           "text": "Actual Dependabot PR #30 completed build/package/upload/summary with only Contents:read and Metadata:read in the setup log, confirming reduced-permission reporting. This matches GitHub’s fork-equivalent Dependabot restrictions; it does not exercise external-contributor approval or fork checkout. The reviewed checkout/upload updates use official verified full SHAs; replaced the remaining floating release checkout tag before merging that bot PR. Baseline-only PRs #31/#32 are under CI before the next full stability-branch run."
+        },
+        {
+          "at": "2026-10-29T12:18:10Z",
+          "by": "codex",
+          "text": "Dependabot PR #30 is merged after exact-head build and CodeRabbit success. Both verified security findings were fixed: immutable checkout SHA and disabled credential persistence. The addressed review thread is resolved. Its Node 24 action updates are integrated into the complete stability workflows; an automatic merge duplicated one identical YAML key, removed before validation and publication. Actual external-fork qualification remains outstanding."
         }
       ]
     },
