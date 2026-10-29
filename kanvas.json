@@ -154,6 +154,11 @@
           "at": "2026-10-29T11:42:17Z",
           "by": "codex",
           "text": "User confirmed: use the existing account only for nondestructive checks; no disposable account is available. Signed Nightly build 141 from 6a58ffa is prepared and all seven owned signatures, both architectures, source stamp and Nightly identities verify. It has not been installed. A verified archive preserves 332 readable personal files, but macOS denies access to the active provider/host SQLite stores and legacy LocalContent, so recovery backup remains incomplete. Native UI still returns cgWindowNotFound. Keep installed-account state unchanged until these access limits are resolved."
+        },
+        {
+          "at": "2026-10-29T19:02:30Z",
+          "by": "codex",
+          "text": "Native app/Finder access now works again. Read-only inspection of the already-installed signed Nightly build157 preserves 11 of43 selected courses; its own locally saved redacted diagnostics report all11 successful, File Provider registered, schema15 and seed complete. Apple Development signature/team54WRV8QX2U verifies, with both architectures present. This is a locally modified 4a101cb-dirty build, not the exact ba72728 PR candidate, so do not count it as final signed qualification. No install, sign-in/out, reset, subscription change or sync was triggered. External read-only access to the live database is still unavailable, so the report is not a complete recovery backup. Private evidence stays local at /Users/amodrono/Developer/findle-runtime-evidence.UK4Z1v; it must not be uploaded as public review evidence."
         }
       ]
     },
@@ -608,7 +613,7 @@
     {
       "id": "DS-04",
       "title": "Make database transitions and provider reset recoverable",
-      "state": "doing",
+      "state": "done",
       "group": "DS",
       "deps": ["DS-03"],
       "at": "2026-10-29T00:06:36Z",
@@ -669,6 +674,11 @@
           "at": "2026-10-29T14:49:04Z",
           "by": "codex",
           "text": "Committed 12487d2: initialization now prepares WAL while holding the existing gate, so immediate read-only diagnostics succeed. The new regression fails before the fix for fresh and migrated stores; the fix passes 140 repeated optimized checks. Both full local suites pass 403 tests, zero failures/skips. A separate empty-WAL fixture now explicitly disables SQLite's keep-sidecars policy before checkpoint/close, preserving its no-sidecar precondition and production defaults. Independent C evidence verifies committed data/schema through 1,000 fixture repetitions. Exact source hashes, red/green results and findings are retained at /Volumes/Pheidippides/Developer/Xcode/DerivedData/findle-sqlite-lock-fix.1nddr24d. Fresh hosted qualification remains required."
+        },
+        {
+          "at": "2026-10-29T18:55:42Z",
+          "by": "codex",
+          "text": "Database recovery and initialization now meet the implementation gates. Both previously captured SQLite failures have causal red-before/green-after regressions; current head ba72728 passes hosted Debug/Nightly (403 tests each) and all four optimized/sanitized stress lanes (3,720 successful executions total, zero failures/skips/runtime warnings). Exact tested merge and artifact hashes were independently verified. Earlier fault-injected reset, snapshot, unsupported-schema and personal-file preservation tests remain passing. Accept the implementation; signed operating-system reset/upgrade checks remain explicitly under FN-02/RR-03 and will not be run destructively on the real account. Evidence: /tmp/findle-ci-stress-ba72728.6edozb_u/REPORT.md."
         }
       ]
     },
@@ -960,6 +970,21 @@
           "at": "2026-10-29T12:39:17Z",
           "by": "codex",
           "text": "The new required CI aggregate correctly failed when Nightly reproduced the concurrent schema-opener fault. Debug, unsigned artifact build, onboarding and workflow checks passed. This confirms the fault remains unresolved despite the earlier current-schema no-op improvement; no green run is being substituted for these failures."
+        },
+        {
+          "at": "2026-10-29T19:02:30Z",
+          "by": "codex",
+          "text": "Prepared a disposable fork-event procedure and controlled failing XCTest at /tmp/findle-fork-qualification-plan. It will first qualify a documentation-only fork PR, then prove the native failing test reaches the required CI aggregate, and close without merging. A user-selected organization namespace is needed because alexmodrono already owns Findle and cannot fork it back into that account. Existing third-party forks will not be modified. Same-repository and Dependabot event evidence remains valid."
+        },
+        {
+          "at": "2026-10-29T21:33:17Z",
+          "by": "codex",
+          "text": "The user selected Codename-Streetpass for the temporary fork. Qualified workflows are now deployed on main at 5a2e751; creating a documentation-only fork PR, then introducing an intentional failing XCTest on that unmerged branch to verify failure propagation. Preserve the existing successful same-repository and Dependabot evidence."
+        },
+        {
+          "at": "2026-10-29T21:34:29Z",
+          "by": "codex",
+          "text": "Created the user-authorized temporary fork Codename-Streetpass/Findle-ci-qualification with fork Actions explicitly disabled. Upstream draft PR #33 is a documentation-only actual cross-repository PR at 5104ac1, based on deployed main 5a2e751. Its first check run will qualify fork permissions, unsigned artifact and complete required contexts before the intentional-failure revision. The PR must never merge."
         }
       ]
     },
@@ -1050,6 +1075,11 @@
           "at": "2026-10-29T12:25:09Z",
           "by": "codex",
           "text": "Basic protection is now active and independently read back: main ruleset 26120414 requires PRs and resolved discussions, blocks deletion/force-push, and permits only alexmodrono to use a PR-only emergency bypass. Zero approvals avoids impossible self-review. Version-tag ruleset 26120416 prevents v* updates/deletion with no bypass. Required CI/CodeQL contexts and good/failing/stale/docs-only qualification remain pending; no missing checks were imposed. Full policy evidence and prepared next-stage payload are retained at /Volumes/Pheidippides/Developer/findle-repository-protection.rphxdgaq."
+        },
+        {
+          "at": "2026-10-29T21:33:17Z",
+          "by": "codex",
+          "text": "PR #26 merged at 5a2e751 after all exact-head CI, CodeQL, stress and CodeRabbit checks passed and the only review thread was resolved. Main ruleset 26120414 now requires CI required and CodeQL required from GitHub Actions integration 15368 with strict up-to-date checks. Independent API readback confirms PR-only narrow emergency bypass, resolved conversations and no deletion/force-push. Good-PR evidence is complete; documentation-only, failing and stale fork cases remain in qualification."
         }
       ]
     },
@@ -1138,6 +1168,11 @@
           "at": "2026-10-29T18:30:57Z",
           "by": "codex",
           "text": "A real older-to-current MCP updater trial established published 0.12.0 as the resolver baseline and discovery selected current 0.12.1. Pheidippides disconnected again while the actual update/resolution was running, so the resolver completion and retained before/after evidence are not yet verified. This is not a completed upgrade trial. The real project remains pinned to 0.12.1; hosted proposal/PR qualification and the completed MCP trial remain open."
+        },
+        {
+          "at": "2026-10-29T21:36:49Z",
+          "by": "codex",
+          "text": "The deployed read-only discovery workflow passed on exact main 5a2e751 (run 40954623634, workflow_dispatch). Its hash-verified proposal artifact has no errors, proposes Sparkle 2.10.0 → 2.10.1, retains current MCP 0.12.1 and correctly refuses to roll Airlock back to its older default branch. Next is a real reviewed Sparkle update PR with ordinary required CI/CodeQL. The interrupted isolated MCP trial still needs its external-drive evidence recovered; no downgrade is planned for the real project. Report: /tmp/findle-deployed-automation.y1esvz8c/REPORT.md."
         }
       ]
     },
@@ -1186,7 +1221,7 @@
     {
       "id": "GH-08",
       "title": "Schedule stress tests and report coverage changes",
-      "state": "doing",
+      "state": "done",
       "group": "GH",
       "deps": ["RR-02"],
       "at": "2026-10-29T00:16:50Z",
@@ -1232,6 +1267,21 @@
           "at": "2026-10-29T14:51:54Z",
           "by": "codex",
           "text": "The final local implementation now passes all 403 Debug and 403 optimized Nightly tests, zero failures/skips, plus 140 focused repeated database checks. The exact committed source is 62843fc with the WAL fix in 12487d2; hashes and retained results match the frozen validation source. The remaining gate is fresh hosted coverage and all four stress lanes on the pushed revision, followed by schedule deployment to main."
+        },
+        {
+          "at": "2026-10-29T18:55:42Z",
+          "by": "codex",
+          "text": "Hosted execution is qualified at ba72728: 403 tests pass in each Debug/Nightly suite; all four stress lanes pass 310 cases three times each (3,720 executions), with zero failures, skips or runtime warnings. Independent recomputation of Debug coverage matches the artifact and passes all seven reviewed module floors. Exact merge tree, toolchains, repetitions, seed and artifact digests are verified in /tmp/findle-ci-stress-ba72728.6edozb_u/REPORT.md. Remaining: deploy workflow to main and exercise a real manual/scheduled event. This is not a signed integration or 48-hour soak claim."
+        },
+        {
+          "at": "2026-10-29T21:36:49Z",
+          "by": "codex",
+          "text": "Coverage reporting and four stress lanes are deployed on main and qualified by real PR and manual workflow events. Manual run 40954618211 at exact 5a2e751 passed 310 cases three times in each lane: 3,720 executions, zero failures/skips/runtime warnings. Nightly, TSan and ASan run on macOS 26; Nightly also runs on the available macOS 15 runner. Seed 20261029, bounded runtime, 14-day artifacts and stop-on-first-failure are verified. Full Debug coverage passes the seven reviewed module floors; sanitizer/subset coverage remains report-only. The Wednesday 03:41 UTC schedule is deployed; a calendar-triggered execution has not yet occurred. Evidence and artifact hashes: /tmp/findle-deployed-automation.y1esvz8c/REPORT.md. This completes automation deployment/qualification, not signed integration or the release soak."
+        },
+        {
+          "at": "2026-10-29T21:37:16Z",
+          "by": "codex",
+          "text": "Accepted under the user’s authorization to manage Kanvas: deployed scheduling and independently verified manual execution satisfy the automation qualification. The first calendar firing remains explicitly unobserved; signed runtime and release-soak gates remain separate and open."
         }
       ]
     },
