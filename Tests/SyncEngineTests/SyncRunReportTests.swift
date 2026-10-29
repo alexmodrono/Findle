@@ -256,7 +256,7 @@ private actor ReportProvider: LMSProvider {
             ])
         ])]
     }
-    func downloadFile(url: URL, token: AuthToken, destination: URL) async throws {
+    func downloadFile(url: URL, site: MoodleSite, token: AuthToken, destination: URL) async throws {
         downloadAttempts += 1
         if let downloadFailure {
             try Data("partial".utf8).write(to: destination)
@@ -276,7 +276,7 @@ private actor ReportProvider: LMSProvider {
     nonisolated func parseTokenFromSSOCallback(callbackURLString: String, site: MoodleSite, passport: String) throws -> AuthToken {
         throw FindleError.authenticationRequired
     }
-    nonisolated func authenticatedFileRequest(fileURL: URL, token: AuthToken) -> URLRequest { URLRequest(url: fileURL) }
+    nonisolated func authenticatedFileRequest(fileURL: URL, site: MoodleSite, token: AuthToken) throws -> URLRequest { URLRequest(url: fileURL) }
 }
 
 

@@ -44,6 +44,7 @@ enum FileDownloader {
         database: Database,
         progress: Progress,
         temporaryDirectory: URL? = nil,
+        tokenReader: (String) throws -> String? = { try KeychainManager.shared.retrieveToken(forAccount: $0) },
         completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void
     ) throws {
         let completionBridge = FileDownloadCompletionBridge(
@@ -51,8 +52,29 @@ enum FileDownloader {
             completionHandler: completionHandler
         )
 
+        guard !progress.isCancelled else { throw CocoaError(.userCancelled) }
+        let destinationURL = DownloadPublication.destination(for: item, in: temporaryDirectory)
+        if let data = try MoodleWebLocation.data(for: item) {
+            let updated = try DownloadPublication.publishGenerated(
+                data, item: item, database: database, destination: destinationURL, progress: progress)
+            completionBridge.succeed(url: destinationURL, item: FileProviderItem(localItem: updated))
+            return
+        }
+
         guard let remoteURL = item.remoteURL else {
             throw NSFileProviderError(.cannotSynchronize)
+        }
+
+        // Establish trust from the item's persisted site before touching Keychain.
+        guard let site = try database.fetchSite(id: item.siteID) else {
+            throw NSFileProviderError(.serverUnreachable)
+        }
+        let origin: AuthenticatedRequestOrigin
+        do {
+            origin = try AuthenticatedRequestOrigin(site: site)
+            try origin.validate(remoteURL)
+        } catch {
+            throw CocoaError(.fileReadNoPermission)
         }
 
         let tokenAccountID: String
@@ -67,7 +89,7 @@ enum FileDownloader {
 
         let storedToken: String?
         do {
-            storedToken = try KeychainManager.shared.retrieveToken(forAccount: tokenAccountID)
+            storedToken = try tokenReader(tokenAccountID)
         } catch {
             DiagnosticJournal(databasePath: database.filePath)?.record(.init(
                 process: .fileProvider, operation: .authentication, outcome: .failed, failure: DiagnosticFailure(error)))
@@ -79,15 +101,7 @@ enum FileDownloader {
             throw NSFileProviderError(.notAuthenticated)
         }
 
-        // Send the token in the POST body instead of the URL query so it
-        // doesn't leak into URLSession metrics, the Referer header on CDN
-        // redirects, or crash reports that include the in-flight URL.
-        var authenticatedRequest = URLRequest(url: remoteURL)
-        authenticatedRequest.httpMethod = "POST"
-        authenticatedRequest.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        authenticatedRequest.httpBody = formEncodeToken(tokenString)
-
-        let destinationURL = DownloadPublication.destination(for: item, in: temporaryDirectory)
+        let authenticatedRequest = try origin.fileRequest(url: remoteURL, token: AuthToken(token: tokenString))
         do {
             guard try database.updateDownloadState(for: item, state: .downloading) != nil else {
                 throw NSFileProviderError(.versionNoLongerAvailable)
@@ -101,6 +115,7 @@ enum FileDownloader {
 
         DownloadCoordinator.shared.start(
             request: authenticatedRequest,
+            origin: origin,
             item: item,
             database: database,
             destination: destinationURL,
@@ -113,17 +128,6 @@ enum FileDownloader {
         resetToPlaceholder(item: item, database: database)
     }
 
-    /// Form-encode just the token value for the download body. Using a
-    /// restrictive allowed set avoids any chance that a token containing
-    /// `+`, `&`, or `=` confuses Moodle's POST parser on the receiving side.
-    private static func formEncodeToken(_ token: String) -> Data? {
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(charactersIn: "-._~")
-        let encoded = token.addingPercentEncoding(withAllowedCharacters: allowed) ?? token
-        return "token=\(encoded)".data(using: .utf8)
-    }
-
-
 }
 
 /// Runs File Provider materializations on one shared delegate-backed session.
@@ -133,8 +137,14 @@ enum FileDownloader {
 /// indeterminate spinner for the whole transfer — a 75 MB lecture PDF looked
 /// identical to a hung download. Sharing a single session (rather than creating
 /// one per file) preserves connection reuse to the Moodle host.
-private final class DownloadCoordinator: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-    static let shared = DownloadCoordinator()
+final class DownloadCoordinator: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    static let shared: DownloadCoordinator = {
+        let configuration = URLSessionConfiguration.default
+        configuration.waitsForConnectivity = true
+        configuration.timeoutIntervalForRequest = 60
+        configuration.timeoutIntervalForResource = 30 * 60
+        return DownloadCoordinator(configuration: configuration)
+    }()
 
     private struct Context {
         let attemptID: UUID
@@ -144,6 +154,7 @@ private final class DownloadCoordinator: NSObject, URLSessionDownloadDelegate, @
         let destination: URL
         let progress: Progress
         let bridge: FileDownloadCompletionBridge
+        let redirectDelegate: AuthenticatedRedirectDelegate
         /// Moodle reports each file's size in the course contents, so we can
         /// still show a real bar when a response omits `Content-Length`.
         let expectedSize: Int64
@@ -164,18 +175,21 @@ private final class DownloadCoordinator: NSObject, URLSessionDownloadDelegate, @
     // on concurrent first downloads and produce sessions with colliding task IDs.
     private var session: URLSession!
 
-    private override init() {
+    init(configuration: URLSessionConfiguration) {
+        precondition(configuration.identifier == nil, "Authenticated downloads require redirect callbacks")
         super.init()
-        let configuration = URLSessionConfiguration.default
-        configuration.waitsForConnectivity = true
-        // Bound stalled connections, but allow large lecture files to finish.
-        configuration.timeoutIntervalForRequest = 60
-        configuration.timeoutIntervalForResource = 30 * 60
         session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+    }
+
+    /// An owner of a nonshared coordinator must release URLSession's delegate
+    /// retention when finished. The production singleton lives for the process.
+    func invalidate() {
+        session.invalidateAndCancel()
     }
 
     func start(
         request: URLRequest,
+        origin: AuthenticatedRequestOrigin,
         item: LocalItem,
         database: Database,
         destination: URL,
@@ -193,6 +207,7 @@ private final class DownloadCoordinator: NSObject, URLSessionDownloadDelegate, @
             destination: destination,
             progress: progress,
             bridge: bridge,
+            redirectDelegate: AuthenticatedRedirectDelegate(origin: origin),
             expectedSize: item.fileSize
         )
 
@@ -240,6 +255,19 @@ private final class DownloadCoordinator: NSObject, URLSessionDownloadDelegate, @
     // MARK: - URLSessionDownloadDelegate
 
     func urlSession(
+        _ session: URLSession, task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        guard let context = context(for: task.taskIdentifier) else {
+            completionHandler(nil)
+            return
+        }
+        context.redirectDelegate.urlSession(session, task: task, willPerformHTTPRedirection: response,
+                                            newRequest: request, completionHandler: completionHandler)
+    }
+
+    func urlSession(
         _ session: URLSession,
         downloadTask: URLSessionDownloadTask,
         didWriteData bytesWritten: Int64,
@@ -265,6 +293,7 @@ private final class DownloadCoordinator: NSObject, URLSessionDownloadDelegate, @
         guard let context = context(for: downloadTask.taskIdentifier) else { return }
 
         do {
+            guard !context.redirectDelegate.didRejectRedirect else { throw CocoaError(.fileReadNoPermission) }
             let updatedItem = try DownloadPublication.publish(
                 item: context.item, database: context.database,
                 response: downloadTask.response as? HTTPURLResponse, source: location,
@@ -293,11 +322,13 @@ private final class DownloadCoordinator: NSObject, URLSessionDownloadDelegate, @
         // didFinishDownloadingTo, so reaching here with one means a failure.
         guard let context = removeContext(for: task.taskIdentifier) else { return }
 
-        let failure = error.map(FileDownloader.mapTransportError) ?? FindleError.downloadFailed(
+        let rejectedRedirect = context.redirectDelegate.didRejectRedirect
+        let failure: Error = rejectedRedirect ? CocoaError(.fileReadNoPermission) : error.map(FileDownloader.mapTransportError) ?? FindleError.downloadFailed(
             itemID: context.item.id,
             reason: "Download ended without producing a file"
         )
-        context.record((error as? URLError)?.code == .cancelled ? .cancelled : .failed, error: error ?? failure)
+        context.record(!rejectedRedirect && (error as? URLError)?.code == .cancelled ? .cancelled : .failed,
+                       error: rejectedRedirect ? failure : error ?? failure)
         logger.error("Download failed for \(context.item.id, privacy: .private): \(DiagnosticFailure(failure).summary, privacy: .public)")
         FileDownloader.resetToPlaceholderIfNeeded(item: context.item, database: context.database)
         context.bridge.fail(failure)

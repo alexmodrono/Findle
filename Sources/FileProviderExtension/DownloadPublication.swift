@@ -42,6 +42,28 @@ enum DownloadPublication {
         move: (URL, URL) throws -> Void = { try FileManager.default.moveItem(at: $0, to: $1) }
     ) throws -> LocalItem {
         try validate(item: item, response: response, file: source, cancelled: progress.isCancelled)
+        return try publishValidated(item: item, database: database, source: source,
+                                    destination: destination, progress: progress, move: move)
+    }
+
+    /// Locally generated bookmarks have no HTTP response or server byte count.
+    /// They still use the same cancellation and conditional-version publication.
+    static func publishGenerated(
+        _ data: Data, item: LocalItem, database: Database, destination: URL, progress: Progress,
+        move: (URL, URL) throws -> Void = { try FileManager.default.moveItem(at: $0, to: $1) }
+    ) throws -> LocalItem {
+        guard !progress.isCancelled else { throw CocoaError(.userCancelled) }
+        let source = destination.deletingLastPathComponent().appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: source) }
+        try data.write(to: source, options: .withoutOverwriting)
+        return try publishValidated(item: item, database: database, source: source,
+                                    destination: destination, progress: progress, move: move)
+    }
+
+    private static func publishValidated(
+        item: LocalItem, database: Database, source: URL, destination: URL, progress: Progress,
+        move: (URL, URL) throws -> Void
+    ) throws -> LocalItem {
         // Every request gets its own destination. Never delete a previous
         // request's staged file just because two downloads share an item ID.
         guard !FileManager.default.fileExists(atPath: destination.path) else { throw CocoaError(.fileWriteFileExists) }

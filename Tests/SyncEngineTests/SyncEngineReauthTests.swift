@@ -92,9 +92,9 @@ private struct ThrowingLMSProvider: LMSProvider {
         throw error
     }
 
-    func downloadFile(url: URL, token: AuthToken, destination: URL) async throws {}
+    func downloadFile(url: URL, site: MoodleSite, token: AuthToken, destination: URL) async throws {}
 
-    func authenticatedFileRequest(fileURL: URL, token: AuthToken) -> URLRequest {
+    func authenticatedFileRequest(fileURL: URL, site: MoodleSite, token: AuthToken) throws -> URLRequest {
         URLRequest(url: fileURL)
     }
 }

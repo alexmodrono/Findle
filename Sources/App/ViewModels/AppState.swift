@@ -1062,10 +1062,10 @@ final class AppState: ObservableObject {
     /// for courses that expose a Moodle overview image. Courses without an image
     /// are skipped — the gallery shows a generated tile for them.
     private func loadCourseCovers() {
-        guard let token = currentToken, !sessionWork.isTransitioning else { return }
+        guard let token = currentToken, let site = currentSite, !sessionWork.isTransitioning else { return }
         let lease = sessionWork.lease
         for course in courses {
-            guard let remoteURL = course.imageURL, courseCoverImages[course.id] == nil else { continue }
+            guard course.siteID == site.id, let remoteURL = course.imageURL, courseCoverImages[course.id] == nil else { continue }
             // Skip courses whose cover is already being loaded by an earlier pass.
             guard !coverDownloadsInFlight.contains(course.id) else { continue }
 
@@ -1074,7 +1074,7 @@ final class AppState: ObservableObject {
             let destination = coverCacheDirectory.appendingPathComponent("\(course.siteID)-\(course.id)")
             coverDownloadsInFlight.insert(course.id)
             coverTasks[course.id] = Task {
-                await downloadCover(courseID: course.id, from: remoteURL, token: token, to: destination, lease: lease)
+                await downloadCover(courseID: course.id, from: remoteURL, site: site, token: token, to: destination, lease: lease)
                 guard sessionWork.isCurrent(lease) else { return }
                 coverDownloadsInFlight.remove(course.id)
                 coverTasks.removeValue(forKey: course.id)
@@ -1082,7 +1082,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func downloadCover(courseID: Int, from remoteURL: URL, token: AuthToken, to destination: URL,
+    private func downloadCover(courseID: Int, from remoteURL: URL, site: MoodleSite, token: AuthToken, to destination: URL,
                                lease: SessionWorkCoordinator.Lease) async {
         // Decoding images is kept off the main actor; only the finished NSImage is
         // published back here.
@@ -1094,7 +1094,7 @@ final class AppState: ObservableObject {
 
         do {
             guard sessionWork.isCurrent(lease) else { return }
-            try await moodleClient.downloadFile(url: remoteURL, token: token, destination: destination)
+            try await moodleClient.downloadFile(url: remoteURL, site: site, token: token, destination: destination)
             guard sessionWork.isCurrent(lease) else { return }
             if let image = await Self.loadImage(at: destination) {
                 guard sessionWork.isCurrent(lease) else { return }

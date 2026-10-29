@@ -72,6 +72,77 @@ final class SyncEngineCourseScopeTests: XCTestCase {
         XCTAssertEqual(try database.fetchSyncCursor(courseID: course.id, siteID: site.id)?.itemCount, 1)
     }
 
+    func testURLResourceMaterializesLocalPlistWithExactSizeAndNoProviderDownload() async throws {
+        let site = MoodleSite(id: "site-1", displayName: "Example", baseURL: URL(string: "https://moodle.example.edu")!)
+        let course = MoodleCourse(id: 101, shortName: "C", fullName: "Course", siteID: site.id)
+        let externalURL = URL(string: "https://external.test/article?one=1&two=2")!
+        let provider = FakeLMSProvider(courseContents: [course.id: [
+            MoodleSection(id: 11, courseID: course.id, name: "Week", sectionNumber: 1, modules: [
+                MoodleModule(id: 501, name: "Reading", modName: "url", contents: [
+                    MoodleFileContent(type: "url", fileName: "Reading", fileURL: externalURL)
+                ])
+            ])
+        ]], onDownload: { _, _, _, _ in XCTFail("A URL resource reached the credential-bearing provider") })
+        let engine = SyncEngine(provider: provider, database: database)
+        try await engine.syncCourse(site: site, token: AuthToken(token: "fixture-secret"), course: course)
+        let item = try XCTUnwrap(database.fetchItem(id: "url-site-1-101-501"))
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        try await engine.downloadItem(itemID: item.id, site: site, token: AuthToken(token: "fixture-secret"), destination: destination)
+        let data = try Data(contentsOf: destination)
+        XCTAssertEqual(Int64(data.count), item.fileSize)
+        XCTAssertEqual(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: String],
+                       ["URL": externalURL.absoluteString])
+        XCTAssertEqual(try database.fetchItem(id: item.id)?.syncState, .materialized)
+    }
+
+    func testDownloadRejectsWrongSiteAndUntrustedOrdinaryWeblocBeforeProvider() async throws {
+        let site = MoodleSite(id: "site-1", displayName: "Example", baseURL: URL(string: "https://moodle.example.edu")!)
+        let provider = FakeLMSProvider(courseContents: [:], onDownload: { _, _, _, _ in XCTFail("Rejected item reached provider") })
+        let engine = SyncEngine(provider: provider, database: database)
+        let items = [
+            LocalItem(id: "file-wrong-site", siteID: "site-2", courseID: 1, remoteID: 1, filename: "file.pdf",
+                      remoteURL: URL(string: "https://moodle.example.edu/file")),
+            LocalItem(id: "file-site-1-1-1-Reading.webloc", siteID: site.id, courseID: 1, remoteID: 1, filename: "Reading.webloc",
+                      contentType: "com.apple.web-internet-location", remoteURL: URL(string: "https://external.test/file"))
+        ]
+        try database.saveItems(items)
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        for item in items {
+            do {
+                try await engine.downloadItem(itemID: item.id, site: site, token: AuthToken(token: "fixture-secret"), destination: destination)
+                XCTFail("Untrusted item accepted")
+            } catch {}
+            XCTAssertEqual(try database.fetchItem(id: item.id), item)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        }
+    }
+
+    func testLateDownloadDoesNotPublishOverNewItemVersion() async throws {
+        let site = MoodleSite(id: "site-1", displayName: "Example", baseURL: URL(string: "https://moodle.example.edu")!)
+        let old = LocalItem(id: "file-site-1-1-1", siteID: site.id, courseID: 1, remoteID: 1, filename: "file.pdf",
+                            remoteURL: URL(string: "https://moodle.example.edu/file"), contentVersion: "old")
+        var replacement = old
+        replacement.contentVersion = "new"
+        let newItem = replacement
+        let capturedDatabase = try XCTUnwrap(database)
+        try capturedDatabase.saveItems([old])
+        let provider = FakeLMSProvider(courseContents: [:], onDownload: { _, suppliedSite, _, destination in
+            XCTAssertEqual(suppliedSite.id, site.id)
+            try capturedDatabase.saveItems([newItem])
+            try Data("old response".utf8).write(to: destination)
+        })
+        let engine = SyncEngine(provider: provider, database: capturedDatabase)
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        do {
+            try await engine.downloadItem(itemID: old.id, site: site, token: AuthToken(token: "fixture-secret"), destination: destination)
+            XCTFail("Stale download was published")
+        } catch {}
+        XCTAssertEqual(try capturedDatabase.fetchItem(id: old.id), newItem)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
     func testCancellationAfterFetchingKeepsWholePreviousRevision() async throws {
         let site = MoodleSite(id: "site-1", displayName: "Example", baseURL: URL(string: "https://moodle.example.edu")!)
         let course = MoodleCourse(id: 101, shortName: "C101", fullName: "Course 101", siteID: site.id)
@@ -437,6 +508,7 @@ final class SyncEngineCourseScopeTests: XCTestCase {
 private struct FakeLMSProvider: LMSProvider {
     let courseContents: [Int: [MoodleSection]]
     var cancelBeforeReturning = false
+    var onDownload: @Sendable (URL, MoodleSite, AuthToken, URL) async throws -> Void = { _, _, _, _ in }
 
     func validateSite(url: URL) async throws -> MoodleSite {
         MoodleSite(displayName: url.host ?? "Test", baseURL: url)
@@ -465,9 +537,11 @@ private struct FakeLMSProvider: LMSProvider {
         return courseContents[courseID] ?? []
     }
 
-    func downloadFile(url: URL, token: AuthToken, destination: URL) async throws {}
+    func downloadFile(url: URL, site: MoodleSite, token: AuthToken, destination: URL) async throws {
+        try await onDownload(url, site, token, destination)
+    }
 
-    func authenticatedFileRequest(fileURL: URL, token: AuthToken) -> URLRequest {
+    func authenticatedFileRequest(fileURL: URL, site: MoodleSite, token: AuthToken) throws -> URLRequest {
         URLRequest(url: fileURL)
     }
 }

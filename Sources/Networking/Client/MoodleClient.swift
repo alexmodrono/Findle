@@ -242,6 +242,7 @@ public final class MoodleClient: LMSProvider, Sendable {
     // MARK: - Authentication
 
     public func authenticate(site: MoodleSite, username: String, password: String) async throws -> AuthToken {
+        let origin = try credentialOrigin(site: site, destination: site.tokenURL)
         logger.info("Authenticating user \(username, privacy: .private) at \(site.baseURL.host ?? "", privacy: .public)")
 
         // Build the body explicitly so '+' in a password isn't double-decoded
@@ -258,7 +259,10 @@ public final class MoodleClient: LMSProvider, Sendable {
 
         // Never retried: the request carries the password, and a retry after a lost
         // connection could submit it twice.
-        let (data, _) = try await performRequest(request, policy: .authentication)
+        let (data, response) = try await performRequest(request, policy: .authentication, credentialOrigin: origin)
+        guard let response = response as? HTTPURLResponse, !(300...399).contains(response.statusCode) else {
+            throw FindleError.invalidResponse(detail: "Sign-in did not complete at the selected secure site.")
+        }
         _ = try Self.parseJSON(data, context: "Sign-in")
 
         let tokenResponse: TokenResponse
@@ -273,6 +277,10 @@ public final class MoodleClient: LMSProvider, Sendable {
                 throw FindleError.invalidCredentials
             }
             throw FindleError.siteIncompatible(reason: error)
+        }
+
+        guard (200...299).contains(response.statusCode) else {
+            throw FindleError.invalidResponse(detail: "Sign-in did not complete at the selected secure site.")
         }
 
         guard let token = tokenResponse.token else {
@@ -641,10 +649,24 @@ public final class MoodleClient: LMSProvider, Sendable {
 
     // MARK: - File Download
 
-    public func downloadFile(url: URL, token: AuthToken, destination: URL) async throws {
-        let request = authenticatedFileRequest(fileURL: url, token: token)
-
-        let (tempURL, response) = try await session.download(for: request)
+    public func downloadFile(url: URL, site: MoodleSite, token: AuthToken, destination: URL) async throws {
+        let origin = try credentialOrigin(site: site, destination: url)
+        let request = try origin.fileRequest(url: url, token: token)
+        let redirectDelegate = AuthenticatedRedirectDelegate(origin: origin)
+        let tempURL: URL
+        let response: URLResponse
+        do {
+            (tempURL, response) = try await session.download(for: request, delegate: redirectDelegate)
+        } catch {
+            try Task.checkCancellation()
+            try redirectDelegate.checkRedirect()
+            throw error
+        }
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        try Task.checkCancellation()
+        try redirectDelegate.checkRedirect()
+        guard let responseURL = response.url else { throw AuthenticatedRequestError.untrustedDestination }
+        try origin.validate(responseURL)
 
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {
@@ -661,16 +683,18 @@ public final class MoodleClient: LMSProvider, Sendable {
         try fileManager.moveItem(at: tempURL, to: destination)
     }
 
-    public func authenticatedFileRequest(fileURL: URL, token: AuthToken) -> URLRequest {
-        // Moodle's pluginfile.php accepts the token via either $_GET or $_POST.
-        // Send it via POST body so the token doesn't end up in URL logs, the
-        // Referer header on CDN redirects, or URLSession metrics. The URL
-        // itself stays clean.
-        var request = URLRequest(url: fileURL)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = Self.formEncode(["token": token.token])
-        return request
+    public func authenticatedFileRequest(fileURL: URL, site: MoodleSite, token: AuthToken) throws -> URLRequest {
+        try credentialOrigin(site: site, destination: fileURL).fileRequest(url: fileURL, token: token)
+    }
+
+    private func credentialOrigin(site: MoodleSite, destination: URL) throws -> AuthenticatedRequestOrigin {
+        // Background sessions follow redirects without consulting the delegate.
+        guard session.configuration.identifier == nil else {
+            throw AuthenticatedRequestError.unsupportedBackgroundSession
+        }
+        let origin = try AuthenticatedRequestOrigin(site: site)
+        try origin.validate(destination)
+        return origin
     }
 
     // MARK: - Web Service Call
@@ -681,6 +705,7 @@ public final class MoodleClient: LMSProvider, Sendable {
         function: String,
         params: [String: String] = [:]
     ) async throws -> T {
+        let origin = try credentialOrigin(site: site, destination: site.webServiceURL)
         // POST the credentials and parameters in the body so wstoken never
         // ends up in URL logs, proxy access logs, or crash reports. Moodle's
         // webservice/rest/server.php accepts either GET or POST.
@@ -698,7 +723,7 @@ public final class MoodleClient: LMSProvider, Sendable {
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = Self.formEncode(body)
 
-        let (data, response) = try await performRequest(request)
+        let (data, response) = try await performRequest(request, credentialOrigin: origin)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw FindleError.invalidResponse(detail: "Non-HTTP response.")
@@ -828,7 +853,8 @@ public final class MoodleClient: LMSProvider, Sendable {
 
     private func performRequest(
         _ request: URLRequest,
-        policy: RequestPolicy = .standard
+        policy: RequestPolicy = .standard,
+        credentialOrigin: AuthenticatedRequestOrigin? = nil
     ) async throws -> (Data, URLResponse) {
         var request = request
         if request.timeoutInterval <= 0 {
@@ -837,12 +863,23 @@ public final class MoodleClient: LMSProvider, Sendable {
 
         for attempt in 0..<policy.retryCount {
             try Task.checkCancellation()
+            let redirectDelegate = credentialOrigin.map { AuthenticatedRedirectDelegate(origin: $0) }
 
             do {
-                return try await session.data(for: request)
+                let result = try await session.data(for: request, delegate: redirectDelegate)
+                try redirectDelegate?.checkRedirect()
+                if let credentialOrigin {
+                    guard let responseURL = result.1.url else { throw AuthenticatedRequestError.untrustedDestination }
+                    try credentialOrigin.validate(responseURL)
+                }
+                return result
             } catch is CancellationError {
+                try Task.checkCancellation()
+                try redirectDelegate?.checkRedirect()
                 throw CancellationError()
             } catch let error as URLError {
+                try Task.checkCancellation()
+                try redirectDelegate?.checkRedirect()
                 if error.code == .cancelled {
                     throw CancellationError()
                 }

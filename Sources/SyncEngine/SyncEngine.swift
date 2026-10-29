@@ -439,7 +439,7 @@ public actor SyncEngine {
 
         case .url:
             // Represent URL resources as .webloc files
-            if let content = module.contents.first, let urlString = content.fileURL?.absoluteString {
+            if let content = module.contents.first, let url = content.fileURL {
                 let itemID = "url-\(siteID)-\(courseID)-\(module.id)"
                 let item = LocalItem(
                     id: itemID,
@@ -450,7 +450,7 @@ public actor SyncEngine {
                     filename: FileNameSanitizer.sanitize(module.name) + ".webloc",
                     isDirectory: false,
                     contentType: "com.apple.web-internet-location",
-                    fileSize: Int64(urlString.utf8.count + 200),
+                    fileSize: Int64((try? MoodleWebLocation.data(for: url).count) ?? 0),
                     modificationDate: content.timeModified,
                     syncState: .placeholder,
                     remoteURL: content.fileURL
@@ -627,25 +627,43 @@ public actor SyncEngine {
             throw FindleError.itemNotFound(itemID: itemID)
         }
 
+        guard item.siteID == site.id, !item.isLocal, !item.isDirectory else {
+            throw FindleError.downloadFailed(itemID: itemID, reason: "Item does not belong to this site's remote files")
+        }
+
         guard let remoteURL = item.remoteURL else {
             throw FindleError.downloadFailed(itemID: itemID, reason: "No remote URL")
         }
 
-        try database.updateItemSyncState(id: itemID, state: .downloading)
+        let localData = try MoodleWebLocation.data(for: item)
+        if localData == nil {
+            try AuthenticatedRequestOrigin(site: site).validate(remoteURL)
+        }
+        try Task.checkCancellation()
+        guard try database.updateDownloadState(for: item, state: .downloading) != nil else {
+            throw FindleError.itemNotFound(itemID: itemID)
+        }
 
         do {
-            try await provider.downloadFile(url: remoteURL, token: token, destination: destination)
+            if let localData {
+                try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try localData.write(to: destination, options: .atomic)
+            } else {
+                try await provider.downloadFile(url: remoteURL, site: site, token: token, destination: destination)
+            }
             try Task.checkCancellation()
-            try database.updateItemSyncState(id: itemID, state: .materialized, localPath: destination.path)
+            guard try database.updateDownloadState(for: item, state: .materialized, localPath: destination.path) != nil else {
+                throw FindleError.itemNotFound(itemID: itemID)
+            }
             logger.info("Downloaded item \(itemID, privacy: .public)")
         } catch is CancellationError {
             try? FileManager.default.removeItem(at: destination)
-            try? database.updateItemSyncState(id: itemID, state: .placeholder)
+            _ = try? database.updateDownloadState(for: item, state: .placeholder, onlyIfDownloading: true)
             throw CancellationError()
         } catch {
             // Don't leave a half-written file behind for the next download to trip on.
             try? FileManager.default.removeItem(at: destination)
-            try database.updateItemSyncState(id: itemID, state: .error)
+            _ = try database.updateDownloadState(for: item, state: .error, onlyIfDownloading: true)
             throw error
         }
     }
