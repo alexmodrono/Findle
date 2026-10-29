@@ -1,6 +1,9 @@
 name: Stability stress
 
 on:
+  pull_request:
+    branches: [main]
+    types: [labeled, synchronize, reopened]
   schedule:
     - cron: '41 3 * * 3'
   workflow_dispatch:
@@ -14,11 +17,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: stress-${{ github.ref }}
-  cancel-in-progress: false
+  group: stress-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   stress:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'stability-stress')
     name: Stress (${{ matrix.runner }}, ${{ matrix.mode }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60

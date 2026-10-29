@@ -154,6 +154,14 @@ oldest supported OS family on current hosted images, not precisely macOS 15.0.
 macOS 27 is currently a preview runner and is not silently substituted for
 these stable images. Recheck runner/toolchain availability when upgrading.
 
+To qualify all four lanes before merging the workflow to main, add the
+`stability-stress` label to a PR targeting main. Pushing new commits or reopening
+the PR while that label remains present starts a fresh run. New PR runs cancel
+superseded stress runs for the same PR; scheduled and manual runs retain their
+existing behavior without canceling an in-progress run. PRs without the label
+skip the stress jobs. This opt-in path uses the same read-only token and
+disposable fixtures as scheduled runs, with no secrets.
+
 Each lane repeats Persistence, SyncEngine, FileProvider, FindleMCP and
 Networking suites three times, relaunching test processes and stopping on the
 first failure. There are no failure retries. Existing fixtures exercise

@@ -149,6 +149,11 @@
           "at": "2026-10-29T10:04:08Z",
           "by": "codex",
           "text": "Prepare signed integration validation against the newly stabilized source. Preserve the existing real account and personal files; begin with signatures, installed state, Finder behavior and read-only diagnostics. Fresh SSO and cross-OS upgrade evidence remain separate gates."
+        },
+        {
+          "at": "2026-10-29T11:42:17Z",
+          "by": "codex",
+          "text": "User confirmed: use the existing account only for nondestructive checks; no disposable account is available. Signed Nightly build 141 from 6a58ffa is prepared and all seven owned signatures, both architectures, source stamp and Nightly identities verify. It has not been installed. A verified archive preserves 332 readable personal files, but macOS denies access to the active provider/host SQLite stores and legacy LocalContent, so recovery backup remains incomplete. Native UI still returns cgWindowNotFound. Keep installed-account state unchanged until these access limits are resolved."
         }
       ]
     },
@@ -728,6 +733,11 @@
           "at": "2026-10-29T10:44:20Z",
           "by": "codex",
           "text": "Final auth/session code validation passed: full Debug and Nightly suites each 372 tests, no failures/skips; source hashes unchanged throughout. Embedded authentication now acquires session ownership before WebKit starts, so logout retires suspended and deferred providers; controller cleanup is attempt-scoped. Persistent WebKit stores are removed only after actual view release, with a bounded persisted retry queue and startup cleanup. Close/process termination resolve waiters; secure nonce failure aborts before auth creation; token-bearing callback hosts/full URLs are never passed to logging. Signed institutional SSO and stalled File Provider XPC qualification remain open."
+        },
+        {
+          "at": "2026-10-29T11:42:17Z",
+          "by": "codex",
+          "text": "User explicitly limits the existing account to nondestructive checks. Sign-out, reset and destructive transition trials require a disposable account and remain unqualified; controlled automated cancellation/session tests are already implemented and passing."
         }
       ]
     },
@@ -948,6 +958,11 @@
           "at": "2026-10-29T11:16:08Z",
           "by": "codex",
           "text": "First hosted Actions scan exposed query-pack rule metadata in SARIF extensions and diff-informed analysis. Fixed component-aware parsing and required full scans; 31 automation tests pass after independent SARIF-spec review. Fresh clean run is on PR #26 head 17e751d. Disposable draft PR #28 adds only a guarded, nonexecuting critical-finding fixture to verify real analyzer rejection. Never merge #28. No baseline has been approved yet."
+        },
+        {
+          "at": "2026-10-29T11:42:17Z",
+          "by": "codex",
+          "text": "Real Actions canary comparison passed: clean run 40863555679 full scan has zero findings; disposable run 40863941687 finds exactly actions/code-injection/critical severity 9 and the frozen gate rejects its new fingerprint. The canary workflow never executed; artifact hashes and exact merge SHAs are retained. PR #28 was closed without merging and its branch deleted; unnecessary remaining canary jobs were cancelled after evidence retention. Swift analysis and final baseline approval remain open."
         }
       ]
     },
@@ -1092,6 +1107,11 @@
           "at": "2026-10-29T11:28:12Z",
           "by": "codex",
           "text": "Qualify coverage from the successful hosted Debug artifact and run the prepared stress lanes; keep the security and release baselines separate."
+        },
+        {
+          "at": "2026-10-29T11:42:17Z",
+          "by": "codex",
+          "text": "Successful hosted run 40863555651 confirms 373 logical tests per Debug/Nightly configuration (375 parameterized executions), zero failures/skips. Raw coverage and independent xcresult extraction agree across seven modules. Provisional measured baseline is retained for review; no arbitrary percentage floor. Added opt-in stability-stress PR label support so the four prepared lanes can be qualified before the workflow reaches main."
         }
       ]
     },
