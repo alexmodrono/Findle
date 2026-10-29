@@ -1,0 +1,14 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns: ["*"]
+# Swift constraints currently live in XcodeGen's project.yml. Do not add a
+# generic Swift job until it can update that source of truth and the canonical
+# resolved versions together; a dummy Package.swift would silently diverge.
