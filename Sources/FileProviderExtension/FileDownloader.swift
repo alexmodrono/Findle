@@ -55,8 +55,19 @@ enum FileDownloader {
         guard !progress.isCancelled else { throw CocoaError(.userCancelled) }
         let destinationURL = DownloadPublication.destination(for: item, in: temporaryDirectory)
         if let data = try MoodleWebLocation.data(for: item) {
-            let updated = try DownloadPublication.publishGenerated(
-                data, item: item, database: database, destination: destinationURL, progress: progress)
+            let updated: LocalItem
+            do {
+                updated = try DownloadPublication.publishGenerated(
+                    data, item: item, database: database, destination: destinationURL, progress: progress)
+            } catch {
+                let failure = error as NSError
+                if failure.domain == NSCocoaErrorDomain || failure.domain == NSFileProviderErrorDomain {
+                    throw error
+                }
+                DiagnosticJournal(databasePath: database.filePath)?.record(.init(
+                    process: .fileProvider, operation: .download, outcome: .failed, failure: DiagnosticFailure(error)))
+                throw NSFileProviderError(.serverUnreachable)
+            }
             completionBridge.succeed(url: destinationURL, item: FileProviderItem(localItem: updated))
             return
         }
@@ -66,7 +77,15 @@ enum FileDownloader {
         }
 
         // Establish trust from the item's persisted site before touching Keychain.
-        guard let site = try database.fetchSite(id: item.siteID) else {
+        let storedSite: MoodleSite?
+        do {
+            storedSite = try database.fetchSite(id: item.siteID)
+        } catch {
+            DiagnosticJournal(databasePath: database.filePath)?.record(.init(
+                process: .fileProvider, operation: .download, outcome: .failed, failure: DiagnosticFailure(error)))
+            throw NSFileProviderError(.serverUnreachable)
+        }
+        guard let site = storedSite else {
             throw NSFileProviderError(.serverUnreachable)
         }
         let origin: AuthenticatedRequestOrigin

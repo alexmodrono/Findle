@@ -663,7 +663,11 @@ public actor SyncEngine {
         } catch {
             // Don't leave a half-written file behind for the next download to trip on.
             try? FileManager.default.removeItem(at: destination)
-            _ = try database.updateDownloadState(for: item, state: .error, onlyIfDownloading: true)
+            do {
+                _ = try database.updateDownloadState(for: item, state: .error, onlyIfDownloading: true)
+            } catch let stateError {
+                logger.error("Could not record download failure for \(itemID, privacy: .private): \(DiagnosticFailure(stateError).summary, privacy: .public)")
+            }
             throw error
         }
     }

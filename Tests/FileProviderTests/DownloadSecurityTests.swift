@@ -74,6 +74,41 @@ final class DownloadSecurityTests: XCTestCase {
             completionHandler: { _, _, _ in XCTFail("Not a Moodle URL resource") }))
     }
 
+    func testSiteReadFailureIsTransientAndDoesNotReadCredentials() throws {
+        let f = try fixture()
+        let item = try XCTUnwrap(f.database.fetchItem(id: "file-a"))
+        try providerSQL("UPDATE sites SET base_url = 'https://[invalid' WHERE id = 'a'", path: f.path)
+        XCTAssertThrowsError(try f.database.fetchSite(id: item.siteID))
+        assertProviderError(.serverUnreachable) {
+            try FileDownloader.startDownload(item: item, database: f.database,
+                progress: Progress(totalUnitCount: 100), temporaryDirectory: f.directory,
+                tokenReader: { _ in XCTFail("Unreadable site reached Keychain"); return nil },
+                completionHandler: { _, _, _ in XCTFail("Failed request completed") })
+        }
+        XCTAssertEqual(try f.database.fetchItem(id: item.id), item)
+    }
+
+    func testBookmarkDatabaseFailureIsTransientAndRemovesStagedFiles() throws {
+        let f = try fixture()
+        let item = bookmark()
+        try f.database.saveItems([item])
+        try providerSQL("""
+            CREATE TRIGGER reject_bookmark_publication BEFORE UPDATE OF sync_state ON items
+            WHEN NEW.sync_state = 'materialized'
+            BEGIN SELECT RAISE(ABORT, 'fixture publication failure'); END;
+            """, path: f.path)
+        let staging = f.directory.appendingPathComponent("staging", isDirectory: true)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        assertProviderError(.serverUnreachable) {
+            try FileDownloader.startDownload(item: item, database: f.database,
+                progress: Progress(totalUnitCount: 100), temporaryDirectory: staging,
+                tokenReader: { _ in XCTFail("Bookmark read credentials"); return nil },
+                completionHandler: { _, _, _ in XCTFail("Failed bookmark completed") })
+        }
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: staging.path).isEmpty)
+        XCTAssertEqual(try f.database.fetchItem(id: item.id), item)
+    }
+
     func testCancelledOrReplacedBookmarksLeaveNoStagedFiles() throws {
         let f = try fixture()
         let item = bookmark()
@@ -83,14 +118,18 @@ final class DownloadSecurityTests: XCTestCase {
         progress.cancel()
         XCTAssertThrowsError(try FileDownloader.startDownload(item: item, database: f.database, progress: progress,
             temporaryDirectory: f.directory, tokenReader: { _ in XCTFail("Cancelled bookmark read credentials"); return nil },
-            completionHandler: { _, _, _ in XCTFail("Cancelled request completed") }))
+            completionHandler: { _, _, _ in XCTFail("Cancelled request completed") })) {
+                XCTAssertEqual(($0 as? CocoaError)?.code, .userCancelled)
+            }
         var replaced = item
         replaced.contentVersion = "v2"
         try f.database.saveItems([replaced])
         XCTAssertThrowsError(try FileDownloader.startDownload(item: item, database: f.database,
             progress: Progress(totalUnitCount: 100), temporaryDirectory: f.directory,
             tokenReader: { _ in XCTFail("Stale bookmark read credentials"); return nil },
-            completionHandler: { _, _, _ in XCTFail("Stale request completed") }))
+            completionHandler: { _, _, _ in XCTFail("Stale request completed") })) {
+                XCTAssertEqual(($0 as? NSFileProviderError)?.code, .versionNoLongerAvailable)
+            }
         XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: f.directory.path)), Set(before))
         XCTAssertEqual(try f.database.fetchItem(id: item.id), replaced)
     }

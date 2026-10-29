@@ -143,6 +143,38 @@ final class SyncEngineCourseScopeTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
+    func testDownloadPreservesOriginalFailureWhenRecordingErrorStateFails() async throws {
+        let site = MoodleSite(id: "site-1", displayName: "Example", baseURL: URL(string: "https://moodle.example.edu")!)
+        let item = LocalItem(id: "file-site-1-1-1", siteID: site.id, courseID: 1, remoteID: 1, filename: "file.pdf",
+                             remoteURL: URL(string: "https://moodle.example.edu/file"))
+        try database.saveItems([item])
+        try database.execute("""
+            CREATE TRIGGER reject_download_error BEFORE UPDATE OF sync_state ON items
+            WHEN NEW.sync_state = 'error'
+            BEGIN SELECT RAISE(ABORT, 'fixture state write failure'); END;
+            """)
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        let failures: [FindleError] = [.tokenExpired, .networkUnavailable, .requestFailed(statusCode: 503, detail: "fixture")]
+        for failure in failures {
+            let provider = FakeLMSProvider(courseContents: [:], onDownload: { _, _, _, destination in
+                try Data("partial response".utf8).write(to: destination)
+                throw failure
+            })
+            let engine = SyncEngine(provider: provider, database: database)
+            do {
+                try await engine.downloadItem(itemID: item.id, site: site, token: AuthToken(token: "fixture-secret"), destination: destination)
+                XCTFail("Download failure was lost")
+            } catch {
+                XCTAssertEqual(DiagnosticFailure(error).kind, DiagnosticFailure(failure).kind)
+                XCTAssertEqual((error as? FindleError)?.requiresReauthentication, failure.requiresReauthentication)
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+            XCTAssertEqual(try database.fetchItem(id: item.id)?.syncState, .downloading)
+        }
+    }
+
     func testCancellationAfterFetchingKeepsWholePreviousRevision() async throws {
         let site = MoodleSite(id: "site-1", displayName: "Example", baseURL: URL(string: "https://moodle.example.edu")!)
         let course = MoodleCourse(id: 101, shortName: "C101", fullName: "Course 101", siteID: site.id)
