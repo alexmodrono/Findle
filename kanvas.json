@@ -659,6 +659,16 @@
           "at": "2026-10-29T13:07:32Z",
           "by": "codex",
           "text": "Committed 678ef07 after 98 optimized persistence tests and 120 passing executions across six regression tests (20 repetitions each, stop on first failure). The new regression was also run against the original production code and failed immediately with the same SQLite3850. Source hashes were frozen and unrelated concurrent UI edits excluded. Retained source/logs/xcresults: /Volumes/Pheidippides/Developer/Xcode/DerivedData/findle-sqlite-lock-fix.1nddr24d. Keep task open until fresh hosted qualification passes."
+        },
+        {
+          "at": "2026-10-29T14:38:00Z",
+          "by": "codex",
+          "text": "The previous SQLite lock failure is fixed, but fresh hosted CI exposed a second initialization defect: a diagnostic reader can run before a newly switched WAL store has its sidecars ready. A standalone probe reproduces SQLite CANTOPEN14 immediately; a writer metadata read inside the initialization gate passes 1,000 rounds. The new production regression also fails before the fix for both a fresh store and a migrated store. The focused fix is undergoing repeated optimized tests before another hosted qualification. Signed reset/upgrade checks remain separate and will not use the real account destructively."
+        },
+        {
+          "at": "2026-10-29T14:49:04Z",
+          "by": "codex",
+          "text": "Committed 12487d2: initialization now prepares WAL while holding the existing gate, so immediate read-only diagnostics succeed. The new regression fails before the fix for fresh and migrated stores; the fix passes 140 repeated optimized checks. Both full local suites pass 403 tests, zero failures/skips. A separate empty-WAL fixture now explicitly disables SQLite's keep-sidecars policy before checkpoint/close, preserving its no-sidecar precondition and production defaults. Independent C evidence verifies committed data/schema through 1,000 fixture repetitions. Exact source hashes, red/green results and findings are retained at /Volumes/Pheidippides/Developer/Xcode/DerivedData/findle-sqlite-lock-fix.1nddr24d. Fresh hosted qualification remains required."
         }
       ]
     },
@@ -1013,6 +1023,11 @@
           "at": "2026-10-29T13:03:36Z",
           "by": "codex",
           "text": "Full CodeQL run 40872153696 at c62356d completed successfully: Actions, Swift, and CodeQL required all passed against the separately reviewed main baseline. Subsequent persistence and token-destination fixes will change source, so the final implementation still needs a fresh full security run; this green result is not reused as qualification for those changes."
+        },
+        {
+          "at": "2026-10-29T14:46:48Z",
+          "by": "codex",
+          "text": "Analyzer qualification is established: the fresh full-source Swift and Actions scans and required aggregate all passed on 4a101cb (Actions run 40882491255). The reviewed baseline and deliberately rejected security canary are already retained. Remaining rollout is deployment of this workflow and weekly schedule to trusted main, with the next revision receiving its own normal scan. The outstanding fork-event qualification in GH-01 does not invalidate these analyzer results."
         }
       ]
     },
@@ -1118,6 +1133,11 @@
           "at": "2026-10-29T12:03:41Z",
           "by": "codex",
           "text": "Grouped weekly GitHub Actions version updates are now enabled on main via PR #29 and produced actual Dependabot PR #30. Independent review verified official checkout v7.0.1/upload-artifact v7.0.2 commits and Node 24 runner compatibility. The bot build passed with read-only permissions; no automatic approval/merge is enabled. Swift dependency discovery/update tooling remains in the stability branch and still needs live qualification."
+        },
+        {
+          "at": "2026-10-29T18:30:57Z",
+          "by": "codex",
+          "text": "A real older-to-current MCP updater trial established published 0.12.0 as the resolver baseline and discovery selected current 0.12.1. Pheidippides disconnected again while the actual update/resolution was running, so the resolver completion and retained before/after evidence are not yet verified. This is not a completed upgrade trial. The real project remains pinned to 0.12.1; hosted proposal/PR qualification and the completed MCP trial remain open."
         }
       ]
     },
@@ -1202,6 +1222,16 @@
           "at": "2026-10-29T13:29:57Z",
           "by": "codex",
           "text": "Latest frozen integration passes399 local Debug tests and399 optimized Nightly tests with no skips. Database regression has red-before/green-after evidence plus120 passing repeated executions. Commit08628a4 also addresses the CodeRabbit credential-destination issue. All four hosted stress lanes will rerun automatically on the labeled PR; earlier failed lane evidence remains retained."
+        },
+        {
+          "at": "2026-10-29T14:46:48Z",
+          "by": "codex",
+          "text": "The latest four hosted lanes exercised real failures: macOS 26 Nightly/TSan caught a WAL readiness defect, while macOS 26 ASan and macOS 15 Nightly passed. The failed lanes each retained 917 successful executions and one failing execution, with no skips or sanitizer warning. The focused fix now passes 140 local optimized checks, and the complete local Debug suite passes after correcting a fixture's SQLite sidecar-retention assumption. Fresh green hosted coverage and all four stress lanes remain required before this task can finish."
+        },
+        {
+          "at": "2026-10-29T14:51:54Z",
+          "by": "codex",
+          "text": "The final local implementation now passes all 403 Debug and 403 optimized Nightly tests, zero failures/skips, plus 140 focused repeated database checks. The exact committed source is 62843fc with the WAL fix in 12487d2; hashes and retained results match the frozen validation source. The remaining gate is fresh hosted coverage and all four stress lanes on the pushed revision, followed by schedule deployment to main."
         }
       ]
     },
@@ -1271,7 +1301,7 @@
     {
       "id": "RS-08",
       "title": "Keep Moodle credentials scoped to their trusted download destination",
-      "state": "doing",
+      "state": "done",
       "group": "RS",
       "at": "2026-10-29T13:00:17Z",
       "by": "codex",
@@ -1291,6 +1321,16 @@
           "at": "2026-10-29T13:29:57Z",
           "by": "codex",
           "text": "Committed 08628a4 after independent review and real URLSession redirect tests. The focused security suites pass24 tests; the complete frozen-source suites pass399 in Debug and399 in optimized Nightly, zero failures/skips. Denied redirects cancel once and produce a security error before retry/auth-expiry handling. Local bookmarks, token-free paths, wrong-site rejection, stale publication and cancellation are covered. New error-copy review counted0 before/after. Evidence: /Volumes/Pheidippides/Developer/Xcode/DerivedData/findle-sqlite-lock-fix.1nddr24d. Fresh hosted qualification is next; no real account or installed app was changed."
+        },
+        {
+          "at": "2026-10-29T14:38:00Z",
+          "by": "codex",
+          "text": "The credential-boundary tests and complete 399-test Debug/Nightly suites passed locally; the fresh hosted Nightly suite, CodeQL, macOS 15 stress and macOS 26 Address Sanitizer also passed. Other hosted lanes exposed a separate database initialization defect now being fixed. CodeRabbit's two follow-up findings are valid: preserve the original download failure if recording it fails, and map synchronous database failures to Finder's transient error. Both fixes now have disposable-fixture regressions; qualification is in progress."
+        },
+        {
+          "at": "2026-10-29T14:49:04Z",
+          "by": "codex",
+          "text": "Credentials stay within the selected secure Moodle origin, including redirects; course web links become local bookmarks without reading tokens or using the network. Cancellation, stale-version publication, hostile URLs/redirects and both download paths are covered with disposable fixtures. Follow-up commit 62843fc preserves original download/authentication failures when recording state fails and gives Finder transient errors for database failures. All 403 Debug and 403 optimized Nightly tests pass with no failures/skips. HTTP-only sites and authenticated foreign-origin CDN files deliberately fail closed. Accepting this implementation does not close the separate hosted, signed-runtime or release-soak gates."
         }
       ]
     }
