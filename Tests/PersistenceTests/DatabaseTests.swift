@@ -694,10 +694,21 @@ final class DatabaseTests: XCTestCase {
     }
 
     func testConcurrentReadersReopenCheckpointedDatabaseWithoutWAL() async throws {
-        // Closing the final connection checkpoints/removes WAL. Simultaneous
-        // readers must accept that supported store without schema mutation.
+        // Some Apple SQLite versions retain empty WAL/SHM files on close.
+        // Explicitly disable that policy for this disposable fixture so the
+        // test actually exercises a checkpointed store with missing sidecars.
         database = nil
+        do {
+            var pointer: OpaquePointer?
+            XCTAssertEqual(sqlite3_open_v2(tempPath, &pointer, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil), SQLITE_OK)
+            let connection = try XCTUnwrap(pointer)
+            defer { XCTAssertEqual(sqlite3_close(connection), SQLITE_OK) }
+            var persistWAL: Int32 = 0
+            XCTAssertEqual(sqlite3_file_control(connection, "main", SQLITE_FCNTL_PERSIST_WAL, &persistWAL), SQLITE_OK)
+            try executeRawSQL(connection, "PRAGMA wal_checkpoint(TRUNCATE)")
+        }
         XCTAssertFalse(FileManager.default.fileExists(atPath: tempPath + "-wal"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tempPath + "-shm"))
         let path = try XCTUnwrap(tempPath)
         for _ in 0..<10 {
             try await withThrowingTaskGroup(of: Int.self) { group in

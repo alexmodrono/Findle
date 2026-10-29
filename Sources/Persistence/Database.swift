@@ -206,7 +206,13 @@ public final class Database: @unchecked Sendable {
         while true {
             try validateSupportedSchemaUnsafe()
             let status = sqlite3_exec(db, "PRAGMA journal_mode = WAL", nil, nil, nil)
-            if status == SQLITE_OK { return }
+            if status == SQLITE_OK {
+                // Changing journal mode does not open WAL/SHM until the first
+                // read. Prime them while initialization still holds the gate,
+                // before a true read-only diagnostic can observe the new mode.
+                try validateSupportedSchemaUnsafe()
+                return
+            }
             guard (status == SQLITE_BUSY || status == SQLITE_LOCKED), DispatchTime.now().uptimeNanoseconds < deadline else {
                 throw FindleError.databaseError(detail: "Cannot enable database journaling")
             }

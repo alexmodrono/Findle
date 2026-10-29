@@ -4,6 +4,33 @@ import SharedDomain
 import SQLite3
 
 final class DatabaseDiagnosticsTests: XCTestCase {
+    func testDiagnosticsCanReadImmediatelyAfterWriterEnablesWAL() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        for migrating in [false, true] {
+            let path = root.appendingPathComponent(migrating ? "migration.db" : "new.db").path
+            if migrating {
+                let initial = try Database(path: path)
+                try initial.setSeedComplete(true)
+                try initial.execute("PRAGMA journal_mode = DELETE")
+                try initial.execute("PRAGMA user_version = 10")
+            }
+
+            let writer = try Database(path: path)
+            // No application query may prime WAL for us. A newly returned
+            // writer must already support an independent true read-only probe.
+            let snapshot = withExtendedLifetime(writer) {
+                DatabaseDiagnostics.capture(path: path, siteID: nil)
+            }
+            XCTAssertNil(snapshot.failure, "Immediate diagnostic failed; migrating: \(migrating)")
+            XCTAssertEqual(snapshot.schemaVersion, Database.schemaVersion)
+            XCTAssertEqual(snapshot.seedComplete, migrating)
+            XCTAssertEqual(snapshot.changeCounter, 0)
+        }
+    }
+
     func testConcurrentDiagnosticsAndSchemaOpenersPreserveCommittedHealth() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
