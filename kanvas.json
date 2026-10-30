@@ -154,6 +154,16 @@
           "at": "2026-10-29T11:42:17Z",
           "by": "codex",
           "text": "User confirmed: use the existing account only for nondestructive checks; no disposable account is available. Signed Nightly build 141 from 6a58ffa is prepared and all seven owned signatures, both architectures, source stamp and Nightly identities verify. It has not been installed. A verified archive preserves 332 readable personal files, but macOS denies access to the active provider/host SQLite stores and legacy LocalContent, so recovery backup remains incomplete. Native UI still returns cgWindowNotFound. Keep installed-account state unchanged until these access limits are resolved."
+        },
+        {
+          "at": "2026-10-29T19:02:30Z",
+          "by": "codex",
+          "text": "Native app/Finder access now works again. Read-only inspection of the already-installed signed Nightly build157 preserves 11 of43 selected courses; its own locally saved redacted diagnostics report all11 successful, File Provider registered, schema15 and seed complete. Apple Development signature/team54WRV8QX2U verifies, with both architectures present. This is a locally modified 4a101cb-dirty build, not the exact ba72728 PR candidate, so do not count it as final signed qualification. No install, sign-in/out, reset, subscription change or sync was triggered. External read-only access to the live database is still unavailable, so the report is not a complete recovery backup. Private runtime evidence is retained locally under evidence ID runtime-UK4Z1v; its contents must not be uploaded as public review evidence."
+        },
+        {
+          "at": "2026-10-29T22:25:28Z",
+          "by": "codex",
+          "text": "Reconnected Pheidippides and verified retained WAL suite evidence and all seven source hashes against deployed main. Existing staged build141 and installed build157 still do not identify current qualified source. Prepare the next signed artifact after the Sparkle PR settles, without installing it until recovery prerequisites are satisfied. Current isolated onboarding changes also use a local Airlock API absent from the production pin; publish/review that dependency and integrate the matching interface before treating a new signed artifact as the complete current interface. Demo acceptance cannot substitute for this integration or real institutional SSO."
         }
       ]
     },
@@ -608,7 +618,7 @@
     {
       "id": "DS-04",
       "title": "Make database transitions and provider reset recoverable",
-      "state": "doing",
+      "state": "done",
       "group": "DS",
       "deps": ["DS-03"],
       "at": "2026-10-29T00:06:36Z",
@@ -669,6 +679,11 @@
           "at": "2026-10-29T14:49:04Z",
           "by": "codex",
           "text": "Committed 12487d2: initialization now prepares WAL while holding the existing gate, so immediate read-only diagnostics succeed. The new regression fails before the fix for fresh and migrated stores; the fix passes 140 repeated optimized checks. Both full local suites pass 403 tests, zero failures/skips. A separate empty-WAL fixture now explicitly disables SQLite's keep-sidecars policy before checkpoint/close, preserving its no-sidecar precondition and production defaults. Independent C evidence verifies committed data/schema through 1,000 fixture repetitions. Exact source hashes, red/green results and findings are retained at /Volumes/Pheidippides/Developer/Xcode/DerivedData/findle-sqlite-lock-fix.1nddr24d. Fresh hosted qualification remains required."
+        },
+        {
+          "at": "2026-10-29T18:55:42Z",
+          "by": "codex",
+          "text": "Database recovery and initialization now meet the implementation gates. Both previously captured SQLite failures have causal red-before/green-after regressions; current head ba72728 passes hosted Debug/Nightly (403 tests each) and all four optimized/sanitized stress lanes (3,720 successful executions total, zero failures/skips/runtime warnings). Exact tested merge and artifact hashes were independently verified. Earlier fault-injected reset, snapshot, unsupported-schema and personal-file preservation tests remain passing. Accept the implementation; signed operating-system reset/upgrade checks remain explicitly under FN-02/RR-03 and will not be run destructively on the real account. Evidence: /tmp/findle-ci-stress-ba72728.6edozb_u/REPORT.md."
         }
       ]
     },
@@ -960,6 +975,31 @@
           "at": "2026-10-29T12:39:17Z",
           "by": "codex",
           "text": "The new required CI aggregate correctly failed when Nightly reproduced the concurrent schema-opener fault. Debug, unsigned artifact build, onboarding and workflow checks passed. This confirms the fault remains unresolved despite the earlier current-schema no-op improvement; no green run is being substituted for these failures."
+        },
+        {
+          "at": "2026-10-29T19:02:30Z",
+          "by": "codex",
+          "text": "Prepared a disposable fork-event procedure and controlled failing XCTest at /tmp/findle-fork-qualification-plan. It will first qualify a documentation-only fork PR, then prove the native failing test reaches the required CI aggregate, and close without merging. A user-selected organization namespace is needed because alexmodrono already owns Findle and cannot fork it back into that account. Existing third-party forks will not be modified. Same-repository and Dependabot event evidence remains valid."
+        },
+        {
+          "at": "2026-10-29T21:33:17Z",
+          "by": "codex",
+          "text": "The user selected Codename-Streetpass for the temporary fork. Qualified workflows are now deployed on main at 5a2e751; creating a documentation-only fork PR, then introducing an intentional failing XCTest on that unmerged branch to verify failure propagation. Preserve the existing successful same-repository and Dependabot evidence."
+        },
+        {
+          "at": "2026-10-29T21:34:29Z",
+          "by": "codex",
+          "text": "Created the user-authorized temporary fork Codename-Streetpass/Findle-ci-qualification with fork Actions explicitly disabled. Upstream draft PR #33 is a documentation-only actual cross-repository PR at 5104ac1, based on deployed main 5a2e751. Its first check run will qualify fork permissions, unsigned artifact and complete required contexts before the intentional-failure revision. The PR must never merge."
+        },
+        {
+          "at": "2026-10-29T21:42:41Z",
+          "by": "codex",
+          "text": "Actual fork PR #33 Nightly build passed. Its checked-out merge has the expected main/fork parents; setup confirms read-only token permissions, no secrets and removed checkout credentials. Code signing was explicitly disabled; artifact upload and summary link succeeded (run 40958892199, artifact 12935146622). API and upload-log digests agree, but artifact bytes/content have not been locally downloaded or independently hashed because storage is constrained. Debug/onboarding and Actions scan also passed at last inspection; full required CI/Swift CodeQL remain pending. Evidence: /tmp/findle-fork-pr33-nightly.dex0y6pk/REPORT.md."
+        },
+        {
+          "at": "2026-10-29T22:15:01Z",
+          "by": "codex",
+          "text": "The documentation-only fork baseline is fully qualified at 5104ac1. Debug and Nightly each passed 403 logical tests/405 executions; preview passed 6/8, all without failures/skips/runtime warnings. Both required aggregates succeeded from GitHub Actions integration 15368, all seven coverage floors passed, and full Swift/Actions CodeQL scans and frozen gates passed. Actual fork jobs had read-only permissions and no secrets. Downloaded artifact ZIP hashes and packaged source revision were independently verified; binaries have no developer identity (ARM64 linker ad-hoc only, x86_64 unsigned). Full evidence is retained on Pheidippides under findle-fork-pr33-qualified.o9u3hhq0, with local report /tmp/findle-fork-pr33-qualified-report.md. Remaining: stale-head and deliberate failing-test cases; the canary must never merge."
         }
       ]
     },
@@ -1028,6 +1068,11 @@
           "at": "2026-10-29T14:46:48Z",
           "by": "codex",
           "text": "Analyzer qualification is established: the fresh full-source Swift and Actions scans and required aggregate all passed on 4a101cb (Actions run 40882491255). The reviewed baseline and deliberately rejected security canary are already retained. Remaining rollout is deployment of this workflow and weekly schedule to trusted main, with the next revision receiving its own normal scan. The outstanding fork-event qualification in GH-01 does not invalidate these analyzer results."
+        },
+        {
+          "at": "2026-10-29T21:41:37Z",
+          "by": "codex",
+          "text": "Full CodeQL now passes both the qualified PR event (40931559167) and the trusted main push event (40953335979) at deployed revision 5a2e751. The unchanged tree has verified Swift extraction across all seven modules, clean Swift/Actions SARIF and frozen reviewed-baseline enforcement. CodeQL required is enforced as GitHub Actions integration15368. The remaining dependency is completion of the actual fork-event qualification in GH-01; no security check was bypassed."
         }
       ]
     },
@@ -1050,6 +1095,16 @@
           "at": "2026-10-29T12:25:09Z",
           "by": "codex",
           "text": "Basic protection is now active and independently read back: main ruleset 26120414 requires PRs and resolved discussions, blocks deletion/force-push, and permits only alexmodrono to use a PR-only emergency bypass. Zero approvals avoids impossible self-review. Version-tag ruleset 26120416 prevents v* updates/deletion with no bypass. Required CI/CodeQL contexts and good/failing/stale/docs-only qualification remain pending; no missing checks were imposed. Full policy evidence and prepared next-stage payload are retained at /Volumes/Pheidippides/Developer/findle-repository-protection.rphxdgaq."
+        },
+        {
+          "at": "2026-10-29T21:33:17Z",
+          "by": "codex",
+          "text": "PR #26 merged at 5a2e751 after all exact-head CI, CodeQL, stress and CodeRabbit checks passed and the only review thread was resolved. Main ruleset 26120414 now requires CI required and CodeQL required from GitHub Actions integration 15368 with strict up-to-date checks. Independent API readback confirms PR-only narrow emergency bypass, resolved conversations and no deletion/force-push. Good-PR evidence is complete; documentation-only, failing and stale fork cases remain in qualification."
+        },
+        {
+          "at": "2026-10-29T21:41:37Z",
+          "by": "codex",
+          "text": "Board-only PR #34 (08b6080) records completed database and deployed automation qualification and runs the ordinary required checks. After both its checks and the fork documentation baseline pass, merging this legitimate checkpoint will advance main so PR #33 can demonstrate strict stale-head handling before the intentional failing-test revision. Never attempt to merge the canary; record readiness/rule evidence and close it unmerged after qualification."
         }
       ]
     },
@@ -1138,6 +1193,21 @@
           "at": "2026-10-29T18:30:57Z",
           "by": "codex",
           "text": "A real older-to-current MCP updater trial established published 0.12.0 as the resolver baseline and discovery selected current 0.12.1. Pheidippides disconnected again while the actual update/resolution was running, so the resolver completion and retained before/after evidence are not yet verified. This is not a completed upgrade trial. The real project remains pinned to 0.12.1; hosted proposal/PR qualification and the completed MCP trial remain open."
+        },
+        {
+          "at": "2026-10-29T21:36:49Z",
+          "by": "codex",
+          "text": "The deployed read-only discovery workflow passed on exact main 5a2e751 (run 40954623634, workflow_dispatch). Its hash-verified proposal artifact has no errors, proposes Sparkle 2.10.0 → 2.10.1, retains current MCP 0.12.1 and correctly refuses to roll Airlock back to its older default branch. Next is a real reviewed Sparkle update PR with ordinary required CI/CodeQL. The interrupted isolated MCP trial still needs its external-drive evidence recovered; no downgrade is planned for the real project. Report: /tmp/findle-deployed-automation.y1esvz8c/REPORT.md."
+        },
+        {
+          "at": "2026-10-29T21:40:18Z",
+          "by": "codex",
+          "text": "Official Sparkle patch review confirms 2.10.1 at immutable commit ab7d71291238df6e0492143b120c9b696a35f603 fixes premature update installation for Unicode-normalized app paths, with unchanged signing APIs, minimum OS and no transitive packages. Evidence: /tmp/findle-sparkle-2.10.1-review.jmbpx22t/REPORT.md. The local resolver preflight stopped before changing any source because free storage fell below the 3 GiB guard; external drive remains unmounted. The actual update PR is still pending."
+        },
+        {
+          "at": "2026-10-29T22:15:01Z",
+          "by": "codex",
+          "text": "Pheidippides is available again. The interrupted MCP trial is fully recovered: retained exit status 0, real resolver log and preserved hashes verify the published 0.12.0 → 0.12.1 transition with only the intended MCP change; no rerun or real-project downgrade was needed. The reviewed Sparkle 2.10.1 update also passed actual and strict locked resolution in a clean source export on the external drive. All nine other pins remain unchanged. Draft PR #35 at 8d0da37 contains only the source constraint and canonical Sparkle pin; ordinary required CI/CodeQL are now running. Source worktree and concurrent interface edits remain untouched. Evidence IDs: findle-mcp-updater-trial.q_j4j0r4 and findle-sparkle-update.kbxosqaf; handoff report /tmp/findle-sparkle-pr-ready.7mml07t4/REPORT.md."
         }
       ]
     },
@@ -1180,6 +1250,11 @@
           "at": "2026-10-29T13:29:57Z",
           "by": "codex",
           "text": "Addressed the review finding that promotion relied on uninstalled ripgrep after publication: immutable-release verification now uses the gh API result and shell test, preserving API failure propagation. actionlint and28 release-tool tests pass. No publishing or signing step was executed."
+        },
+        {
+          "at": "2026-10-29T22:25:28Z",
+          "by": "codex",
+          "text": "Confirmed GitHub has no native secret move/copy or value-read API. A reviewed one-time workflow can seal the existing repository credentials directly to each destination environment’s GitHub public key, allowing a local importer to transfer ciphertext without exposing values. Preparing a fixed allowlist and dummy-value tests for that route. Preserve production approval and the release-candidate v* restriction; do not remove repository originals until environment-scoped credential usability is verified. No secret value, environment rule or release artifact has been changed."
         }
       ]
     },
@@ -1232,6 +1307,26 @@
           "at": "2026-10-29T14:51:54Z",
           "by": "codex",
           "text": "The final local implementation now passes all 403 Debug and 403 optimized Nightly tests, zero failures/skips, plus 140 focused repeated database checks. The exact committed source is 62843fc with the WAL fix in 12487d2; hashes and retained results match the frozen validation source. The remaining gate is fresh hosted coverage and all four stress lanes on the pushed revision, followed by schedule deployment to main."
+        },
+        {
+          "at": "2026-10-29T18:55:42Z",
+          "by": "codex",
+          "text": "Hosted execution is qualified at ba72728: 403 tests pass in each Debug/Nightly suite; all four stress lanes pass 310 cases three times each (3,720 executions), with zero failures, skips or runtime warnings. Independent recomputation of Debug coverage matches the artifact and passes all seven reviewed module floors. Exact merge tree, toolchains, repetitions, seed and artifact digests are verified in /tmp/findle-ci-stress-ba72728.6edozb_u/REPORT.md. Remaining: deploy workflow to main and exercise a real manual/scheduled event. This is not a signed integration or 48-hour soak claim."
+        },
+        {
+          "at": "2026-10-29T21:36:49Z",
+          "by": "codex",
+          "text": "Coverage reporting and four stress lanes are deployed on main and qualified by real PR and manual workflow events. Manual run 40954618211 at exact 5a2e751 passed 310 cases three times in each lane: 3,720 executions, zero failures/skips/runtime warnings. Nightly, TSan and ASan run on macOS 26; Nightly also runs on the available macOS 15 runner. Seed 20261029, bounded runtime, 14-day artifacts and stop-on-first-failure are verified. Full Debug coverage passes the seven reviewed module floors; sanitizer/subset coverage remains report-only. The Wednesday 03:41 UTC schedule is deployed; a calendar-triggered execution has not yet occurred. Evidence and artifact hashes: /tmp/findle-deployed-automation.y1esvz8c/REPORT.md. This completes automation deployment/qualification, not signed integration or the release soak."
+        },
+        {
+          "at": "2026-10-29T21:37:16Z",
+          "by": "codex",
+          "text": "Accepted under the user’s authorization to manage Kanvas: deployed scheduling and independently verified manual execution satisfy the automation qualification. The first calendar firing remains explicitly unobserved; signed runtime and release-soak gates remain separate and open."
+        },
+        {
+          "at": "2026-10-29T22:29:20Z",
+          "by": "codex",
+          "text": "Corrected premature acceptance after reviewing the explicit task contract and CodeRabbit feedback. Manual execution and deployed schedule are verified, but the contract also requires an observed calendar-triggered run. Keep this task open until that run passes; all existing manual/stress/coverage evidence remains valid. No acceptance criterion was removed."
         }
       ]
     },
@@ -1280,7 +1375,7 @@
     {
       "id": "AR-05",
       "title": "Adapt Crono onboarding to Airlock and Findle",
-      "state": "proposed",
+      "state": "done",
       "group": "AR",
       "at": "2026-10-29T12:41:58Z",
       "by": "codex",
@@ -1295,6 +1390,26 @@
           "at": "2026-10-29T12:57:29Z",
           "by": "codex",
           "text": "Implemented and opened the isolated Findle demo using Crono’s onboarding composition: 540×520 window, centered Welcome with three feature rows, grouped native forms, and large footer actions at the right. The hello intro, full one-shot sound, fading intro glow, and segmented glass navigation remain. The standalone Airlock demo uses the same composition.\n\nVerification: 43 Airlock tests and 6 onboarding-preview tests pass. Layout tests cover 540×520 and 500×480, rapid navigation, and closing during transitions. Visually checked all six Findle pages and completed sample sign-in, optional Finder access, and simulated sync. No installed account or files were changed.\n\nUI review:\n| Before | After | Why |\n| --- | --- | --- |\n| Horizontal product banner on server page | Centered Welcome with useful feature rows | Match Crono’s introduction |\n| Large independent headings and spread footer buttons | 22-point form headings and adjacent large actions | Match Crono’s hierarchy |\n| Window and form backgrounds resolve identically | Subtle opaque group fill | Keep grouping visible on current macOS |\n| Counter candidates: 0 | Counter candidates: 0 | Retained meaningful icons, real state, and accessible controls |\n\nThe demo overrides Airlock to the sibling local checkout. Production retains its immutable published dependency; publishing the matching Airlock changes and updating that pin is still required before release integration. This task remains in the board’s human-controlled approval state; its implementation was directly requested in the conversation."
+        },
+        {
+          "at": "2026-10-29T22:22:45Z",
+          "by": "codex",
+          "text": "Independent review confirmed the demo is isolated from the installed account. Native replay passed sample sign-in, course filtering and selection, back navigation, simulated Finder access, simulated sync and completion. A small state inconsistency remains: “Finish Without Syncing” stays visible after successful sync. Current UI sources also postdate the earlier 43 Airlock/6 preview test evidence, so focused revalidation is running against frozen source snapshots on Pheidippides. Do not accept this card until the state inconsistency and current-source verification are resolved. Production integration still needs the matching published Airlock API; preview results do not qualify signed account flows."
+        },
+        {
+          "at": "2026-10-29T22:23:58Z",
+          "by": "codex",
+          "text": "Review the existing isolated demo under the user’s full Kanvas authorization, preserve the authored interface work, correct the observed completed-sync control state and verify current sources. Keep signed real-account and production Airlock integration qualification separate."
+        },
+        {
+          "at": "2026-10-29T22:29:20Z",
+          "by": "codex",
+          "text": "The isolated onboarding demo is verified against current sources. Airlock’s 43 tests and the 6 preview tests (8 parameterized executions) pass with no failures, skips or runtime warnings. Frozen source manifests identify the exact tested inputs. Native replay verified welcome, sample sign-in, course filtering/selections, back navigation, simulated permission granted and skipped paths, sync and completion. Corrected the obsolete “Finish Without Syncing” control so it disappears after successful sync, after choosing to skip, or when no courses are selected; the rebuilt demo visibly confirms the successful-sync fix. Unslop review found 0 → 0 heuristic candidates; meaningful status, errors and accessible controls remain. No installed account or production app changed. Accepted scope is the isolated demo; matching published Airlock and signed integration remain under FN-02. Evidence ID: findle-ar05-review.bw0gjyh7, including qualification-visibility-fix.json."
+        },
+        {
+          "at": "2026-10-29T22:29:20Z",
+          "by": "codex",
+          "text": "Accepted under the user’s authorization after independent current-source tests and native demo verification. Production dependency publication and signed account validation remain open in FN-02."
         }
       ]
     },
