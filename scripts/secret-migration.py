@@ -32,9 +32,13 @@ REVIEWED_FILES = (WORKFLOW, ".github/secret-migration.json",
 LIMIT = 1_000_000
 
 
+class Refusal(ValueError):
+    """A guard refusal whose message is a fixed, non-secret reason."""
+
+
 def require(condition, reason):
     if not condition:
-        raise ValueError(reason)
+        raise Refusal(reason)
 
 
 def decoded(text):
@@ -164,6 +168,7 @@ def import_ciphertext(root, run_id, sha, apply=False):
         require(not any(x["name"] == entry["name"] for x in existing["secrets"]), "refusing overwrite")
         api(f"repos/{REPO}/environments/{environment}/secrets/{entry['name']}",
             {"key_id": entry["key_id"], "encrypted_value": entry["encrypted_value"]})
+        print(f"Imported {entry['name']} into {environment}.")
     print("Imported nine environment secrets. Repository originals remain; credential validation is still required.")
 
 
@@ -196,6 +201,10 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except Refusal as refusal:
+        # Refusal reasons are fixed literals from require(); they never contain secret data.
+        print(f"Migration refused: {refusal}. Original repository secrets were not deleted.", file=sys.stderr)
+        sys.exit(1)
     except Exception:
         # No exception repr/traceback: secret bytes must never enter diagnostics.
         print("Migration refused or failed. Original repository secrets were not deleted.", file=sys.stderr)

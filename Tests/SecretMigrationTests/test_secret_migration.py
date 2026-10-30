@@ -98,18 +98,22 @@ class MigrationTests(unittest.TestCase):
             if path.endswith("/artifacts/5/zip"):return self.blob
             if "/environments/" in path:
                 env=path.split("/environments/",1)[1].split("/",1)[0]
+                put_happened=any(p is not None for _,p in calls)
                 if path.endswith("public-key"):
-                    if mode=="key":return dict(self.plan["destinations"][env],key="A"*43+"=")
+                    if mode=="key" or (mode=="key_after_put" and put_happened):
+                        return dict(self.plan["destinations"][env],key="A"*43+"=")
                     return self.plan["destinations"][env]
-                names=[{"name":"APPLE_ID"}] if mode=="overwrite" else []
+                if mode=="overwrite":names=[{"name":"APPLE_ID"}]
+                elif mode=="appear_after_put" and put_happened:names=[{"name":n} for n in m.NAMES]
+                else:names=[]
                 return {"total_count":len(names),"secrets":names}
             if "/actions/secrets" in path:
                 return {"secrets":[{"name":n,"updated_at":"changed" if mode=="source" else v} for n,v in self.plan["source_updated_at"].items()]}
             raise AssertionError("unexpected dummy API call")
         return api
 
-    def run_import(self, mode=None, apply=False):
-        calls=[]
+    def run_import(self, mode=None, apply=False, calls=None):
+        calls=[] if calls is None else calls
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
             for name in m.REVIEWED_FILES:
@@ -124,7 +128,17 @@ class MigrationTests(unittest.TestCase):
 
     def test_import_key_overwrite_source_guards(self):
         for mode in ("key","overwrite","source","reviewed"):
-            with self.assertRaises(ValueError):self.run_import(mode,apply=True)
+            calls=[]
+            with self.subTest(mode=mode):
+                with self.assertRaises(m.Refusal):self.run_import(mode,apply=True,calls=calls)
+                self.assertFalse(any(p is not None for _,p in calls),mode)
+
+    def test_import_rechecks_destination_between_puts(self):
+        for mode in ("key_after_put","appear_after_put"):
+            calls=[]
+            with self.subTest(mode=mode):
+                with self.assertRaises(m.Refusal):self.run_import(mode,apply=True,calls=calls)
+                self.assertEqual(sum(p is not None for _,p in calls),1)
 
     def test_cli_dummy_environment_exact_bytes_and_failure_redaction(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -145,14 +159,32 @@ class MigrationTests(unittest.TestCase):
             result=subprocess.run(command,env=env,capture_output=True)
             self.assertNotEqual(result.returncode,0);self.assertFalse(output.exists())
             self.assertNotIn(b"DUMMY",result.stdout+result.stderr)
+            self.assertIn(b"Migration refused: missing or invalid secret.",result.stderr)
 
-    def test_import_only_nine_ciphertext_puts_never_repository_deletion(self):
+    def test_import_only_nine_ciphertext_environment_puts(self):
         calls=self.run_import(apply=True)
         writes=[(path,payload) for path,payload in calls if payload is not None]
         self.assertEqual(len(writes),9)
-        for path,payload in writes:
-            self.assertIn("/environments/",path)
-            self.assertEqual(set(payload),{"key_id","encrypted_value"})
+        # Literal mapping, independent of m.NAMES, so a shared mapping error cannot pass.
+        expected_environments={
+            "APPLE_ID":"release-candidate",
+            "APP_PROVISION_PROFILE_BASE64":"release-candidate",
+            "CERTIFICATE_P12_BASE64":"release-candidate",
+            "CERTIFICATE_PASSWORD":"release-candidate",
+            "FILEPROVIDER_PROVISION_PROFILE_BASE64":"release-candidate",
+            "NOTARIZATION_PASSWORD":"release-candidate",
+            "SPARKLE_PRIVATE_ED_KEY":"release-candidate",
+            "TEAM_ID":"release-candidate",
+            "HOMEBREW_TAP_TOKEN":"production",
+        }
+        entries={e["name"]:e for e in self.manifest["entries"]}
+        expected={
+            f"repos/{m.REPO}/environments/{expected_environments[name]}/secrets/{name}":
+            {"key_id":entries[name]["key_id"],"encrypted_value":entries[name]["encrypted_value"]}
+            for name in expected_environments
+        }
+        self.assertEqual(dict(writes),expected)
+        for _,payload in writes:
             self.assertNotIn("DUMMY",json.dumps(payload))
 
 
