@@ -262,3 +262,37 @@ python3 .agents/skills/kanvas/kanvas.py serve
 The board tracks implementation and human review. Use its current task states
 and notes for progress; source changes and local installation do not imply
 that a task has been accepted.
+
+## Settings and companion integration follow-up
+
+Settings now uses aligned native form rows with grouped actions. Account and
+diagnostic errors remain visible, destructive actions retain confirmation, and
+assistant connection controls retain destination-specific accessibility names.
+The companion uses dark-mode control surfaces, keeps Settings at the bottom of
+the compact panel, and shows sync progress once alongside the disabled action.
+
+Validation on local Xcode 27.2: all 410 tests pass in both Debug and optimized
+Nightly, with no failures, skips, or runtime warnings. Isolated native rendering
+checks cover all five Settings pages, expired-account and diagnostic-error
+states, and light/dark companion states. Native interaction verifies the error
+popover and compact/expanded controls. These fixtures do not qualify real
+Finder attachment, institutional sign-in, or File Provider recovery.
+
+| UI review | Before | After |
+| --- | ---: | ---: |
+| Changed Swift files, heuristic candidates | 0 | 0 |
+
+Retained real sync/error state (U6), permission and recovery instructions (U4),
+destructive confirmations, and accessible icon controls (U11). No decorative
+badges or redundant sync labels were added.
+
+Skipping the intro now advances immediately and fades the remaining startup
+audio to silence over 300 ms, using the published Airlock revision
+`42f176a5718ba990afea49f2b45ee51e5e74674b`. Airlock passes all 45 local Debug/Release
+tests and its hosted package/demo checks. Findle passes all 410 Debug integration
+tests with that pin, with no failures, skips, or runtime warnings.
+
+The compact panel now requires 340 points of height. A native check at 96×340
+with a two-line course code and active sync confirms the title, progress, and
+bottom Settings control remain visible. Placement refuses insufficient space
+instead of clipping controls.

@@ -2,13 +2,14 @@ import AppKit
 import Combine
 
 @MainActor
-final class GeneralSettingsController: NativeFormController {
+final class GeneralSettingsController: SettingsFormController {
     private let state: AppState
     private let updates: UpdateController
     private let companion: FinderWindowObserver
     private let login = LoginItemController()
-    private let permission = NativeUI.label("", secondary: true)
-    private let error = NativeUI.label("", secondary: true)
+    private let permission = NSTextField(wrappingLabelWithString: "")
+    private let loginError = NSTextField(wrappingLabelWithString: "")
+    private let shortcutError = NSTextField(wrappingLabelWithString: "")
     private var subscriptions = Set<AnyCancellable>()
 
     init(state: AppState, updates: UpdateController, companion: FinderWindowObserver) {
@@ -19,16 +20,19 @@ final class GeneralSettingsController: NativeFormController {
     required init?(coder: NSCoder) { fatalError() }
 
     override func buildForm() {
-        NativeUI.section("Finder", in: stack)
-        addToggle("Show companion in Findle folders", key: "finderCompanionEnabled", fallback: true)
-        stack.addArrangedSubview(permission)
-        stack.addArrangedSubview(ActionButton("Allow Finder Access…") { [weak self] _ in self?.companion.requestAccessibilityAccess() })
-        companion.$hasAccessibilityAccess.sink { [weak self] granted in
-            self?.permission.stringValue = granted ? "Finder access is enabled." : "Allow Accessibility access so Findle can identify and position itself beside your Finder window."
+        addRow("Finder", toggle("Show companion beside Findle folders", key: "finderCompanionEnabled", fallback: true))
+        let allow = ActionButton("Allow Finder Access…") { [weak self] _ in self?.companion.requestAccessibilityAccess() }
+        let allowRow = addRow(nil, allow)
+        let permissionRow = addNote(permission)
+        permission.stringValue = "Findle needs Accessibility access to place the companion beside your Finder window."
+        companion.$hasAccessibilityAccess.sink { granted in
+            allowRow.isHidden = granted
+            permissionRow.isHidden = granted
         }.store(in: &subscriptions)
-        NativeUI.section("Sync", in: stack)
-        addToggle("Sync when Findle launches", key: "syncOnLaunch", fallback: true)
-        addToggle("Notify when sync completes", key: "notifyOnSyncComplete")
+
+        addSeparator()
+        addRow("Sync", toggle("Sync when Findle launches", key: "syncOnLaunch", fallback: true))
+        addRow(nil, toggle("Notify when sync completes", key: "notifyOnSyncComplete"))
         let cadence = NSPopUpButton()
         let values: [(String, Double)] = [("Every 5 minutes", 5), ("Every 15 minutes", 15), ("Every 30 minutes", 30), ("Every hour", 60), ("Every 2 hours", 120), ("Manually", 0)]
         for (title, value) in values { cadence.addItem(withTitle: title); cadence.lastItem?.representedObject = value }
@@ -37,45 +41,59 @@ final class GeneralSettingsController: NativeFormController {
         cadence.target = self
         cadence.action = #selector(changeCadence(_:))
         cadence.setAccessibilityLabel("Sync frequency")
-        stack.addArrangedSubview(NativeUI.stack([NativeUI.label("Refresh"), cadence], spacing: 12, horizontal: true))
-        NativeUI.section("Startup", in: stack)
+        addRow("Frequency", cadence)
+
+        addSeparator()
         let launch = ActionButton("Open Findle at login", checkbox: true) { [weak self] button in
             guard let self else { return }
             self.login.setEnabled(button.state == .on)
             button.state = self.login.isEnabled ? .on : .off
-            self.error.stringValue = self.login.lastError ?? ""
-            self.error.isHidden = self.error.stringValue.isEmpty
+            self.show(self.login.lastError, in: self.loginError)
         }
         launch.state = login.isEnabled ? .on : .off
-        stack.addArrangedSubview(launch)
-        stack.addArrangedSubview(error)
-        error.isHidden = true
+        addRow("Startup", launch)
+        addError(loginError)
         if updates.updatesSupported {
-            NativeUI.section("Updates", in: stack)
             let automatic = ActionButton("Check for updates automatically", checkbox: true) { [weak self] button in
                 self?.updates.updater.automaticallyChecksForUpdates = button.state == .on
             }
             automatic.state = updates.updater.automaticallyChecksForUpdates ? .on : .off
-            stack.addArrangedSubview(automatic)
+            addRow("Updates", automatic).topPadding = 8
             let check = ActionButton("Check for Updates…") { [weak self] _ in self?.updates.checkForUpdates() }
             updates.$canCheckForUpdates.sink { [weak check] in check?.isEnabled = $0 }.store(in: &subscriptions)
-            stack.addArrangedSubview(check)
+            addRow(nil, check)
         }
-        NativeUI.section("Personal files", in: stack)
-        stack.addArrangedSubview(ActionButton("Show My Files") { [weak self] _ in self?.state.showPersonalFiles() })
-        stack.addArrangedSubview(ActionButton("Add Shortcut in Documents") { [weak self] _ in
-            guard let self else { return }
-            switch self.state.ensureDocumentsShortcut(force: true) {
-            case .created(let url), .alreadyExists(let url): NSWorkspace.shared.activateFileViewerSelecting([url])
-            case .failed(let detail): self.error.stringValue = detail; self.error.isHidden = false
+
+        addSeparator()
+        addRow("Personal files", buttons([
+            ActionButton("Show My Files") { [weak self] _ in self?.state.showPersonalFiles() },
+            ActionButton("Add Shortcut in Documents") { [weak self] _ in
+                guard let self else { return }
+                switch self.state.ensureDocumentsShortcut(force: true) {
+                case .created(let url), .alreadyExists(let url):
+                    self.show(nil, in: self.shortcutError)
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                case .failed(let detail): self.show(detail, in: self.shortcutError)
+                }
             }
-        })
+        ]))
+        addError(shortcutError)
     }
 
-    private func addToggle(_ title: String, key: String, fallback: Bool = false) {
+    private func toggle(_ title: String, key: String, fallback: Bool = false) -> ActionButton {
         let toggle = ActionButton(title, checkbox: true) { button in UserDefaults.standard.set(button.state == .on, forKey: key) }
         toggle.state = (UserDefaults.standard.object(forKey: key) as? Bool ?? fallback) ? .on : .off
-        stack.addArrangedSubview(toggle)
+        return toggle
+    }
+
+    private func addError(_ field: NSTextField) {
+        addNote(field).isHidden = true
+        field.textColor = .systemRed
+    }
+
+    private func show(_ message: String?, in field: NSTextField) {
+        field.stringValue = message ?? ""
+        grid.cell(for: field)?.row?.isHidden = message?.isEmpty ?? true
     }
 
     @objc private func changeCadence(_ sender: NSPopUpButton) {
