@@ -20,7 +20,7 @@ struct OnboardingPreviewTests {
         window.contentViewController = server
         _ = server.view
         server.prepareForPresentation()
-        let address = try #require(server.stack.arrangedSubviews.compactMap { $0 as? NSTextField }
+        let address = try #require(descendants(of: server.view, as: NSTextField.self)
             .first { $0.placeholderString == "https://moodle.example.edu" })
         let editor = try #require(address.currentEditor() as? NSTextView)
         #expect(!editor.isAutomaticDataDetectionEnabled)
@@ -37,12 +37,12 @@ struct OnboardingPreviewTests {
         window.contentViewController = signIn
         _ = signIn.view
         signIn.prepareForPresentation()
-        let username = try #require(signIn.stack.arrangedSubviews.compactMap { $0 as? NSTextField }
+        let username = try #require(descendants(of: signIn.view, as: NSTextField.self)
             .first { $0.placeholderString == "Username" })
         let usernameEditor = try #require(username.currentEditor() as? NSTextView)
         #expect(!usernameEditor.isAutomaticDataDetectionEnabled)
         #expect(!usernameEditor.isContinuousSpellCheckingEnabled)
-        let password = try #require(signIn.stack.arrangedSubviews.compactMap { $0 as? NSSecureTextField }.first)
+        let password = try #require(descendants(of: signIn.view, as: NSSecureTextField.self).first)
         #expect(password.accessibilityLabel() == "Moodle password")
         #expect((password.cell as? NSSecureTextFieldCell)?.echosBullets == true)
         username.removeFromSuperview()
@@ -102,8 +102,8 @@ struct OnboardingPreviewTests {
         #expect(state.syncStatus == .idle)
     }
 
-    @Test(arguments: ["sync", "skip", "empty"])
-    func sharedOnboardingCompletes(mode: String) async throws {
+    @Test(arguments: ["sync", "skip", "empty"], [false, true])
+    func sharedOnboardingCompletes(mode: String, restoresSelection: Bool) async throws {
         _ = NSApplication.shared
         let state = AppState()
         let observer = FinderWindowObserver()
@@ -116,10 +116,13 @@ struct OnboardingPreviewTests {
         flow.viewDidAppear()
         let navigator = window.navigator
         try await waitUntil { navigator.canContinue }
+        #expect(flow.children.first is WelcomeSetupController)
+        navigator.goToNext()
+        try await waitUntil { flow.children.first is ServerSetupController && navigator.canContinue }
         #expect(navigator.buttonLabel == "Connect")
         navigator.goToNext()
         try await waitUntil { !navigator.isBusy }
-        #expect(navigator.currentIndex == 0)
+        #expect(navigator.currentIndex == 1)
         navigator.goToNext()
         try await waitUntil { flow.children.first is SignInSetupController }
         #expect(!navigator.canContinue)
@@ -131,9 +134,9 @@ struct OnboardingPreviewTests {
         navigator.goToNext()
         try await waitUntil { flow.children.first is SignInSetupController }
         let signIn = try #require(flow.children.first as? SignInSetupController)
-        let username = try #require(signIn.stack.arrangedSubviews.compactMap { $0 as? NSTextField }
+        let username = try #require(descendants(of: signIn.view, as: NSTextField.self)
             .first { $0.placeholderString == "Username" })
-        let password = try #require(signIn.stack.arrangedSubviews.compactMap { $0 as? NSSecureTextField }.first)
+        let password = try #require(descendants(of: signIn.view, as: NSSecureTextField.self).first)
         username.stringValue = "student"
         password.stringValue = "preview"
         signIn.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
@@ -152,32 +155,125 @@ struct OnboardingPreviewTests {
         navigator.goToNext()
         try await waitUntil { flow.children.first is FinderSetupController && navigator.canContinue }
         let finder = try #require(flow.children.first as? FinderSetupController)
-        let access = try #require(finder.stack.arrangedSubviews.compactMap { $0 as? ActionButton }.first)
+        let access = try #require(descendants(of: finder.view, as: ActionButton.self).first)
         access.performClick(nil)
         #expect(observer.hasAccessibilityAccess)
-        #expect(finder.message.stringValue == "Finder access is enabled.")
+        #expect(access.isHidden)
+        #expect(descendants(of: finder.view, as: NSTextField.self).contains { $0.stringValue == "Allowed" && !$0.isHidden })
         navigator.goToNext()
         try await waitUntil { flow.children.first is SyncSetupController && navigator.canContinue }
+        let sync = try #require(flow.children.first as? SyncSetupController)
+        let skip = try #require(sync.stack.arrangedSubviews.compactMap { $0 as? ActionButton }.first)
+        #expect(skip.isHidden == (mode == "empty"))
         if mode == "sync" {
             navigator.goToNext()
             try await waitUntil { !navigator.isBusy }
             #expect(state.syncStatus == .completed)
         } else if mode == "skip" {
-            let sync = try #require(flow.children.first as? SyncSetupController)
-            let skip = try #require(sync.stack.arrangedSubviews.compactMap { $0 as? ActionButton }.first)
             skip.performClick(nil)
         }
+        #expect(skip.isHidden)
         #expect(navigator.buttonLabel == "Finish")
+        navigator.goToPrevious()
+        try await waitUntil { flow.children.first is FinderSetupController && navigator.canContinue }
+        navigator.goToNext()
+        try await waitUntil { flow.children.first is SyncSetupController && navigator.canContinue }
+        #expect(flow.children.first === sync)
+        #expect(skip.isHidden)
+        #expect(navigator.buttonLabel == "Finish")
+        // Revising the selected courses invalidates the previous completion choice.
+        navigator.goToPrevious()
+        try await waitUntil { flow.children.first is FinderSetupController && navigator.canContinue }
+        navigator.goToPrevious()
+        try await waitUntil { flow.children.first is CoursesSetupController && navigator.canContinue }
+        let changedCourse = try #require(state.courses.first)
+        state.setCourseSyncEnabled(!changedCourse.isSyncEnabled, for: changedCourse)
+        if restoresSelection && mode != "empty" {
+            // The final IDs match, but unsubscribe may already have removed items.
+            state.setCourseSyncEnabled(changedCourse.isSyncEnabled, for: changedCourse)
+        }
+        navigator.goToNext()
+        try await waitUntil { flow.children.first is FinderSetupController && navigator.canContinue }
+        navigator.goToNext()
+        try await waitUntil { flow.children.first is SyncSetupController && navigator.canContinue }
+        #expect(!skip.isHidden)
+        #expect(navigator.buttonLabel == "Sync Courses")
+        skip.performClick(nil)
         navigator.goToNext()
         navigator.goToNext()
         #expect(completions == 1)
         if mode != "sync" { #expect(state.syncStatus == .idle) }
     }
 
+    @Test(arguments: [false, true])
+    func onboardingWaitsForAFreshMatchingSync(cancelWhileWaiting: Bool) async throws {
+        _ = NSApplication.shared
+        let state = try await signedInState()
+        await state.loadCourses()
+        var selections: [Set<Int>] = []
+        var pending: [CheckedContinuation<Void, Never>] = []
+        state.syncPass = { [weak state] in
+            guard let state, !Task.isCancelled else { return }
+            selections.append(Set(state.courses.filter(\.isSyncEnabled).map(\.id)))
+            await withCheckedContinuation { pending.append($0) }
+        }
+        let background = Task { await state.syncAll() }
+        let controller = SyncSetupController(state: state, session: SetupSession(state: state))
+        let navigator = AirlockNavigator(appName: "Sync", steps: [
+            AirlockStep(id: "sync", title: "Sync") { controller }
+        ])
+        let flow = AirlockFlowController(navigator: navigator, playsIntro: false, playsSound: false)
+        defer {
+            navigator.cancelPendingAction()
+            background.cancel()
+            pending.forEach { $0.resume() }
+            state.syncPass = nil
+            flow.cancelPendingWork()
+        }
+        try await waitUntil { pending.count == 1 }
+        let newlyEnabled = try #require(state.courses.first { !$0.isSyncEnabled })
+        state.setCourseSyncEnabled(true, for: newlyEnabled)
+        _ = flow.view
+        flow.viewDidAppear()
+        navigator.goToNext()
+        try await waitUntil { controller.message.stringValue == "Syncing courses…" }
+        #expect(selections.count == 1)
+        if cancelWhileWaiting { navigator.cancelPendingAction() }
+        pending.removeFirst().resume()
+        await background.value
+        if cancelWhileWaiting {
+            try await waitUntil {
+                descendants(of: controller.view, as: NSProgressIndicator.self).allSatisfy(\.isHidden)
+            }
+            #expect(navigator.buttonLabel != "Finish")
+            #expect(selections.count == 1)
+            return
+        }
+        try await waitUntil { selections.count == 2 && pending.count == 1 }
+        #expect(selections[1].contains(newlyEnabled.id))
+        #expect(navigator.buttonLabel == "Sync Courses")
+        // A change during the fresh pass requires another matching pass.
+        state.setCourseSyncEnabled(false, for: newlyEnabled)
+        pending.removeFirst().resume()
+        try await waitUntil { selections.count == 3 && pending.count == 1 }
+        #expect(!selections[2].contains(newlyEnabled.id))
+        #expect(navigator.buttonLabel == "Sync Courses")
+        pending.removeFirst().resume()
+        try await waitUntil { !navigator.isBusy }
+        #expect(navigator.buttonLabel == "Finish")
+        #expect(state.syncStatus == .completed)
+    }
+
     private func signedInState() async throws -> AppState {
         let state = AppState()
         try await state.signInAndPersist(site: AppState.sampleSite, username: "student", password: "preview")
         return state
+    }
+
+    private func descendants<T: NSView>(of view: NSView, as type: T.Type) -> [T] {
+        view.subviews.flatMap { child in
+            (child as? T).map { [$0] } ?? []
+        } + view.subviews.flatMap { descendants(of: $0, as: type) }
     }
 
     private func waitUntil(_ condition: @MainActor () -> Bool) async throws {

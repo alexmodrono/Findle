@@ -20,6 +20,9 @@ final class AppState: ObservableObject {
     let currentScreen: AppScreen = .onboarding
     let currentSite: MoodleSite? = AppState.sampleSite
     @Published var courses: [MoodleCourse] = []
+    private(set) var subscriptionRevisions: [Int: UUID] = [:]
+    private var syncAllTask: Task<Void, Never>?
+    var syncPass: (@MainActor () async -> Void)?
     @Published private(set) var syncStatus: SyncStatus = .idle
     var errorMessage: String?
     private(set) var isSignedIn = false
@@ -68,15 +71,38 @@ final class AppState: ObservableObject {
 
     func setCourseSyncEnabled(_ enabled: Bool, for course: MoodleCourse) {
         guard let index = courses.firstIndex(where: { $0.id == course.id && $0.siteID == course.siteID }) else { return }
+        subscriptionRevisions[course.id] = UUID()
         courses[index].isSyncEnabled = enabled
     }
 
     func syncAll() async {
-        guard isSignedIn, !Task.isCancelled else { return }
-        syncStatus = .syncing
-        do { try await Task.sleep(for: .milliseconds(400)) }
-        catch { syncStatus = .idle; return }
-        syncStatus = .completed
+        _ = await synchronizeAll(requiringFreshPass: false)
+    }
+
+    func syncAllForOnboarding() async -> Bool {
+        await synchronizeAll(requiringFreshPass: true)
+    }
+
+    private func synchronizeAll(requiringFreshPass: Bool) async -> Bool {
+        guard isSignedIn, !Task.isCancelled else { return false }
+        while let inFlight = syncAllTask {
+            await inFlight.value
+            guard requiringFreshPass, !Task.isCancelled else { return false }
+        }
+        let task = Task {
+            syncStatus = .syncing
+            if let syncPass { await syncPass() }
+            else { try? await Task.sleep(for: .milliseconds(400)) }
+            syncStatus = Task.isCancelled ? .idle : .completed
+            syncAllTask = nil
+        }
+        syncAllTask = task
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        return !Task.isCancelled && syncStatus == .completed
     }
 
     func syncCourse(_ course: MoodleCourse) async -> Bool { false }

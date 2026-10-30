@@ -5,20 +5,14 @@ final class ServerSetupController: SetupStepController, NSTextFieldDelegate {
     private let address = NSTextField()
 
     override func buildContent() {
-        let identity = SetupContextView(image: SetupAppearance.appIcon,
-                                        title: "Your courses in Finder", detail: "Moodle & Open LMS",
-                                        imageSize: 96, titleSize: 23)
-        addFullWidth(identity)
-        stack.setCustomSpacing(30, after: identity)
-        let label = NativeUI.label("Moodle address", size: 13, weight: .medium)
-        stack.addArrangedSubview(label)
-        stack.setCustomSpacing(8, after: label)
+        addFullWidth(SetupStepHeader(title: "Connect your university",
+                                    detail: "Use the Moodle or Open LMS address where you access your courses."))
         address.placeholderString = "https://moodle.example.edu"
         address.stringValue = session.serverURL
         address.setAccessibilityLabel("Moodle site address")
         address.delegate = self
         SetupAppearance.configure(address)
-        addFullWidth(address)
+        addFullWidth(SetupFormGroup([address]))
     }
 
     override func prepareForPresentation() {

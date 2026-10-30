@@ -8,15 +8,15 @@ final class SignInSetupController: SetupStepController, NSTextFieldDelegate, ASW
     private let username = NSTextField()
     private let password = NSSecureTextField()
     private let institution = SetupContextView(image: SetupAppearance.symbol("globe"), title: "", detail: "")
-    private let signInMethod = NativeUI.label("", secondary: true, size: 14)
+    private let signInMethod = NativeUI.label("", secondary: true, size: 13)
+    private var credentials: SetupFormGroup?
     private var embedded: EmbeddedAuthCoordinator?
     private var browserContainer: NSView?
     private var signInAttempt: UUID?
 
     override func buildContent() {
-        addFullWidth(institution)
-        stack.setCustomSpacing(24, after: institution)
-        addFullWidth(signInMethod)
+        addFullWidth(SetupStepHeader(title: "Sign in", detail: "Use your university account."))
+        addFullWidth(SetupFormGroup([institution]))
         username.placeholderString = "Username"
         username.setAccessibilityLabel("Moodle username")
         username.delegate = self
@@ -25,17 +25,21 @@ final class SignInSetupController: SetupStepController, NSTextFieldDelegate, ASW
         password.delegate = self
         SetupAppearance.configure(username)
         SetupAppearance.configure(password)
-        stack.addArrangedSubview(username)
-        stack.addArrangedSubview(password)
-        for field in [username, password] { field.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
+        let credentials = SetupFormGroup([username, password])
+        self.credentials = credentials
+        addFullWidth(credentials)
+        addFullWidth(signInMethod)
     }
 
     override func prepareForPresentation() {
         guard let site = session.site else { navigator?.setContinueEnabled(false); return }
         institution.update(title: site.displayName, detail: site.baseURL.host ?? site.baseURL.absoluteString)
-        signInMethod.stringValue = site.capabilities.requiresSSO ? "Use your university’s sign-in." : "Use your university account."
+        signInMethod.stringValue = site.capabilities.loginType == .browser
+            ? "Your university’s sign-in opens in your browser."
+            : "Your university’s sign-in opens here."
         let signedIn = session.signedInSiteID == site.id
-        signInMethod.isHidden = signedIn
+        signInMethod.isHidden = signedIn || !site.capabilities.requiresSSO
+        credentials?.isHidden = site.capabilities.requiresSSO || signedIn
         username.isHidden = site.capabilities.requiresSSO || signedIn
         password.isHidden = site.capabilities.requiresSSO || signedIn
         message.stringValue = signedIn ? "Signed in to \(site.displayName)." : ""
@@ -96,6 +100,7 @@ final class SignInSetupController: SetupStepController, NSTextFieldDelegate, ASW
             password.stringValue = ""
             username.isHidden = true
             password.isHidden = true
+            credentials?.isHidden = true
             signInMethod.isHidden = true
             message.stringValue = "Signed in to \(site.displayName)."
             navigator?.resetButton()

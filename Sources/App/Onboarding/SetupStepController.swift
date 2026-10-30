@@ -9,6 +9,8 @@ class SetupStepController: AirlockStepViewController {
     let message = SetupMessageField(wrappingLabelWithString: "")
     var work: Task<Void, Never>?
     var scrollsBody: Bool { true }
+    var centersContentVertically: Bool { false }
+    var bodyWidth: CGFloat? { nil }
 
     init(state: AppState, session: SetupSession) {
         self.state = state; self.session = session
@@ -40,12 +42,32 @@ class SetupStepController: AirlockStepViewController {
         } else {
             view.addSubview(stack)
             stack.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                stack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-                stack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-                stack.topAnchor.constraint(equalTo: view.topAnchor),
-                stack.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor)
-            ])
+            if let bodyWidth {
+                let preferredWidth = stack.widthAnchor.constraint(equalToConstant: bodyWidth)
+                preferredWidth.priority = .defaultHigh
+                NSLayoutConstraint.activate([
+                    preferredWidth,
+                    stack.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor),
+                    stack.centerXAnchor.constraint(equalTo: view.centerXAnchor)
+                ])
+            } else {
+                NSLayoutConstraint.activate([
+                    stack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                    stack.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+                ])
+            }
+            if centersContentVertically {
+                NSLayoutConstraint.activate([
+                    stack.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+                    stack.topAnchor.constraint(greaterThanOrEqualTo: view.topAnchor),
+                    stack.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor)
+                ])
+            } else {
+                NSLayoutConstraint.activate([
+                    stack.topAnchor.constraint(equalTo: view.topAnchor),
+                    stack.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor)
+                ])
+            }
         }
         message.font = .systemFont(ofSize: 13)
         message.textColor = .secondaryLabelColor

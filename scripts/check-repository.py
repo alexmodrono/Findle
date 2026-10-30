@@ -15,6 +15,7 @@ from xml.parsers.expat import ExpatError
 MAIN_SUITES = {
     "SharedDomainTests", "NetworkingTests", "FileProviderTests",
     "PersistenceTests", "SyncEngineTests", "FindleMCPTests", "AppInterfaceTests",
+    "OnboardingPreviewTests",
 }
 
 

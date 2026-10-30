@@ -5,9 +5,9 @@ import AppKit
 final class SetupContextView: NSView {
     private let imageView = NSImageView()
     private let titleField: NSTextField
-    private let detailField = NativeUI.label("", secondary: true, size: 14)
+    private let detailField = NativeUI.label("", secondary: true, size: 13)
 
-    init(image: NSImage?, title: String, detail: String, imageSize: CGFloat = 64, titleSize: CGFloat = 20) {
+    init(image: NSImage?, title: String, detail: String, imageSize: CGFloat = 32, titleSize: CGFloat = 14) {
         titleField = NativeUI.label(title, size: titleSize, weight: .semibold)
         super.init(frame: .zero)
         imageView.image = image
@@ -16,13 +16,13 @@ final class SetupContextView: NSView {
         imageView.setAccessibilityElement(false)
         detailField.stringValue = detail
         detailField.isHidden = detail.isEmpty
-        let text = NativeUI.stack([titleField, detailField], spacing: 6)
-        let row = NativeUI.stack([imageView, text], spacing: 18, horizontal: true)
+        let text = NativeUI.stack([titleField, detailField], spacing: 3)
+        let row = NativeUI.stack([imageView, text], spacing: 12, horizontal: true)
         NativeUI.pin(row, in: self)
         NSLayoutConstraint.activate([
             imageView.widthAnchor.constraint(equalToConstant: imageSize),
             imageView.heightAnchor.constraint(equalToConstant: imageSize),
-            text.widthAnchor.constraint(equalTo: widthAnchor, constant: -imageSize - 18),
+            text.widthAnchor.constraint(equalTo: widthAnchor, constant: -imageSize - 12),
             titleField.widthAnchor.constraint(equalTo: text.widthAnchor),
             detailField.widthAnchor.constraint(equalTo: text.widthAnchor)
         ])
@@ -55,10 +55,10 @@ enum SetupAppearance {
     }
 
     static func configure(_ field: NSTextField) {
-        field.font = .systemFont(ofSize: 15)
+        field.font = .systemFont(ofSize: 13)
         field.controlSize = .large
         field.bezelStyle = .roundedBezel
-        field.heightAnchor.constraint(equalToConstant: 42).isActive = true
+        // The large control size sets the height and keeps the text vertically centred.
     }
 
     /// Addresses and credentials are literal input. AppKit otherwise flushes
