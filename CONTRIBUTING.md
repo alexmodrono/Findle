@@ -10,8 +10,8 @@ Do not commit a local Airlock path, signing configuration, provisioning profile,
 credential or generated build product. The supported CI toolchain and local test
 commands are in [README.md](README.md).
 
-All seven main suites run in Debug and optimized Nightly, with onboarding in its
-isolated preview project. `CI required` and `CodeQL required` are stable aggregate
+All eight main suites, including onboarding, run in Debug and optimized Nightly.
+Onboarding also runs in its isolated preview project. `CI required` and `CodeQL required` are stable aggregate
 checks, including documentation-only changes. Fork and dependency-bot builds use
 read-only tokens and no signing secrets. Formatting and CodeRabbit begin as
 advisory checks; a skipped bot review is not a correctness result.
