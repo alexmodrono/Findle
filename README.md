@@ -217,7 +217,7 @@ graph LR
 
 ## Testing
 
-Run all seven main test suites using `Cmd+U` with the `Findle` or
+Run all eight main test suites using `Cmd+U` with the `Findle` or
 `Findle-Nightly` scheme, or generate, build, and test the optimized Nightly
 configuration with:
 
