@@ -158,7 +158,7 @@ final class DownloadSecurityTests: XCTestCase {
                 let item = try XCTUnwrap(f.database.fetchItem(id: "file-a"))
                 let target = URL(string: address)!
                 let allowed = address == "https://moodle.test/download"
-                ProviderDownloadURLProtocol.configure(target: target, status: status)
+                ProviderDownloadURLProtocol.configure(target: target, status: status, followed: allowed)
                 let configuration = URLSessionConfiguration.ephemeral
                 configuration.protocolClasses = [ProviderDownloadURLProtocol.self]
                 configuration.timeoutIntervalForRequest = 2
@@ -203,18 +203,22 @@ private final class ProviderDownloadURLProtocol: URLProtocol {
     private struct State {
         var target: URL?
         var status = 307
+        var followed = false
         var urls: [URL] = []
     }
     private static let state = Mutex(State())
     static var urls: [URL] { state.withLock { $0.urls } }
-    static func configure(target: URL, status: Int) { state.withLock { $0 = State(target: target, status: status) } }
+    /// `followed` states whether the test expects the redirect to be accepted; see startLoading.
+    static func configure(target: URL, status: Int, followed: Bool) {
+        state.withLock { $0 = State(target: target, status: status, followed: followed) }
+    }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         guard let url = request.url else { return }
-        let (target, status) = Self.state.withLock { state in
+        let (target, status, followed) = Self.state.withLock { state in
             state.urls.append(url)
-            return (state.target!, state.status)
+            return (state.target!, state.status, state.followed)
         }
         if url.path == "/file" {
             var redirected = request
@@ -222,6 +226,9 @@ private final class ProviderDownloadURLProtocol: URLProtocol {
             let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1",
                                            headerFields: ["Location": target.absoluteString])!
             client?.urlProtocol(self, wasRedirectedTo: redirected, redirectResponse: response)
+            // An accepted redirect is loaded by a new protocol instance. Delivering
+            // the 3xx here as well could race it and finish the download with a 3xx.
+            guard !followed else { return }
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocolDidFinishLoading(self)
         } else {
