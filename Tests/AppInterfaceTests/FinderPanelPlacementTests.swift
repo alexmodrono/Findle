@@ -108,13 +108,13 @@ struct FinderPanelPlacementTests {
         #expect(FinderPanelPlacement.layout(beside: narrowGap, screen: screen, preferredMode: .compact) == nil)
     }
 
-    @Test func shortDisplaysUseCompactInsteadOfClippingTheExpandedView() throws {
+    @Test func compactPanelRequiresRoomForStatusAndAllControls() throws {
         let finder = CGRect(x: 0, y: 0, width: 700, height: 200)
-        let screen = CGRect(x: 0, y: 0, width: 1440, height: 300)
-        let layout = try #require(FinderPanelPlacement.layout(beside: finder, screen: screen, preferredMode: .expanded))
+        let screen = CGRect(x: 0, y: 0, width: 1440, height: 340)
+        let layout = try #require(FinderPanelPlacement.layout(beside: finder, screen: screen, preferredMode: .compact))
         #expect(layout.mode == .compact)
         #expect(screen.contains(layout.frame))
-        #expect(FinderPanelPlacement.layout(beside: finder, screen: CGRect(x: 0, y: 0, width: 1440, height: 270), preferredMode: .compact) == nil)
+        #expect(FinderPanelPlacement.layout(beside: finder, screen: CGRect(x: 0, y: 0, width: 1440, height: 300), preferredMode: .compact) == nil)
     }
 
     @Test func panelKeepsItsSizeOnOffsetScreensAndClampsVertically() throws {

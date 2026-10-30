@@ -17,7 +17,7 @@ struct FinderPanelPlacement {
         var minimumSize: CGSize {
             switch self {
             case .expanded: CGSize(width: 240, height: 320)
-            case .compact: CGSize(width: 96, height: 280)
+            case .compact: CGSize(width: 96, height: 340)
             }
         }
     }

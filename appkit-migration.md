@@ -285,3 +285,14 @@ Finder attachment, institutional sign-in, or File Provider recovery.
 Retained real sync/error state (U6), permission and recovery instructions (U4),
 destructive confirmations, and accessible icon controls (U11). No decorative
 badges or redundant sync labels were added.
+
+Skipping the intro now advances immediately and fades the remaining startup
+audio to silence over 300 ms, using the published Airlock revision
+`42f176a5718ba990afea49f2b45ee51e5e74674b`. Airlock passes all 45 local Debug/Release
+tests and its hosted package/demo checks. Findle passes all 410 Debug integration
+tests with that pin, with no failures, skips, or runtime warnings.
+
+The compact panel now requires 340 points of height. A native check at 96×340
+with a two-line course code and active sync confirms the title, progress, and
+bottom Settings control remain visible. Placement refuses insufficient space
+instead of clipping controls.
