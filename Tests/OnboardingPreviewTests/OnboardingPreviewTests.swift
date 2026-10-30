@@ -205,6 +205,65 @@ struct OnboardingPreviewTests {
         if mode != "sync" { #expect(state.syncStatus == .idle) }
     }
 
+    @Test(arguments: [false, true])
+    func onboardingWaitsForAFreshMatchingSync(cancelWhileWaiting: Bool) async throws {
+        _ = NSApplication.shared
+        let state = try await signedInState()
+        await state.loadCourses()
+        var selections: [Set<Int>] = []
+        var pending: [CheckedContinuation<Void, Never>] = []
+        state.syncPass = { [weak state] in
+            guard let state, !Task.isCancelled else { return }
+            selections.append(Set(state.courses.filter(\.isSyncEnabled).map(\.id)))
+            await withCheckedContinuation { pending.append($0) }
+        }
+        let background = Task { await state.syncAll() }
+        let controller = SyncSetupController(state: state, session: SetupSession(state: state))
+        let navigator = AirlockNavigator(appName: "Sync", steps: [
+            AirlockStep(id: "sync", title: "Sync") { controller }
+        ])
+        let flow = AirlockFlowController(navigator: navigator, playsIntro: false, playsSound: false)
+        defer {
+            navigator.cancelPendingAction()
+            background.cancel()
+            pending.forEach { $0.resume() }
+            state.syncPass = nil
+            flow.cancelPendingWork()
+        }
+        try await waitUntil { pending.count == 1 }
+        let newlyEnabled = try #require(state.courses.first { !$0.isSyncEnabled })
+        state.setCourseSyncEnabled(true, for: newlyEnabled)
+        _ = flow.view
+        flow.viewDidAppear()
+        navigator.goToNext()
+        try await waitUntil { controller.message.stringValue == "Syncing courses…" }
+        #expect(selections.count == 1)
+        if cancelWhileWaiting { navigator.cancelPendingAction() }
+        pending.removeFirst().resume()
+        await background.value
+        if cancelWhileWaiting {
+            try await waitUntil {
+                descendants(of: controller.view, as: NSProgressIndicator.self).allSatisfy(\.isHidden)
+            }
+            #expect(navigator.buttonLabel != "Finish")
+            #expect(selections.count == 1)
+            return
+        }
+        try await waitUntil { selections.count == 2 && pending.count == 1 }
+        #expect(selections[1].contains(newlyEnabled.id))
+        #expect(navigator.buttonLabel == "Sync Courses")
+        // A change during the fresh pass requires another matching pass.
+        state.setCourseSyncEnabled(false, for: newlyEnabled)
+        pending.removeFirst().resume()
+        try await waitUntil { selections.count == 3 && pending.count == 1 }
+        #expect(!selections[2].contains(newlyEnabled.id))
+        #expect(navigator.buttonLabel == "Sync Courses")
+        pending.removeFirst().resume()
+        try await waitUntil { !navigator.isBusy }
+        #expect(navigator.buttonLabel == "Finish")
+        #expect(state.syncStatus == .completed)
+    }
+
     private func signedInState() async throws -> AppState {
         let state = AppState()
         try await state.signInAndPersist(site: AppState.sampleSite, username: "student", password: "preview")

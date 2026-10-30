@@ -81,7 +81,7 @@ final class AppState: ObservableObject {
     private var lastAppliedSyncInterval: Double = -1
     private var sessionBootstrapTask: Task<Void, Error>?
     /// The "sync all" pass currently running, if any. Concurrent callers await it.
-    private var syncAllTask: Task<Void, Never>?
+    private var syncAllTask: Task<Bool, Never>?
     private var trackingRefreshTask: Task<Void, Never>?
     /// The user's own files. Kept in a plain folder outside the File Provider, so they
     /// survive unsyncing a course, signing out, and deleting the app.
@@ -358,7 +358,7 @@ final class AppState: ObservableObject {
         courseSyncTasks.removeAll()
         await syncEngine?.stopAllSyncs()
         await automatic?.value
-        await syncing?.value
+        _ = await syncing?.value
         await tracking?.value
         await loading?.value
         await personal?.value
@@ -1495,33 +1495,45 @@ final class AppState: ObservableObject {
     // MARK: - Sync
 
     func syncAll() async {
-        guard !sessionWork.isTransitioning, !Task.isCancelled, !sessionExpired else { return }
-        // Only one sync pass runs at a time. Callers that arrive mid-sync wait for
-        // the pass already in flight instead of starting an overlapping one.
-        if let inFlight = syncAllTask {
-            await inFlight.value
-            return
+        _ = await synchronizeAll(requiringFreshPass: false)
+    }
+
+    func syncAllForOnboarding() async -> Bool {
+        await synchronizeAll(requiringFreshPass: true)
+    }
+
+    private func synchronizeAll(requiringFreshPass: Bool) async -> Bool {
+        guard !sessionWork.isTransitioning, !Task.isCancelled, !sessionExpired else { return false }
+        let lease = sessionWork.lease
+        // Ordinary callers coalesce. Onboarding waits for older work, then starts
+        // its own pass so the result belongs to the requested subscription snapshot.
+        while let inFlight = syncAllTask {
+            _ = await inFlight.value
+            guard requiringFreshPass, sessionWork.isCurrent(lease), !Task.isCancelled,
+                  !sessionExpired else { return false }
         }
 
-        let lease = sessionWork.lease
         let task = Task { [weak self] in
-            await self?.runSyncAll()
-            if let self, self.sessionWork.owns(lease) { self.syncAllTask = nil }
+            guard let self else { return false }
+            let succeeded = await self.runSyncAll()
+            if self.sessionWork.owns(lease) { self.syncAllTask = nil }
+            return succeeded
         }
         syncAllTask = task
-        await withTaskCancellationHandler {
+        let succeeded = await withTaskCancellationHandler {
             await task.value
         } onCancel: {
             task.cancel()
         }
+        return succeeded && !Task.isCancelled && sessionWork.isCurrent(lease)
     }
 
-    private func runSyncAll() async {
+    private func runSyncAll() async -> Bool {
         guard !isDatabaseTransitioning else {
             logger.info("Skipping sync while the shared database is transitioning")
-            return
+            return false
         }
-        guard let site = currentSite, let token = currentToken, let engine = syncEngine else { return }
+        guard let site = currentSite, let token = currentToken, let engine = syncEngine else { return false }
         let lease = sessionWork.lease
 
         errorMessage = nil
@@ -1584,16 +1596,16 @@ final class AppState: ObservableObject {
         progressTask.cancel()
         await progressTask.value
         // A retired session may finish after a database/account transition.
-        guard sessionWork.owns(lease), currentSite?.id == site.id, syncEngine === engine, !isDatabaseTransitioning else { return }
+        guard sessionWork.owns(lease), currentSite?.id == site.id, syncEngine === engine, !isDatabaseTransitioning else { return false }
         applySyncReport(report)
-        guard !report.isNoOp else { return }
+        guard !report.isNoOp else { return false }
         if report.succeededCount > 0 || report.incompleteCount > 0 {
             signalFileProviderChanges()
             indexForSpotlight()
         }
-        guard !report.wasCancelled, !report.requiresReauthentication else { return }
+        guard !report.wasCancelled, !report.requiresReauthentication else { return false }
         await reconcilePersonalFiles()
-        guard sessionWork.isCurrent(lease), syncEngine === engine else { return }
+        guard sessionWork.isCurrent(lease), syncEngine === engine else { return false }
         if SyncReportPresentation(report: report).shouldNotifyCompletion {
             notifySyncCompletedIfEnabled(courseCount: report.succeededCount)
         }
@@ -1601,6 +1613,7 @@ final class AppState: ObservableObject {
         trackingRefreshTask = Task { [weak self] in
             await self?.refreshTracking()
         }
+        return report.allSucceeded
     }
 
     private func applySyncReport(_ report: SyncRunReport) {
@@ -1855,7 +1868,7 @@ final class AppState: ObservableObject {
             await engine?.stopAllSyncs()
             _ = try? await bootstrap?.value
             await automatic?.value
-            await syncing?.value
+            _ = await syncing?.value
             await tracking?.value
             await personal?.value
             await restore?.value

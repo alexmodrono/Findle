@@ -63,20 +63,32 @@ final class SyncSetupController: SetupStepController {
                 self.progress.isHidden = false
                 self.progress.startAnimation(nil)
                 self.message.stringValue = "Syncing courses…"
-                await self.state.syncAll()
-                guard !Task.isCancelled else { return }
-                self.progress.stopAnimation(nil)
-                self.progress.isHidden = true
-                if case .error(let error) = self.state.syncStatus {
-                    self.message.stringValue = error
-                } else {
-                    self.finishedSelection = selectedIDs
-                    self.finishedSubscriptionRevisions = subscriptionRevisions
-                    self.didSync = true
-                    self.header.update(title: "Ready in Finder", detail: "Open a file to download it.")
-                    self.message.stringValue = ""
-                    self.finishWithoutSyncingButton?.isHidden = true
-                    self.navigator?.setButtonLabel("Finish")
+                defer {
+                    self.progress.stopAnimation(nil)
+                    self.progress.isHidden = true
+                }
+                while !Task.isCancelled {
+                    let selection = Set(self.state.courses.filter(\.isSyncEnabled).map(\.id))
+                    let revisions = self.state.subscriptionRevisions
+                    let succeeded = await self.state.syncAllForOnboarding()
+                    guard !Task.isCancelled else { return }
+                    // A joined/older pass cannot qualify a new subscription snapshot.
+                    guard selection == Set(self.state.courses.filter(\.isSyncEnabled).map(\.id)),
+                          revisions == self.state.subscriptionRevisions else { continue }
+                    if case .error(let error) = self.state.syncStatus {
+                        self.message.stringValue = error
+                    } else if succeeded {
+                        self.finishedSelection = selection
+                        self.finishedSubscriptionRevisions = revisions
+                        self.didSync = true
+                        self.header.update(title: "Ready in Finder", detail: "Open a file to download it.")
+                        self.message.stringValue = ""
+                        self.finishWithoutSyncingButton?.isHidden = true
+                        self.navigator?.setButtonLabel("Finish")
+                    } else {
+                        self.message.stringValue = "Sync did not finish. Try again."
+                    }
+                    return
                 }
             }
         }
