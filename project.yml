@@ -68,6 +68,7 @@ schemes:
         - SyncEngineTests
         - FindleMCPTests
         - AppInterfaceTests
+        - OnboardingPreviewTests
     profile:
       config: Release
     analyze:
@@ -97,6 +98,7 @@ schemes:
         - SyncEngineTests
         - FindleMCPTests
         - AppInterfaceTests
+        - OnboardingPreviewTests
     profile:
       config: Nightly
     analyze:
