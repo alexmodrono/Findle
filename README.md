@@ -162,11 +162,16 @@ Findle or Findle Nightly, run:
 ./scripts/onboarding-preview.sh
 ```
 
+This preview uses the same published, immutable Airlock revision as the
+production app; a sibling Airlock checkout is not required.
+
 This opens **Findle Onboarding Preview**, a separate sandboxed app. Keep the
 sample site (`moodle.example.edu`) and sign in with username `student` and
 password `preview`. Try course search and selection, Finder access, and the
 first sync. Use **Restart Preview** (Command-R) to start over with fresh data.
-The narrow, solid window has a Liquid Glass navigation pill above it. Drag the window's
+The 540×520 solid window follows Crono's onboarding layout: a centered welcome
+page, grouped forms, and large footer actions. It keeps the hello intro and a
+Liquid Glass segmented navigation pill above it. Drag the window's
 background to move it, use Command-W to close it, or Command-Option-1 through 9
 to select an available step. **Sample Sign-In…** in the app menu shows the test
 account details.

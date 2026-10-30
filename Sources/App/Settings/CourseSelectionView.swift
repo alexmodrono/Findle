@@ -10,6 +10,11 @@ final class CourseSelectionView: NSView, NSTableViewDataSource, NSTableViewDeleg
     private let empty = NativeUI.label("No courses available.", secondary: true)
     private var courses: [MoodleCourse] = []
     private var subscription: AnyCancellable?
+    private static let checkboxTitleOffset: CGFloat = {
+        let probe = NSButton(checkboxWithTitle: "A", target: nil, action: nil)
+        probe.sizeToFit()
+        return probe.cell?.titleRect(forBounds: probe.bounds).minX ?? 20
+    }()
 
     init(state: AppState) {
         self.state = state
@@ -23,7 +28,7 @@ final class CourseSelectionView: NSView, NSTableViewDataSource, NSTableViewDeleg
         scroll.borderType = .bezelBorder
         table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("course")))
         table.headerView = nil
-        table.rowHeight = 54
+        table.rowHeight = 48
         table.dataSource = self
         table.delegate = self
         table.style = .fullWidth
@@ -70,10 +75,22 @@ final class CourseSelectionView: NSView, NSTableViewDataSource, NSTableViewDeleg
         toggle.toolTip = course.fullName
         toggle.setAccessibilityLabel("Sync \(course.fullName)")
         let code = NativeUI.label(course.shortName, secondary: true, size: 11)
-        let stack = NativeUI.stack([toggle, code], spacing: 3)
+        code.lineBreakMode = .byTruncatingTail
+        code.maximumNumberOfLines = 1
         let cell = NSView()
-        NativeUI.pin(stack, in: cell, inset: 5)
-        toggle.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        for view in [toggle, code] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(view)
+        }
+        NSLayoutConstraint.activate([
+            toggle.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+            toggle.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -6),
+            toggle.topAnchor.constraint(equalTo: cell.topAnchor, constant: 6),
+            // Line the course code up with the checkbox title, not the box.
+            code.leadingAnchor.constraint(equalTo: toggle.leadingAnchor, constant: Self.checkboxTitleOffset),
+            code.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -6),
+            code.topAnchor.constraint(equalTo: toggle.bottomAnchor, constant: 2)
+        ])
         return cell
     }
 }

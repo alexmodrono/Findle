@@ -20,7 +20,7 @@ struct OnboardingPreviewTests {
         window.contentViewController = server
         _ = server.view
         server.prepareForPresentation()
-        let address = try #require(server.stack.arrangedSubviews.compactMap { $0 as? NSTextField }
+        let address = try #require(descendants(of: server.view, as: NSTextField.self)
             .first { $0.placeholderString == "https://moodle.example.edu" })
         let editor = try #require(address.currentEditor() as? NSTextView)
         #expect(!editor.isAutomaticDataDetectionEnabled)
@@ -37,12 +37,12 @@ struct OnboardingPreviewTests {
         window.contentViewController = signIn
         _ = signIn.view
         signIn.prepareForPresentation()
-        let username = try #require(signIn.stack.arrangedSubviews.compactMap { $0 as? NSTextField }
+        let username = try #require(descendants(of: signIn.view, as: NSTextField.self)
             .first { $0.placeholderString == "Username" })
         let usernameEditor = try #require(username.currentEditor() as? NSTextView)
         #expect(!usernameEditor.isAutomaticDataDetectionEnabled)
         #expect(!usernameEditor.isContinuousSpellCheckingEnabled)
-        let password = try #require(signIn.stack.arrangedSubviews.compactMap { $0 as? NSSecureTextField }.first)
+        let password = try #require(descendants(of: signIn.view, as: NSSecureTextField.self).first)
         #expect(password.accessibilityLabel() == "Moodle password")
         #expect((password.cell as? NSSecureTextFieldCell)?.echosBullets == true)
         username.removeFromSuperview()
@@ -116,10 +116,13 @@ struct OnboardingPreviewTests {
         flow.viewDidAppear()
         let navigator = window.navigator
         try await waitUntil { navigator.canContinue }
+        #expect(flow.children.first is WelcomeSetupController)
+        navigator.goToNext()
+        try await waitUntil { flow.children.first is ServerSetupController && navigator.canContinue }
         #expect(navigator.buttonLabel == "Connect")
         navigator.goToNext()
         try await waitUntil { !navigator.isBusy }
-        #expect(navigator.currentIndex == 0)
+        #expect(navigator.currentIndex == 1)
         navigator.goToNext()
         try await waitUntil { flow.children.first is SignInSetupController }
         #expect(!navigator.canContinue)
@@ -131,9 +134,9 @@ struct OnboardingPreviewTests {
         navigator.goToNext()
         try await waitUntil { flow.children.first is SignInSetupController }
         let signIn = try #require(flow.children.first as? SignInSetupController)
-        let username = try #require(signIn.stack.arrangedSubviews.compactMap { $0 as? NSTextField }
+        let username = try #require(descendants(of: signIn.view, as: NSTextField.self)
             .first { $0.placeholderString == "Username" })
-        let password = try #require(signIn.stack.arrangedSubviews.compactMap { $0 as? NSSecureTextField }.first)
+        let password = try #require(descendants(of: signIn.view, as: NSSecureTextField.self).first)
         username.stringValue = "student"
         password.stringValue = "preview"
         signIn.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
@@ -152,21 +155,24 @@ struct OnboardingPreviewTests {
         navigator.goToNext()
         try await waitUntil { flow.children.first is FinderSetupController && navigator.canContinue }
         let finder = try #require(flow.children.first as? FinderSetupController)
-        let access = try #require(finder.stack.arrangedSubviews.compactMap { $0 as? ActionButton }.first)
+        let access = try #require(descendants(of: finder.view, as: ActionButton.self).first)
         access.performClick(nil)
         #expect(observer.hasAccessibilityAccess)
-        #expect(finder.message.stringValue == "Finder access is enabled.")
+        #expect(access.isHidden)
+        #expect(descendants(of: finder.view, as: NSTextField.self).contains { $0.stringValue == "Allowed" && !$0.isHidden })
         navigator.goToNext()
         try await waitUntil { flow.children.first is SyncSetupController && navigator.canContinue }
+        let sync = try #require(flow.children.first as? SyncSetupController)
+        let skip = try #require(sync.stack.arrangedSubviews.compactMap { $0 as? ActionButton }.first)
+        #expect(skip.isHidden == (mode == "empty"))
         if mode == "sync" {
             navigator.goToNext()
             try await waitUntil { !navigator.isBusy }
             #expect(state.syncStatus == .completed)
         } else if mode == "skip" {
-            let sync = try #require(flow.children.first as? SyncSetupController)
-            let skip = try #require(sync.stack.arrangedSubviews.compactMap { $0 as? ActionButton }.first)
             skip.performClick(nil)
         }
+        #expect(skip.isHidden)
         #expect(navigator.buttonLabel == "Finish")
         navigator.goToNext()
         navigator.goToNext()
@@ -178,6 +184,12 @@ struct OnboardingPreviewTests {
         let state = AppState()
         try await state.signInAndPersist(site: AppState.sampleSite, username: "student", password: "preview")
         return state
+    }
+
+    private func descendants<T: NSView>(of view: NSView, as type: T.Type) -> [T] {
+        view.subviews.flatMap { child in
+            (child as? T).map { [$0] } ?? []
+        } + view.subviews.flatMap { descendants(of: $0, as: type) }
     }
 
     private func waitUntil(_ condition: @MainActor () -> Bool) async throws {

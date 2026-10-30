@@ -107,7 +107,7 @@ schemes:
 packages:
   Airlock:
     url: https://github.com/alexmodrono/Airlock.git
-    revision: bd61658c503b370f5c97bf22f0865034fb200005
+    revision: 3a658ad5ecf79173154b55706f8f17c42263d233
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     from: 2.10.1

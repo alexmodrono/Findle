@@ -14,17 +14,15 @@ final class CoursesSetupController: SetupStepController {
         message.maximumNumberOfLines = 2
         message.lineBreakMode = .byTruncatingTail
         let site = session.site ?? state.currentSite
-        let institution = SetupContextView(image: SetupAppearance.symbol("globe"),
-                                          title: site?.displayName ?? "Your university",
-                                          detail: "", imageSize: 24, titleSize: 15)
-        addFullWidth(institution)
-        stack.setCustomSpacing(12, after: institution)
+        addFullWidth(SetupStepHeader(title: "Choose your courses", detail: site?.displayName ?? "Your university"))
         selection = CourseSelectionView(state: state)
         addFullWidth(selection)
         selection.isHidden = state.courses.isEmpty
-        let height = selection.heightAnchor.constraint(equalToConstant: 240)
-        height.priority = .defaultHigh
-        height.isActive = true
+        // The list takes whatever height the page leaves free.
+        selection.heightAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
+        let fill = stack.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        fill.priority = .defaultHigh
+        fill.isActive = true
         let refresh = ActionButton("Refresh Courses") { [weak self] _ in self?.loadCourses() }
         let footer = NativeUI.stack([selected, NSView(), refresh], spacing: 12, horizontal: true)
         addFullWidth(footer)

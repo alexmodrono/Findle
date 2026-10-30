@@ -3,3 +3,5 @@
 include:
   - project.yml
 name: FindleOnboardingPreview
+
+# Use the same immutable Airlock dependency as the production project.

@@ -14,18 +14,32 @@ final class FinderSetupController: SetupStepController {
     required init?(coder: NSCoder) { fatalError() }
 
     override func buildContent() {
-        let context = SetupContextView(image: SetupAppearance.finderIcon,
-                                       title: "Beside your Finder windows", detail: "Course information and shortcuts",
-                                       imageSize: 80)
-        addFullWidth(context)
-        stack.setCustomSpacing(28, after: context)
-        addFullWidth(NativeUI.label("Accessibility access lets Findle identify your current folder and window position.", size: 14))
-        let access = ActionButton("Allow Finder Access…") { [weak self] _ in self?.observer.requestAccessibilityAccess() }
-        access.controlSize = .large
-        stack.addArrangedSubview(access)
-        stack.addArrangedSubview(NativeUI.label("Optional for file sync.", secondary: true))
-        subscription = observer.$hasAccessibilityAccess.sink { [weak self] granted in
-            self?.message.stringValue = granted ? "Finder access is enabled." : ""
+        addFullWidth(SetupStepHeader(title: "Finder companion",
+                                    detail: "Keep course information and shortcuts beside your Finder windows."))
+        let image = NSImageView(image: SetupAppearance.finderIcon)
+        image.imageScaling = .scaleProportionallyUpOrDown
+        image.setAccessibilityElement(false)
+        let title = NativeUI.label("Accessibility", size: 13, weight: .semibold)
+        let detail = NativeUI.label("Lets Findle read the active folder and window position.", secondary: true, size: 13)
+        let explanation = NativeUI.stack([title, detail], spacing: 3)
+        let access = ActionButton("Allow…") { [weak self] _ in self?.observer.requestAccessibilityAccess() }
+        access.setAccessibilityLabel("Allow Finder access")
+        let allowed = NativeUI.label("Allowed", size: 13)
+        allowed.textColor = .systemGreen
+        let status = NativeUI.stack([access, allowed], spacing: 0, horizontal: true)
+        let row = NativeUI.stack([image, explanation, status], spacing: 12, horizontal: true)
+        addFullWidth(SetupFormGroup([row]))
+        NSLayoutConstraint.activate([
+            image.widthAnchor.constraint(equalToConstant: 32),
+            image.heightAnchor.constraint(equalToConstant: 32),
+            explanation.widthAnchor.constraint(equalTo: row.widthAnchor, constant: -56 - 74),
+            detail.widthAnchor.constraint(equalTo: explanation.widthAnchor),
+            status.widthAnchor.constraint(equalToConstant: 74)
+        ])
+        addFullWidth(NativeUI.label("File sync works without this permission.", secondary: true, size: 12))
+        subscription = observer.$hasAccessibilityAccess.sink { [weak access, weak allowed] granted in
+            access?.isHidden = granted
+            allowed?.isHidden = !granted
         }
     }
 }

@@ -92,6 +92,11 @@ declining Accessibility access leaves file sync available.
 Airlock now uses native view controllers in a narrow, solid, borderless window. A separate
 Liquid Glass pill above it contains a native segmented picker; both windows move together and
 stay within the screen. The title bar, traffic lights, and sidebar are removed.
+The 540×520 layout follows Crono's onboarding: a centered welcome with feature
+rows, grouped forms with their own headings, and large Back/Continue actions
+aligned at the right. Findle adds a Welcome step before server validation.
+Available step changes use a short directional entrance; Reduce Motion uses
+opacity alone. Pages that supply their own headings use `.showsHeading(false)`.
 Command-W closes setup, and Command-Option-1 through 9 selects an available step.
 The larger original hello animation opens at the screen midpoint with the original
 rainbow glow. The glow fades out after the intro; startup audio finishes once even
