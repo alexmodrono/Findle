@@ -36,6 +36,18 @@ jobs:
         run: '"$RUNNER_TEMP/actionlint" -color'
       - name: Validate repository files
         run: python3 scripts/check-repository.py
+      - name: Set up Python for credential migration tests
+        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          python-version: '3.12'
+      - name: Test credential migration with generated dummy values
+        run: |
+          python -m venv "$RUNNER_TEMP/secret-migration-tests"
+          "$RUNNER_TEMP/secret-migration-tests/bin/python" -m pip install \
+            --disable-pip-version-check --no-cache-dir --no-deps --only-binary=:all: \
+            --require-hashes -r scripts/secret-migration-requirements.txt
+          "$RUNNER_TEMP/secret-migration-tests/bin/python" -I -m unittest discover \
+            -s Tests/SecretMigrationTests -v
       - name: Test security and coverage gates
         run: python3 -m unittest discover -s Tests/AutomationTests -v
 
