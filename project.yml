@@ -110,7 +110,7 @@ packages:
     revision: b0b90268d7610aedf9fc27f40eb3e42ead3d5aad
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
-    from: 2.6.0
+    from: 2.10.1
   MCP:
     url: https://github.com/modelcontextprotocol/swift-sdk
     from: 0.12.1
