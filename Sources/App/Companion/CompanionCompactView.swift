@@ -17,7 +17,7 @@ struct CompanionCompactView: View {
                 .accessibilityLabel(presentation.title)
             Divider().padding(.horizontal, 14)
             VStack(spacing: 6) {
-                CompanionIconButton(title: presentation.isSyncing ? "Syncing" : "Sync now", symbol: "arrow.triangle.2.circlepath", action: actions.sync)
+                CompanionIconButton(title: "Sync now", symbol: "arrow.triangle.2.circlepath", action: actions.sync)
                     .disabled(!presentation.canSync)
                 CompanionIconButton(title: "Open in Moodle", symbol: "globe", action: actions.openMoodle)
                 CompanionFilesMenu(nodes: presentation.nodes, openNode: actions.openNode)

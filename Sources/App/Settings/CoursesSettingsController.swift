@@ -51,6 +51,10 @@ final class CoursesSettingsController: NSViewController {
         default:
             status.stringValue = "\(selected) of \(state.courses.count) courses selected"
         }
-        if case .syncing = state.syncStatus { sync.isEnabled = false } else { sync.isEnabled = selected > 0 }
+        if case .syncing = state.syncStatus {
+            sync.isEnabled = false
+        } else {
+            sync.isEnabled = selected > 0 && !state.sessionExpired
+        }
     }
 }
