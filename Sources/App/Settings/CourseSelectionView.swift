@@ -75,6 +75,7 @@ final class CourseSelectionView: NSView, NSTableViewDataSource, NSTableViewDeleg
         toggle.toolTip = course.fullName
         toggle.setAccessibilityLabel("Sync \(course.fullName)")
         let code = NativeUI.label(course.shortName, secondary: true, size: 11)
+        code.toolTip = course.shortName
         code.lineBreakMode = .byTruncatingTail
         code.maximumNumberOfLines = 1
         let cell = NSView()

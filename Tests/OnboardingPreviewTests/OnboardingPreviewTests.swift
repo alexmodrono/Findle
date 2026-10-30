@@ -174,6 +174,27 @@ struct OnboardingPreviewTests {
         }
         #expect(skip.isHidden)
         #expect(navigator.buttonLabel == "Finish")
+        navigator.goToPrevious()
+        try await waitUntil { flow.children.first is FinderSetupController && navigator.canContinue }
+        navigator.goToNext()
+        try await waitUntil { flow.children.first is SyncSetupController && navigator.canContinue }
+        #expect(flow.children.first === sync)
+        #expect(skip.isHidden)
+        #expect(navigator.buttonLabel == "Finish")
+        // Revising the selected courses invalidates the previous completion choice.
+        navigator.goToPrevious()
+        try await waitUntil { flow.children.first is FinderSetupController && navigator.canContinue }
+        navigator.goToPrevious()
+        try await waitUntil { flow.children.first is CoursesSetupController && navigator.canContinue }
+        let changedCourse = try #require(state.courses.first)
+        state.setCourseSyncEnabled(!changedCourse.isSyncEnabled, for: changedCourse)
+        navigator.goToNext()
+        try await waitUntil { flow.children.first is FinderSetupController && navigator.canContinue }
+        navigator.goToNext()
+        try await waitUntil { flow.children.first is SyncSetupController && navigator.canContinue }
+        #expect(!skip.isHidden)
+        #expect(navigator.buttonLabel == "Sync Courses")
+        skip.performClick(nil)
         navigator.goToNext()
         navigator.goToNext()
         #expect(completions == 1)
