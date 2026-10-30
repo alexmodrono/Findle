@@ -20,6 +20,7 @@ final class AppState: ObservableObject {
     let currentScreen: AppScreen = .onboarding
     let currentSite: MoodleSite? = AppState.sampleSite
     @Published var courses: [MoodleCourse] = []
+    private(set) var subscriptionRevisions: [Int: UUID] = [:]
     @Published private(set) var syncStatus: SyncStatus = .idle
     var errorMessage: String?
     private(set) var isSignedIn = false
@@ -68,6 +69,7 @@ final class AppState: ObservableObject {
 
     func setCourseSyncEnabled(_ enabled: Bool, for course: MoodleCourse) {
         guard let index = courses.firstIndex(where: { $0.id == course.id && $0.siteID == course.siteID }) else { return }
+        subscriptionRevisions[course.id] = UUID()
         courses[index].isSyncEnabled = enabled
     }
 

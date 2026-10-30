@@ -8,6 +8,7 @@ final class SyncSetupController: SetupStepController {
     private var summaryGroup: SetupFormGroup?
     private var finishWithoutSyncingButton: ActionButton?
     private var finishedSelection: Set<Int>?
+    private var finishedSubscriptionRevisions: [Int: UUID]?
     private var didSync = false
 
     override func buildContent() {
@@ -23,6 +24,7 @@ final class SyncSetupController: SetupStepController {
         let skip = ActionButton("Finish Without Syncing") { [weak self] _ in
             guard let self else { return }
             self.finishedSelection = Set(self.state.courses.filter(\.isSyncEnabled).map(\.id))
+            self.finishedSubscriptionRevisions = self.state.subscriptionRevisions
             self.navigator?.resetButton()
             self.navigator?.setButtonLabel("Finish")
             self.navigator?.setContinueEnabled(true)
@@ -36,8 +38,10 @@ final class SyncSetupController: SetupStepController {
         let courses = state.courses.filter(\.isSyncEnabled)
         let count = courses.count
         let selectedIDs = Set(courses.map(\.id))
-        if finishedSelection != selectedIDs {
+        let subscriptionRevisions = state.subscriptionRevisions
+        if finishedSelection != selectedIDs || finishedSubscriptionRevisions != subscriptionRevisions {
             finishedSelection = nil
+            finishedSubscriptionRevisions = nil
             didSync = false
         }
         let finished = finishedSelection == selectedIDs
@@ -67,6 +71,7 @@ final class SyncSetupController: SetupStepController {
                     self.message.stringValue = error
                 } else {
                     self.finishedSelection = selectedIDs
+                    self.finishedSubscriptionRevisions = subscriptionRevisions
                     self.didSync = true
                     self.header.update(title: "Ready in Finder", detail: "Open a file to download it.")
                     self.message.stringValue = ""

@@ -72,7 +72,7 @@ final class AppState: ObservableObject {
     private var authenticationSetupTask: Task<Void, Error>?
     private var authenticationRequestTask: Task<(AuthToken, MoodleUser), Error>?
     private var subscriptionTasks: [Int: Task<Void, Never>] = [:]
-    private var subscriptionRevisions: [Int: UUID] = [:]
+    private(set) var subscriptionRevisions: [Int: UUID] = [:]
     private var courseSyncTasks: [UUID: Task<Bool, Never>] = [:]
     private var keychainRestoreTask: Task<Void, Never>?
     private var requestedSyncTask: Task<Void, Never>?

@@ -102,8 +102,8 @@ struct OnboardingPreviewTests {
         #expect(state.syncStatus == .idle)
     }
 
-    @Test(arguments: ["sync", "skip", "empty"])
-    func sharedOnboardingCompletes(mode: String) async throws {
+    @Test(arguments: ["sync", "skip", "empty"], [false, true])
+    func sharedOnboardingCompletes(mode: String, restoresSelection: Bool) async throws {
         _ = NSApplication.shared
         let state = AppState()
         let observer = FinderWindowObserver()
@@ -188,6 +188,10 @@ struct OnboardingPreviewTests {
         try await waitUntil { flow.children.first is CoursesSetupController && navigator.canContinue }
         let changedCourse = try #require(state.courses.first)
         state.setCourseSyncEnabled(!changedCourse.isSyncEnabled, for: changedCourse)
+        if restoresSelection && mode != "empty" {
+            // The final IDs match, but unsubscribe may already have removed items.
+            state.setCourseSyncEnabled(changedCourse.isSyncEnabled, for: changedCourse)
+        }
         navigator.goToNext()
         try await waitUntil { flow.children.first is FinderSetupController && navigator.canContinue }
         navigator.goToNext()
