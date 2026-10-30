@@ -16,20 +16,25 @@ final class InterfacePreview: NSObject, NSWindowDelegate {
 
     func run() {
         let observer = FinderWindowObserver()
+        if mode.contains("error") {
+            state.errorMessage = "Could not sync this course. Check your connection and try again."
+        }
+        if mode.contains("expired") { state.sessionExpired = true }
         switch mode {
         case "onboarding":
             controller = FindleOnboarding.make(state: state, observer: observer, playsIntro: false, autosavesFrame: false) {}
-        case "settings":
+        case let settings where settings.hasPrefix("settings"):
             controller = SettingsWindowController(state: state, updates: UpdateController(automaticallyStart: false), companion: observer, autosavesFrame: false, reconnect: {})
+            // "settings-general", "settings-account-dark", … select a tab by its label.
+            if let tabs = controller?.contentViewController as? NSTabViewController,
+               let index = tabs.tabViewItems.firstIndex(where: { settings.contains("-\($0.label.lowercased())") }) {
+                tabs.selectedTabViewItemIndex = index
+            }
         default:
             if mode.contains("long"), let course = state.courses.first {
                 state.courses[0] = MoodleCourse(id: course.id, shortName: "COMPUTER-SYSTEMS-2026",
                     fullName: "Operating Systems and Computer Architecture", siteID: course.siteID)
             }
-            if mode.contains("error") {
-                state.errorMessage = "Could not sync this course. Check your connection and try again."
-            }
-            if mode.contains("expired") { state.sessionExpired = true }
             if mode.contains("syncing"), let course = state.courses.first { state.courseSyncStates[course.id] = .syncing }
             let content = CompanionViewController(state: state, openSettings: {})
             let compact = mode.contains("compact")

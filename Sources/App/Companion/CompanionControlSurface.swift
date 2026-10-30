@@ -9,23 +9,30 @@ struct CompanionControlSurface: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
 
+    private var isDark: Bool { colorScheme == .dark }
+
     private var fill: Color {
-        let level: Double = isPressed && isEnabled ? 0.76
-            : isHovered && isEnabled ? 0.93
-            : colorScheme == .dark ? 0.82 : 0.86
+        let pressed = isPressed && isEnabled, hovered = isHovered && isEnabled
+        let level: Double = isDark
+            ? pressed ? 0.20 : hovered ? 0.34 : 0.27
+            : pressed ? 0.76 : hovered ? 0.93 : 0.86
         return Color(white: level)
+    }
+
+    private var stroke: Color {
+        let opacity = contrast == .increased ? 0.5 : isDark ? 0.12 : 0.14
+        return (isDark ? Color.white : Color.black).opacity(opacity)
     }
 
     func body(content: Content) -> some View {
         content
-            .foregroundStyle(Color(white: 0.16))
+            .foregroundStyle(Color(white: isDark ? 0.92 : 0.16))
             .background {
                 RoundedRectangle(cornerRadius: 9)
                     .fill(fill)
                     .overlay {
                         RoundedRectangle(cornerRadius: 9)
-                            .strokeBorder(.black.opacity(contrast == .increased ? 0.5 : 0.14),
-                                          lineWidth: contrast == .increased ? 1 : 0.5)
+                            .strokeBorder(stroke, lineWidth: contrast == .increased ? 1 : 0.5)
                     }
             }
             .opacity(isEnabled ? 1 : 0.45)

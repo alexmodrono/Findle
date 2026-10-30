@@ -34,7 +34,7 @@ struct CompanionExpandedView: View {
                 CompanionStatusView(presentation: presentation, compact: false, openSettings: actions.openSettings)
                 HStack(spacing: 8) {
                     Button(action: actions.sync) {
-                        Text(presentation.isSyncing ? "Syncing…" : "Sync now")
+                        Text("Sync now")
                             .font(.callout.weight(.medium))
                             .padding(.horizontal, 12)
                             .frame(height: 32)

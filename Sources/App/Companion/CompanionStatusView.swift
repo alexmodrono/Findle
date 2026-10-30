@@ -9,15 +9,20 @@ struct CompanionStatusView: View {
     var body: some View {
         Group {
             if presentation.isSyncing {
-                VStack(spacing: 4) {
+                let layout = compact ? AnyLayout(VStackLayout(spacing: 4)) : AnyLayout(HStackLayout(spacing: 6))
+                layout {
                     ProgressView().controlSize(.mini)
                     Text("Syncing…")
                 }
                 .accessibilityElement(children: .combine)
             } else if let error = presentation.errorMessage {
                 Button { showingError = true } label: {
-                    Label(presentation.failureTitle, systemImage: "exclamationmark.triangle")
-                        .fixedSize(horizontal: false, vertical: true)
+                    Label {
+                        Text(presentation.failureTitle).foregroundStyle(.primary)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill").symbolRenderingMode(.multicolor)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
                 }
                 .buttonStyle(.borderless)
                 .help(error)

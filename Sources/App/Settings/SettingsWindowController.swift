@@ -22,12 +22,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
             tabs.addTabViewItem(item)
         }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 570),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 540),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Findle Settings"
-        window.minSize = NSSize(width: 640, height: 480)
+        window.minSize = NSSize(width: 600, height: 460)
         window.contentViewController = tabs
-        window.setContentSize(NSSize(width: 760, height: 570))
+        window.setContentSize(NSSize(width: 680, height: 540))
         window.isReleasedWhenClosed = false
         if autosavesFrame { window.setFrameAutosaveName("Findle.Settings") }
         super.init(window: window)

@@ -4,9 +4,11 @@ import UniformTypeIdentifiers
 import SharedDomain
 
 @MainActor
-final class DiagnosticsController: NativeFormController {
+final class DiagnosticsController: SettingsFormController {
     private let state: AppState
-    private let details = NativeUI.label("")
+    private let lastSync = NSTextField(labelWithString: "")
+    private let database = NSTextField(labelWithString: "")
+    private let failure = NSTextField(wrappingLabelWithString: "")
     private var subscription: AnyCancellable?
     private var isExporting = false
 
@@ -15,23 +17,32 @@ final class DiagnosticsController: NativeFormController {
     required init?(coder: NSCoder) { fatalError() }
 
     override func buildForm() {
-        NativeUI.section("Sync", in: stack)
-        details.isSelectable = true
-        stack.addArrangedSubview(details)
+        database.isSelectable = true
+        database.lineBreakMode = .byTruncatingMiddle
+        database.widthAnchor.constraint(lessThanOrEqualToConstant: Self.controlWidth).isActive = true
+        failure.isSelectable = true
+        failure.textColor = .systemRed
+        failure.preferredMaxLayoutWidth = Self.controlWidth
+        failure.widthAnchor.constraint(lessThanOrEqualToConstant: Self.controlWidth).isActive = true
+        addRow("Last sync", lastSync)
+        addRow("Last error", failure)
+        addRow("Database", database)
+        addSeparator()
         let verbose = ActionButton("Verbose logging", checkbox: true) { button in UserDefaults.standard.set(button.state == .on, forKey: "verboseLogging") }
         verbose.state = UserDefaults.standard.bool(forKey: "verboseLogging") ? .on : .off
-        stack.addArrangedSubview(verbose)
-        stack.addArrangedSubview(ActionButton("Export Diagnostics…") { [weak self] _ in self?.export() })
-        NativeUI.section("Maintenance", in: stack)
-        stack.addArrangedSubview(ActionButton("Rebuild Search Index") { [weak self] _ in
-            guard let self else { return }; Task { await self.state.rebuildIndex() }
-        })
-        stack.addArrangedSubview(ActionButton("Reset File Provider…") { [weak self] _ in
+        addRow("Logging", verbose)
+        addRow(nil, ActionButton("Export Diagnostics…") { [weak self] _ in self?.export() })
+        addSeparator()
+        let reset = ActionButton("Reset File Provider…") { [weak self] _ in
             guard let self else { return }
             NativeUI.confirm(in: self.view.window, title: "Reset File Provider?",
                              message: "Findle will register its Finder location again. Downloaded Moodle files may need to be downloaded again. Your personal files are preserved.",
                              actionTitle: "Reset") { Task { await self.state.resetProvider() } }
-        })
+        }
+        reset.hasDestructiveAction = true
+        addRow("Maintenance", buttons([ActionButton("Rebuild Search Index") { [weak self] _ in
+            guard let self else { return }; Task { await self.state.rebuildIndex() }
+        }, reset]))
         subscription = state.objectWillChange.sink { [weak self] in
             Task { @MainActor [weak self] in self?.refresh() }
         }
@@ -39,9 +50,15 @@ final class DiagnosticsController: NativeFormController {
     }
 
     private func refresh() {
-        let last = state.lastSyncDate?.formatted(date: .abbreviated, time: .shortened) ?? "Never"
-        details.stringValue = "Last sync: \(last)\nDatabase: \(state.databaseFilePath ?? "Unavailable")"
-        if let error = state.errorMessage { details.stringValue += "\n\(error)" }
+        lastSync.stringValue = state.lastSyncDate?.formatted(date: .abbreviated, time: .shortened) ?? "Never"
+        database.stringValue = state.databaseFilePath ?? "Unavailable"
+        database.toolTip = state.databaseFilePath
+        showFailure(state.errorMessage)
+    }
+
+    private func showFailure(_ message: String?) {
+        failure.stringValue = message ?? ""
+        grid.cell(for: failure)?.row?.isHidden = message?.isEmpty ?? true
     }
 
     private func export() {
@@ -79,7 +96,7 @@ final class DiagnosticsController: NativeFormController {
                 do {
                     let data = try diagnostics.encoded()
                     try await Task.detached(priority: .utility) { try data.write(to: url, options: .atomic) }.value
-                } catch { self.details.stringValue = error.localizedDescription }
+                } catch { self.showFailure(error.localizedDescription) }
             }
         }
     }
