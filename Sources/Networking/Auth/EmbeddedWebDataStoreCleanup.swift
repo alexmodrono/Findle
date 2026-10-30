@@ -14,6 +14,11 @@ final class EmbeddedWebDataStoreCleanup {
     )
 
     static func removePersistentStore(_ identifier: UUID) async throws {
+        // Startup cleanup can be the process's first WebKit call. The static
+        // removal API does not initialize WebKit's main run loop on all OS
+        // versions; bootstrap with an ephemeral store before dispatching it.
+        // This creates no persistent store or web view and loads no content.
+        _ = WKWebsiteDataStore.nonPersistent()
         do { try await WKWebsiteDataStore.remove(forIdentifier: identifier) }
         catch {
             // A prior successful removal may have crashed before queue commit.
