@@ -23,10 +23,10 @@ uncommitted changes. Signed integration and upgrade/soak evidence are separate
 from unsigned unit tests.
 
 The sole maintainer owns final review. A CODEOWNERS self-approval requirement would
-make the maintainer's own PRs impossible, so it is not enabled. Main protection
-will require pull requests, verified aggregate checks, resolved conversations,
-and no force pushes or branch deletion after the initial CI/security rollout is
-qualified. Repository administrators have a pull-request-only emergency bypass;
+make the maintainer's own PRs impossible, so it is not enabled. A ruleset protects
+`main`: changes need a pull request, an up-to-date branch with passing `CI required`
+and `CodeQL required`, and resolved conversations. Force pushes and branch deletion
+are blocked. Repository administrators have a pull-request-only emergency bypass;
 record the reason and the omitted checks in the PR and restore normal checks
 before release. Do not use it for ordinary red builds.
 
