@@ -118,7 +118,7 @@ final class AuthenticatedRequestSecurityTests: XCTestCase {
         let target = URL(string: "https://moodle.test/redirected")!
         for status in [307, 308] {
             SecurityURLProtocol.reset()
-            SecurityURLProtocol.redirect(from: site.tokenURL, to: target, status: status)
+            SecurityURLProtocol.redirect(from: site.tokenURL, to: target, status: status, followed: true)
             SecurityURLProtocol.respond(at: target, data: Data(#"{"token":"returned-token"}"#.utf8))
             let token = try await client().authenticate(site: site, username: "fixture-user", password: "fixture-password")
             XCTAssertEqual(token.token, "returned-token")
@@ -126,7 +126,7 @@ final class AuthenticatedRequestSecurityTests: XCTestCase {
             XCTAssertEqual(SecurityURLProtocol.requests.last?.httpMethod, "POST")
 
             SecurityURLProtocol.reset()
-            SecurityURLProtocol.redirect(from: site.webServiceURL, to: target, status: status)
+            SecurityURLProtocol.redirect(from: site.webServiceURL, to: target, status: status, followed: true)
             SecurityURLProtocol.respond(at: target, data: Data("[]".utf8))
             let courses = try await client().fetchCourses(site: site, token: token, userID: 1)
             XCTAssertTrue(courses.isEmpty)
@@ -176,7 +176,7 @@ final class AuthenticatedRequestSecurityTests: XCTestCase {
             }
             SecurityURLProtocol.reset()
             let target = URL(string: "https://moodle.test/download")!
-            SecurityURLProtocol.redirect(from: initial, to: target, status: status)
+            SecurityURLProtocol.redirect(from: initial, to: target, status: status, followed: true)
             SecurityURLProtocol.respond(at: target, data: Data("downloaded".utf8))
             try await client().downloadFile(url: initial, site: site, token: AuthToken(token: "fixture-token"), destination: destination)
             XCTAssertEqual(SecurityURLProtocol.requests.map(\.url), [initial, target])
@@ -188,12 +188,17 @@ final class AuthenticatedRequestSecurityTests: XCTestCase {
 /// Exercises URLSession's real task delegate dispatch with entirely local,
 /// synthetic responses. No TLS exceptions, live endpoints, or credentials.
 private final class SecurityURLProtocol: URLProtocol {
-    private enum Reply: Sendable { case redirect(URL, Int), data(Data, Int) }
+    private enum Reply: Sendable { case redirect(URL, Int, followed: Bool), data(Data, Int) }
     private struct State { var replies: [URL: Reply] = [:]; var requests: [URLRequest] = [] }
     private static let state = Mutex(State())
     static var requests: [URLRequest] { state.withLock { $0.requests } }
     static func reset() { state.withLock { $0 = State() } }
-    static func redirect(from: URL, to: URL, status: Int) { state.withLock { $0.replies[from] = .redirect(to, status) } }
+    /// `followed` states whether the test expects the client to accept the redirect.
+    /// An accepted redirect must not also deliver the redirect response, or that
+    /// response can race the followed request and complete the task with a 3xx.
+    static func redirect(from: URL, to: URL, status: Int, followed: Bool = false) {
+        state.withLock { $0.replies[from] = .redirect(to, status, followed: followed) }
+    }
     static func respond(at url: URL, data: Data, status: Int = 200) { state.withLock { $0.replies[url] = .data(data, status) } }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -205,12 +210,15 @@ private final class SecurityURLProtocol: URLProtocol {
         }
         guard let url = request.url else { return }
         switch reply {
-        case let .redirect(destination, status):
+        case let .redirect(destination, status, followed):
             let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1",
                                            headerFields: ["Location": destination.absoluteString])!
             var redirected = request
             redirected.url = destination
             client?.urlProtocol(self, wasRedirectedTo: redirected, redirectResponse: response)
+            // URLSession stops this protocol and loads the destination when the
+            // redirect is accepted, as a real HTTP loader would.
+            guard !followed else { return }
             // A refused redirect leaves the original response active. Finish
             // that response too; otherwise the fixture creates a fake timeout.
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
