@@ -872,6 +872,23 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
 // MARK: - Services
 
+extension FileProviderExtension: NSFileProviderThumbnailing {
+    func fetchThumbnails(
+        for itemIdentifiers: [NSFileProviderItemIdentifier],
+        requestedSize size: CGSize,
+        perThumbnailCompletionHandler: @escaping (NSFileProviderItemIdentifier, Data?, Error?) -> Void,
+        completionHandler: @escaping (Error?) -> Void
+    ) -> Progress {
+        guard let database, let siteID else {
+            completionHandler(NSFileProviderError(.serverUnreachable))
+            return Progress()
+        }
+        return ThumbnailFetcher.shared.fetchThumbnails(
+            for: itemIdentifiers, database: database, siteID: siteID,
+            perThumbnail: perThumbnailCompletionHandler, completion: completionHandler)
+    }
+}
+
 extension FileProviderExtension: NSFileProviderServicing {
     /// Every item offers the course data service, so a client can reach it
     /// through any file or folder in the Findle location.

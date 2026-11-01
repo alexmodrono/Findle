@@ -503,6 +503,7 @@ targets:
       - path: Sources/FileProviderExtension/DownloadRetention.swift
       - path: Sources/FileProviderExtension/FinderActionState.swift
       - path: Sources/FileProviderExtension/CourseDataServiceSource.swift
+      - path: Sources/FileProviderExtension/ThumbnailFetcher.swift
     dependencies:
       - target: SharedDomain
       - target: FindleNetworking
