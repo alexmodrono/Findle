@@ -1,4 +1,5 @@
 import Foundation
+import SharedDomain
 
 /// Finder can advertise AXDocument but return no value, including in File Provider
 /// windows. Use actual content URLs as evidence; a matching title alone is not enough.
@@ -29,5 +30,17 @@ enum FinderFolderResolver {
         }
         // Repeated directory names or mixed search results must not pick arbitrary context.
         return matches.count == 1 ? matches.values.first : nil
+    }
+
+    /// The course shown in the Finder folder `name` at the top of the Findle location.
+    ///
+    /// Two courses can sanitize to the same folder name. When only one of them is
+    /// synced, that one owns the folder. Otherwise the name can't tell them apart,
+    /// so no course is returned rather than a guess.
+    static func course(folderName name: String, siteID: String?, in courses: [MoodleCourse]) -> MoodleCourse? {
+        let named = courses.filter { $0.siteID == siteID && $0.effectiveFolderName == name }
+        if named.count == 1 { return named[0] }
+        let synced = named.filter(\.isSyncEnabled)
+        return synced.count == 1 ? synced[0] : nil
     }
 }
