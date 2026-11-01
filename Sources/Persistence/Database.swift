@@ -51,7 +51,7 @@ public final class Database: @unchecked Sendable {
             .path
     }
 
-    public static let schemaVersion = 16
+    public static let schemaVersion = 17
 
     /// Opens the database.
     ///
@@ -515,6 +515,16 @@ public final class Database: @unchecked Sendable {
             )
         """)
 
+        // Files Findle writes itself, such as a section's README.md with its
+        // labels. Saved by the sync with its items and served by the File Provider.
+        try executeUnsafe("""
+            CREATE TABLE IF NOT EXISTS generated_contents (
+                item_id TEXT PRIMARY KEY,
+                site_id TEXT NOT NULL,
+                data BLOB NOT NULL
+            )
+        """)
+
         try executeUnsafe("""
             CREATE INDEX IF NOT EXISTS idx_items_parent ON items(parent_id)
         """)
@@ -804,6 +814,12 @@ public final class Database: @unchecked Sendable {
             logger.info("Migrated database schema to version 16 (item activity)")
         }
 
+        if currentVersion < 17 {
+            // v16 -> v17: generated_contents, created above and filled by the
+            // next sync of each course.
+            logger.info("Migrated database schema to version 17 (generated contents)")
+        }
+
         // Databases created before the seed marker was introduced were already
         // authoritative app databases. Promote only those legacy databases
         // that contain a session; a partial v14+ snapshot must remain false.
@@ -1081,6 +1097,13 @@ extension Database {
                     throw FindleError.databaseError(detail: "Failed to delete account item activity: \(String(cString: sqlite3_errmsg(db)))")
                 }
 
+                let deleteGenerated = try prepareStatement("DELETE FROM generated_contents WHERE site_id IN (SELECT site_id FROM accounts WHERE id = ?)")
+                defer { sqlite3_finalize(deleteGenerated) }
+                sqlite3_bind_text(deleteGenerated, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                guard sqlite3_step(deleteGenerated) == SQLITE_DONE else {
+                    throw FindleError.databaseError(detail: "Failed to delete account generated contents: \(String(cString: sqlite3_errmsg(db)))")
+                }
+
                 let deleteAccount = try prepareStatement("DELETE FROM accounts WHERE id = ?")
                 defer { sqlite3_finalize(deleteAccount) }
                 sqlite3_bind_text(deleteAccount, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
@@ -1320,7 +1343,7 @@ extension Database {
             try provider.verifyRecoveryStateUnsafe(requireComplete: false)
             let tables = ["sites", "accounts", "courses", "course_tags", "course_outlines", "items",
                           "sync_cursors", "assignments", "grade_items", "quizzes", "quiz_attempts", "pending_deletions",
-                          "item_activity"]
+                          "item_activity", "generated_contents"]
             let hasSavedRows = try tables.contains { table in
                 try provider.scalarUnsafe("SELECT EXISTS(SELECT 1 FROM \(table) LIMIT 1)") != 0
             }
@@ -1417,7 +1440,7 @@ extension Database {
                 }
                 let tables = ["sites", "accounts", "courses", "course_tags", "course_outlines", "items",
                               "sync_cursors", "assignments", "grade_items", "quizzes", "quiz_attempts",
-                              "pending_deletions", "item_activity", "system_metadata"]
+                              "pending_deletions", "item_activity", "generated_contents", "system_metadata"]
                 for table in tables.reversed() { try executeUnsafe("DELETE FROM main.\(table)") }
                 for table in tables { try executeUnsafe("INSERT INTO main.\(table) SELECT * FROM recovery.\(table)") }
                 if resetRemoteContent {
@@ -1474,7 +1497,8 @@ extension Database {
         deletingItemIDs: [String],
         cursor: SyncCursor,
         outline: CourseOutlineSnapshot,
-        arrivedItemIDs: [String] = []
+        arrivedItemIDs: [String] = [],
+        generatedContents: [String: Data] = [:]
     ) throws {
         guard outline.courseID == cursor.courseID,
               items.allSatisfy({ $0.courseID == cursor.courseID && $0.siteID == cursor.siteID }) else {
@@ -1486,6 +1510,7 @@ extension Database {
                 try saveItemsUnsafe(items)
                 try deleteItemsWithTombstoneUnsafe(ids: deletingItemIDs)
                 try recordArrivalsUnsafe(ids: arrivedItemIDs, siteID: cursor.siteID, at: cursor.lastSyncDate)
+                try saveGeneratedContentsUnsafe(generatedContents, siteID: cursor.siteID)
                 try saveSyncCursorUnsafe(cursor)
                 try saveCourseOutlineUnsafe(courseID: outline.courseID, siteID: cursor.siteID, payload: payload)
             }
@@ -1501,6 +1526,50 @@ extension Database {
         } catch {
             try? executeUnsafe("ROLLBACK")
             throw error
+        }
+    }
+}
+
+// MARK: - Generated Contents
+
+extension Database {
+    /// The caller must hold `queue`. Also drops content of items that are gone.
+    private func saveGeneratedContentsUnsafe(_ contents: [String: Data], siteID: String) throws {
+        let stmt = try prepareStatement("INSERT OR REPLACE INTO generated_contents (item_id, site_id, data) VALUES (?, ?, ?)")
+        defer { sqlite3_finalize(stmt) }
+        for (id, data) in contents {
+            sqlite3_reset(stmt)
+            sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            _ = data.withUnsafeBytes { sqlite3_bind_blob(stmt, 3, $0.baseAddress, Int32($0.count), SQLITE_TRANSIENT) }
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw FindleError.databaseError(detail: "Failed to save generated content")
+            }
+        }
+        let prune = try prepareStatement("DELETE FROM generated_contents WHERE site_id = ? AND item_id NOT IN (SELECT id FROM items)")
+        defer { sqlite3_finalize(prune) }
+        sqlite3_bind_text(prune, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(prune) == SQLITE_DONE else {
+            throw FindleError.databaseError(detail: "Failed to prune generated contents")
+        }
+    }
+
+    /// The bytes of a file Findle generates, or nil for items downloaded from Moodle.
+    public func fetchGeneratedContent(itemID: String) throws -> Data? {
+        try queue.sync {
+            let stmt = try prepareStatement("SELECT data FROM generated_contents WHERE item_id = ?")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            switch sqlite3_step(stmt) {
+            case SQLITE_ROW:
+                let count = Int(sqlite3_column_bytes(stmt, 0))
+                guard count > 0, let bytes = sqlite3_column_blob(stmt, 0) else { return Data() }
+                return Data(bytes: bytes, count: count)
+            case SQLITE_DONE:
+                return nil
+            default:
+                throw FindleError.databaseError(detail: "Failed to read generated content")
+            }
         }
     }
 }

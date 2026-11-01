@@ -108,6 +108,8 @@ struct ModuleResponse: Decodable {
     let modicon: String?
     let visible: Int?
     let contents: LossyArray<ContentResponse>?
+    /// Label text, or an activity description shown on the course page (HTML).
+    let description: String?
 }
 
 /// File content response within a module.
@@ -137,10 +139,16 @@ struct AssignmentsResponse: Decodable {
     }
     struct AssignmentItem: Decodable {
         let id: Int
+        /// Course module ID, the module's ID in the course contents.
+        let cmid: Int?
         let course: Int
         let name: String
         let duedate: Int?
         let cutoffdate: Int?
+        /// The brief (HTML). Moodle omits it before the assignment opens unless
+        /// the teacher always shows the description.
+        let intro: String?
+        let introattachments: LossyArray<ContentResponse>?
     }
 }
 

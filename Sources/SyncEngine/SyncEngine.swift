@@ -4,6 +4,7 @@
 // You may obtain a copy of the License in the LICENSE file at the root of this repository.
 
 import Foundation
+import CryptoKit
 import OSLog
 import SharedDomain
 import FindleNetworking
@@ -238,6 +239,10 @@ public actor SyncEngine {
 
         try Task.checkCancellation()
 
+        let briefs = try await fetchAssignmentBriefs(site: site, token: token, course: course, sections: sections)
+
+        try Task.checkCancellation()
+
         // Look up Finder tags for this course
         let courseTags = try database.fetchCourseTags(courseID: course.id, siteID: site.id)
         let courseTagData = FinderTag.tagData(from: courseTags)
@@ -259,6 +264,7 @@ public actor SyncEngine {
         )
 
         var allItems: [LocalItem] = [courseItem]
+        var generatedContents: [String: Data] = [:]
 
         // Build items from sections and modules
         for section in sections {
@@ -278,8 +284,16 @@ public actor SyncEngine {
             )
             allItems.append(sectionItem)
 
+            var sectionItems: [LocalItem] = []
             for module in section.modules {
                 guard module.visible else { continue }
+                if module.resourceType == .assignment {
+                    let assignment = assignmentItems(for: module, brief: briefs[module.id], parentID: sectionItemID,
+                                                     siteID: site.id, courseID: course.id)
+                    sectionItems.append(contentsOf: assignment.items)
+                    generatedContents.merge(assignment.generated) { _, new in new }
+                    continue
+                }
                 let moduleItems = buildItems(
                     from: module,
                     parentID: sectionItemID,
@@ -287,8 +301,14 @@ public actor SyncEngine {
                     courseID: course.id,
                     token: token
                 )
-                allItems.append(contentsOf: moduleItems)
+                sectionItems.append(contentsOf: moduleItems)
             }
+            if let readme = labelReadme(for: section, siblings: sectionItems, parentID: sectionItemID,
+                                        siteID: site.id, courseID: course.id) {
+                sectionItems.append(readme.item)
+                generatedContents[readme.item.id] = readme.data
+            }
+            allItems.append(contentsOf: sectionItems)
         }
 
         syncProgress[course.id]?.totalItems = allItems.count
@@ -299,6 +319,14 @@ public actor SyncEngine {
         // `idx_items_course` index does the filtering — loading every row for
         // the site and filtering in memory made a full sync quadratic.
         let existingItems = try database.fetchItems(courseID: course.id, siteID: site.id).filter { !$0.isLocal }
+
+        // An assignment without a brief (Moodle refused the request or left it
+        // out) keeps what earlier syncs put in its folder instead of losing it.
+        let built = Set(allItems.map(\.id))
+        let foldersWithoutBrief = Set(allItems.filter { $0.id.hasPrefix("assign-") && briefs[$0.remoteID] == nil }.map(\.id))
+        allItems += existingItems.filter { item in
+            item.parentID.map(foldersWithoutBrief.contains) == true && !built.contains(item.id)
+        }
 
         let changes = diffItems(existing: existingItems, incoming: allItems)
 
@@ -330,7 +358,8 @@ public actor SyncEngine {
             deletingItemIDs: changes.removed.map(\.id),
             cursor: cursor,
             outline: CourseOutlineSnapshot(courseID: course.id, sections: sections),
-            arrivedItemIDs: arrivedItemIDs
+            arrivedItemIDs: arrivedItemIDs,
+            generatedContents: generatedContents
         )
 
         syncProgress[course.id]?.processedItems = allItems.count
@@ -416,6 +445,106 @@ public actor SyncEngine {
         }
 
         return items
+    }
+
+    // MARK: - Assignments and Labels
+
+    /// Briefs keyed by course module, or none when the course has no assignments
+    /// or Moodle refuses the request. Signing out still stops the sync.
+    private func fetchAssignmentBriefs(
+        site: MoodleSite, token: AuthToken, course: MoodleCourse, sections: [MoodleSection]
+    ) async throws -> [Int: MoodleAssignmentBrief] {
+        let hasAssignments = sections.contains { section in
+            section.visible && section.modules.contains { $0.visible && $0.resourceType == .assignment }
+        }
+        guard hasAssignments else { return [:] }
+        do {
+            let briefs = try await provider.fetchAssignmentBriefs(site: site, token: token, courseID: course.id)
+            return Dictionary(briefs.map { ($0.moduleID, $0) }, uniquingKeysWith: { first, _ in first })
+        } catch {
+            if Self.isCancellation(error) || Task.isCancelled { throw CancellationError() }
+            if (error as? FindleError)?.requiresReauthentication == true { throw error }
+            logger.warning("Assignment briefs unavailable for course \(course.id, privacy: .public): \(DiagnosticFailure(error).summary, privacy: .public)")
+            return [:]
+        }
+    }
+
+    /// An assignment as a folder holding a README.md with its brief and the
+    /// files attached to the brief.
+    private func assignmentItems(
+        for module: MoodleModule, brief: MoodleAssignmentBrief?, parentID: String, siteID: String, courseID: Int
+    ) -> (items: [LocalItem], generated: [String: Data]) {
+        let folderID = "assign-\(siteID)-\(courseID)-\(module.id)"
+        let folder = LocalItem(
+            id: folderID, parentID: parentID, siteID: siteID, courseID: courseID, remoteID: module.id,
+            filename: FileNameSanitizer.sanitize(module.name), isDirectory: true, syncState: .materialized
+        )
+        guard let brief else { return ([folder], [:]) }
+
+        let attachmentModule = MoodleModule(id: module.id, name: module.name, modName: module.modName,
+                                            contents: brief.attachments)
+        var items = [folder] + fileItems(for: attachmentModule, parentID: folderID, siteID: siteID, courseID: courseID)
+        var generated: [String: Data] = [:]
+        let text = Self.briefText(brief)
+        if !text.isEmpty {
+            let readme = Self.generatedFile(
+                id: "brief-\(siteID)-\(courseID)-\(module.id)",
+                filename: Self.readmeName(avoiding: items.filter { $0.parentID == folderID }),
+                text: text, parentID: folderID, siteID: siteID, courseID: courseID, remoteID: module.id)
+            items.append(readme.item)
+            generated[readme.item.id] = readme.data
+        }
+        return (items, generated)
+    }
+
+    static func briefText(_ brief: MoodleAssignmentBrief) -> String {
+        var parts: [String] = []
+        if let dueDate = brief.dueDate {
+            parts.append("Due " + dueDate.formatted(date: .long, time: .shortened))
+        }
+        if let intro = brief.intro.map(MoodleText.plainText(fromHTML:)), !intro.isEmpty {
+            parts.append(intro)
+        }
+        guard !parts.isEmpty else { return "" }
+        return (["# " + brief.name] + parts).joined(separator: "\n\n")
+    }
+
+    /// A README.md with the text of a section's labels, which otherwise only
+    /// appear on the course page.
+    private func labelReadme(
+        for section: MoodleSection, siblings: [LocalItem], parentID: String, siteID: String, courseID: Int
+    ) -> (item: LocalItem, data: Data)? {
+        let texts = section.modules
+            .filter { $0.visible && $0.resourceType == .label }
+            .compactMap { $0.description.map(MoodleText.plainText(fromHTML:)) }
+            .filter { !$0.isEmpty }
+        guard !texts.isEmpty else { return nil }
+        return Self.generatedFile(
+            id: "readme-\(siteID)-\(courseID)-\(section.id)",
+            filename: Self.readmeName(avoiding: siblings.filter { $0.parentID == parentID }),
+            text: texts.joined(separator: "\n\n"), parentID: parentID, siteID: siteID, courseID: courseID,
+            remoteID: section.id)
+    }
+
+    /// README.md, unless Moodle already has a file by that name in the folder.
+    private static func readmeName(avoiding siblings: [LocalItem]) -> String {
+        let taken = Set(siblings.map { $0.filename.lowercased() })
+        return taken.contains("readme.md") ? "README (Findle).md" : "README.md"
+    }
+
+    /// A Markdown file whose bytes the sync stores. Its version is a digest of
+    /// the text, so it only reads as changed when the text changes.
+    private static func generatedFile(
+        id: String, filename: String, text: String, parentID: String, siteID: String, courseID: Int, remoteID: Int
+    ) -> (item: LocalItem, data: Data) {
+        let data = Data((text + "\n").utf8)
+        let digest = SHA256.hash(data: data).prefix(8).map { String(format: "%02x", $0) }.joined()
+        let item = LocalItem(
+            id: id, parentID: parentID, siteID: siteID, courseID: courseID, remoteID: remoteID,
+            filename: filename, contentType: "net.daringfireball.markdown", fileSize: Int64(data.count),
+            syncState: .placeholder, contentVersion: digest
+        )
+        return (item, data)
     }
 
     /// Build the file items for a file or folder module.

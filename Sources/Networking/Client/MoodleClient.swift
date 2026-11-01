@@ -521,7 +521,8 @@ public final class MoodleClient: LMSProvider, Sendable {
                                 author: content.author,
                                 sortOrder: content.sortorder
                             )
-                        }
+                        },
+                        description: mod.description
                     )
                 }
             )
@@ -547,6 +548,40 @@ public final class MoodleClient: LMSProvider, Sendable {
                     dueDate: Self.timestamp(item.duedate),
                     cutoffDate: Self.timestamp(item.cutoffdate)
                 )
+            }
+        }
+    }
+
+    /// Briefs and intro attachments of a course's assignments. Attachments that
+    /// can't be read safely are left out rather than failing the whole brief.
+    public func fetchAssignmentBriefs(site: MoodleSite, token: AuthToken, courseID: Int) async throws -> [MoodleAssignmentBrief] {
+        let response: AssignmentsResponse = try await callWebService(
+            site: site,
+            token: token,
+            function: "mod_assign_get_assignments",
+            params: Self.indexedParams("courseids", [courseID])
+        )
+        return response.courses.flatMap { course in
+            course.assignments.compactMap { item -> MoodleAssignmentBrief? in
+                guard let moduleID = item.cmid else { return nil }
+                let attachments = (item.introattachments?.elements ?? []).compactMap { content -> MoodleFileContent? in
+                    guard let fileName = content.filename, !fileName.isEmpty,
+                          let fileURL = content.fileurl.flatMap({ URL(string: $0) }) else { return nil }
+                    return MoodleFileContent(
+                        type: "file",
+                        fileName: fileName,
+                        filePath: content.filepath,
+                        fileSize: content.filesize ?? 0,
+                        fileURL: fileURL,
+                        timeCreated: Self.timestamp(content.timecreated),
+                        timeModified: Self.timestamp(content.timemodified),
+                        mimeType: content.mimetype,
+                        author: content.author,
+                        sortOrder: content.sortorder
+                    )
+                }
+                return MoodleAssignmentBrief(moduleID: moduleID, name: item.name, intro: item.intro,
+                                             dueDate: Self.timestamp(item.duedate), attachments: attachments)
             }
         }
     }

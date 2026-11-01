@@ -199,13 +199,56 @@ final class SyncEngineCourseScopeTests: XCTestCase {
         }
     }
 
-    private func engine(snapshot: String) -> SyncEngine {
+    /// Without `assignments`, Moodle refuses mod_assign_get_assignments.
+    private func engine(snapshot: String, assignments: String? = nil) -> SyncEngine {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [CourseSnapshotURLProtocol.self]
         // The fixture travels with each request: concurrent tests need no shared mutable handler.
-        configuration.httpAdditionalHeaders = ["X-Test-Course-Snapshot": snapshot]
+        var headers = ["X-Test-Course-Snapshot": snapshot]
+        if let assignments { headers["X-Test-Assignments"] = assignments }
+        configuration.httpAdditionalHeaders = headers
         let client = MoodleClient(session: URLSession(configuration: configuration))
         return SyncEngine(provider: client, database: database)
+    }
+
+    func testAssignmentsBecomeFoldersAndLabelsBecomeASectionReadme() async throws {
+        let site = MoodleSite(id: "site-1", displayName: "Example", baseURL: URL(string: "https://moodle.example.edu")!)
+        let course = MoodleCourse(id: 101, shortName: "C101", fullName: "Course 101", siteID: site.id)
+        let token = AuthToken(token: "token")
+        let withLabel = #"[{"id":10,"section":1,"modules":[{"id":301,"modname":"resource","contents":[{"type":"file","filename":"notes.pdf","filesize":20}]},{"id":401,"name":"Essay 1","modname":"assign"},{"id":501,"modname":"label","description":"<p>Bring a <b>laptop</b> &amp; charger</p>"}]}]"#
+        let assignments = #"{"courses":[{"id":101,"assignments":[{"id":9,"cmid":401,"course":101,"name":"Essay 1","intro":"<p>Write 500 words.</p>","introattachments":[{"filename":"rubric.pdf","filepath":"/","filesize":10,"fileurl":"https://moodle.example.edu/webservice/pluginfile.php/1/mod_assign/intro/rubric.pdf","timemodified":5,"mimetype":"application/pdf"}]}]}]}"#
+        func text(_ id: String) throws -> String? {
+            try database.fetchGeneratedContent(itemID: id).map { String(decoding: $0, as: UTF8.self) }
+        }
+
+        try await engine(snapshot: withLabel, assignments: assignments).syncCourse(site: site, token: token, course: course)
+        let section = "section-site-1-101-10", folder = "assign-site-1-101-401"
+        let assignment = try XCTUnwrap(database.fetchItem(id: folder))
+        XCTAssertEqual(assignment.filename, "Essay 1")
+        XCTAssertTrue(assignment.isDirectory)
+        XCTAssertEqual(assignment.parentID, section)
+        let contents = try database.fetchItems(parentID: folder, siteID: site.id)
+        XCTAssertEqual(Set(contents.map(\.filename)), ["rubric.pdf", "README.md"])
+        XCTAssertNotNil(contents.first { $0.filename == "rubric.pdf" }?.remoteURL)
+        XCTAssertEqual(try text("brief-site-1-101-401"), "# Essay 1\n\nWrite 500 words.\n")
+        let readme = try XCTUnwrap(database.fetchItem(id: "readme-site-1-101-10"))
+        XCTAssertEqual(readme.parentID, section)
+        XCTAssertEqual(readme.filename, "README.md")
+        XCTAssertEqual(readme.fileSize, Int64(try XCTUnwrap(text(readme.id)).utf8.count))
+        XCTAssertEqual(try text(readme.id), "Bring a laptop & charger\n")
+        XCTAssertNotNil(try database.fetchItem(id: "file-site-1-101-301-notes.pdf"), "Existing files keep their identity")
+
+        // Moodle refuses the assignment request: keep what the folder had.
+        try await engine(snapshot: withLabel).syncCourse(site: site, token: token, course: course)
+        XCTAssertEqual(Set(try database.fetchItems(parentID: folder, siteID: site.id).map(\.filename)), ["rubric.pdf", "README.md"])
+        XCTAssertEqual(try text("brief-site-1-101-401"), "# Essay 1\n\nWrite 500 words.\n")
+        XCTAssertTrue(try database.fetchPendingDeletions().isEmpty)
+
+        // The label is removed: so are its README and stored text.
+        let withoutLabel = #"[{"id":10,"section":1,"modules":[{"id":301,"modname":"resource","contents":[{"type":"file","filename":"notes.pdf","filesize":20}]},{"id":401,"name":"Essay 1","modname":"assign"}]}]"#
+        try await engine(snapshot: withoutLabel, assignments: assignments).syncCourse(site: site, token: token, course: course)
+        XCTAssertNil(try database.fetchItem(id: "readme-site-1-101-10"))
+        XCTAssertNil(try text("readme-site-1-101-10"))
     }
 
     func testLaterSyncsBringInAddedAndChangedFiles() async throws {
@@ -612,10 +655,14 @@ private final class CourseSnapshotURLProtocol: URLProtocol {
 
     override func startLoading() {
         guard let url = request.url,
-              let snapshot = request.value(forHTTPHeaderField: "X-Test-Course-Snapshot"),
+              var snapshot = request.value(forHTTPHeaderField: "X-Test-Course-Snapshot"),
               let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil) else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
             return
+        }
+        if requestBody().contains("wsfunction=mod_assign_get_assignments") {
+            snapshot = request.value(forHTTPHeaderField: "X-Test-Assignments")
+                ?? #"{"errorcode":"nopermissions","message":"Sorry, but you do not currently have permissions to do that."}"#
         }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Data(snapshot.utf8))
@@ -623,4 +670,19 @@ private final class CourseSnapshotURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+
+    private func requestBody() -> String {
+        if let body = request.httpBody { return String(decoding: body, as: UTF8.self) }
+        guard let stream = request.httpBodyStream else { return "" }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            guard count > 0 else { break }
+            data.append(buffer, count: count)
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
 }

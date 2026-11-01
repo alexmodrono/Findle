@@ -29,6 +29,16 @@ public enum MoodleURLBuilder {
             return courseURL(baseURL: baseURL, courseID: courseID)
         }
 
+        // A section's README collects its labels, which live on the course page.
+        if itemID.hasPrefix("readme-") {
+            return courseURL(baseURL: baseURL, courseID: courseID)
+        }
+
+        // Assignment folders and their briefs open the assignment.
+        if itemID.hasPrefix("assign-") || itemID.hasPrefix("brief-") {
+            return moduleURL(baseURL: baseURL, moduleName: "assign", cmid: remoteID)
+        }
+
         // Folder modules link to the folder view page.
         if isDirectory {
             return moduleURL(baseURL: baseURL, moduleName: "folder", cmid: remoteID)

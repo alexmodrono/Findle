@@ -48,6 +48,9 @@ public struct MoodleModule: Sendable, Codable, Equatable, Identifiable {
     public let modIcon: URL?
     public let visible: Bool
     public let contents: [MoodleFileContent]
+    /// The text Moodle shows on the course page (HTML): a label's content, or an
+    /// activity's description when the teacher shows it there.
+    public let description: String?
 
     public init(
         id: Int,
@@ -55,7 +58,8 @@ public struct MoodleModule: Sendable, Codable, Equatable, Identifiable {
         modName: String,
         modIcon: URL? = nil,
         visible: Bool = true,
-        contents: [MoodleFileContent] = []
+        contents: [MoodleFileContent] = [],
+        description: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -63,6 +67,7 @@ public struct MoodleModule: Sendable, Codable, Equatable, Identifiable {
         self.modIcon = modIcon
         self.visible = visible
         self.contents = contents
+        self.description = description
     }
 
     public var resourceType: ResourceType {

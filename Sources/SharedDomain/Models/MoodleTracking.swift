@@ -39,6 +39,26 @@ public struct MoodleAssignment: Sendable, Codable, Equatable, Identifiable {
     }
 }
 
+/// What Finder shows inside an assignment's folder: its brief and the files
+/// attached to it. `moduleID` is the course module, as in the course contents.
+public struct MoodleAssignmentBrief: Sendable, Equatable {
+    public let moduleID: Int
+    public let name: String
+    /// The brief as Moodle stores it (HTML).
+    public let intro: String?
+    public let dueDate: Date?
+    public let attachments: [MoodleFileContent]
+
+    public init(moduleID: Int, name: String, intro: String? = nil, dueDate: Date? = nil,
+                attachments: [MoodleFileContent] = []) {
+        self.moduleID = moduleID
+        self.name = name
+        self.intro = intro
+        self.dueDate = dueDate
+        self.attachments = attachments
+    }
+}
+
 /// A single grade-book item (an assignment grade, exam grade, course total, …).
 public struct MoodleGradeItem: Sendable, Codable, Equatable, Identifiable {
     public let id: Int

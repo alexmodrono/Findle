@@ -39,6 +39,18 @@ enum FileDownloader {
         return NSFileProviderError(.serverUnreachable)
     }
 
+    private static func generatedData(for item: LocalItem, database: Database) throws -> Data? {
+        if let data = try MoodleWebLocation.data(for: item) { return data }
+        guard !item.isLocal, !item.isDirectory, item.remoteURL == nil else { return nil }
+        do {
+            return try database.fetchGeneratedContent(itemID: item.id)
+        } catch {
+            DiagnosticJournal(databasePath: database.filePath)?.record(.init(
+                process: .fileProvider, operation: .download, outcome: .failed, failure: DiagnosticFailure(error)))
+            throw NSFileProviderError(.serverUnreachable)
+        }
+    }
+
     static func startDownload(
         item: LocalItem,
         database: Database,
@@ -54,7 +66,8 @@ enum FileDownloader {
 
         guard !progress.isCancelled else { throw CocoaError(.userCancelled) }
         let destinationURL = DownloadPublication.destination(for: item, in: temporaryDirectory)
-        if let data = try MoodleWebLocation.data(for: item) {
+        // Files Findle writes itself (READMEs) and web locations need no download.
+        if let data = try generatedData(for: item, database: database) {
             let updated: LocalItem
             do {
                 updated = try DownloadPublication.publishGenerated(
