@@ -7,14 +7,19 @@ import SharedDomain
 
 /// The state each item publishes to Finder through `userInfo`, so the activation
 /// rule of every Findle action in the extension's Info.plist can hide the action
-/// where it would do nothing.
+/// where it would do nothing, and the user interaction alerts can explain why a
+/// Moodle item can't be changed.
 ///
-/// The rules read these keys as `$fileproviderItem.userInfo.<key>`. Renaming a key
-/// or a kind means changing the rules too; `FinderActionRuleTests` evaluates them.
+/// The rules read these keys as `$item.userInfo.<key>` or `sourceItem.userInfo.<key>`.
+/// Renaming a key or a kind means changing the rules too; `FinderActionRuleTests`
+/// evaluates them.
 enum FinderActionState {
     static let kindKey = "kind"
     static let moodleKey = "moodle"
     static let keptKey = "kept"
+    /// A file or folder the user made, which they can delete, rename and move.
+    /// The alerts that explain why Moodle items can't be read it.
+    static let personalKey = "personal"
 
     enum Kind: String {
         case root, course, section, folder, file
@@ -27,12 +32,13 @@ enum FinderActionState {
             moodleKey: isMoodleItem,
             // Keeping a folder also marks the personal files inside it, but only
             // Moodle files can be downloaded again, so only they count as kept.
-            keptKey: isMoodleItem && item.isPinned
+            keptKey: isMoodleItem && item.isPinned,
+            personalKey: isUserItem(item)
         ]
     }
 
     static func rootUserInfo() -> [AnyHashable: Any] {
-        [kindKey: Kind.root.rawValue, moodleKey: false, keptKey: false]
+        [kindKey: Kind.root.rawValue, moodleKey: false, keptKey: false, personalKey: false]
     }
 
     /// Course and section folders open the course page in Moodle, so Open Course
@@ -46,5 +52,5 @@ enum FinderActionState {
 
     /// Part of the metadata version, so the system re-reads `userInfo` from items
     /// it saw before they published any. Bump it when the published state changes.
-    static let revision = "a1"
+    static let revision = "a2"
 }

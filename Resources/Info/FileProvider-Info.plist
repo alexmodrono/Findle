@@ -89,6 +89,72 @@
 		<string>com.apple.fileprovider-nonui</string>
 		<key>NSExtensionPrincipalClass</key>
 		<string>$(PRODUCT_MODULE_NAME).FileProviderExtension</string>
+		<key>NSFileProviderUserInteractions</key>
+		<array>
+			<dict>
+				<key>ActivationRule</key>
+				<string>(action == "Trash" OR action == "Delete") AND sourceItem.userInfo.personal == NO AND sourceItem.userInfo.kind != "root"</string>
+				<key>Alert</key>
+				<dict>
+					<key>LocalizedRecoveryOptions</key>
+					<dict>
+						<key>Cancel</key>
+						<string>OK</string>
+					</dict>
+					<key>LocalizedSubTitle</key>
+					<string>Findle shows each course as it is on Moodle, so its files and folders stay until Moodle removes them. To free space on your Mac, choose Remove Download. The file stays here and downloads again when you open it.</string>
+					<key>LocalizedTitle</key>
+					<string>Files from Moodle can’t be deleted</string>
+					<key>RecoveryOptions</key>
+					<dict>
+						<key>Continue</key>
+						<false/>
+					</dict>
+				</dict>
+			</dict>
+			<dict>
+				<key>ActivationRule</key>
+				<string>action == "Rename" AND sourceItem.userInfo.personal == NO AND sourceItem.userInfo.kind != "root"</string>
+				<key>Alert</key>
+				<dict>
+					<key>LocalizedRecoveryOptions</key>
+					<dict>
+						<key>Cancel</key>
+						<string>OK</string>
+					</dict>
+					<key>LocalizedSubTitle</key>
+					<string>Their names come from Moodle and follow any change made there. To keep your own copy under another name, hold Option while you drag it to make a copy, then rename the copy.</string>
+					<key>LocalizedTitle</key>
+					<string>Files from Moodle can’t be renamed</string>
+					<key>RecoveryOptions</key>
+					<dict>
+						<key>Continue</key>
+						<false/>
+					</dict>
+				</dict>
+			</dict>
+			<dict>
+				<key>ActivationRule</key>
+				<string>(action == "Move" OR action == "MoveOut") AND sourceItem.userInfo.personal == NO AND sourceItem.userInfo.kind != "root"</string>
+				<key>Alert</key>
+				<dict>
+					<key>LocalizedRecoveryOptions</key>
+					<dict>
+						<key>Cancel</key>
+						<string>OK</string>
+					</dict>
+					<key>LocalizedSubTitle</key>
+					<string>They stay where they are in the course on Moodle. To put a copy somewhere else, hold Option while you drag it.</string>
+					<key>LocalizedTitle</key>
+					<string>Files from Moodle can’t be moved</string>
+					<key>RecoveryOptions</key>
+					<dict>
+						<key>Continue</key>
+						<false/>
+					</dict>
+				</dict>
+			</dict>
+		</array>
 	</dict>
 </dict>
 </plist>

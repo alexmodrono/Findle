@@ -164,7 +164,7 @@ final class AppState: ObservableObject {
     /// publishing new item metadata (content policy, Finder action state, stable
     /// dates), bump `itemMetadataRevision` so existing items are reported again once.
     private static let republishedItemMetadataRevisionKey = "republishedItemMetadataRevision"
-    private static let itemMetadataRevision = 2
+    private static let itemMetadataRevision = 3
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults

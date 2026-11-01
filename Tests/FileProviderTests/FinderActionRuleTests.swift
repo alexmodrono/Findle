@@ -15,6 +15,7 @@ final class FinderActionRuleTests: XCTestCase {
     }
 
     private var rules: [Action: NSPredicate] = [:]
+    private var interactions: [(rule: NSPredicate, title: String, canContinue: Bool)] = []
 
     override func setUpWithError() throws {
         let plistURL = URL(fileURLWithPath: #filePath)
@@ -32,6 +33,24 @@ final class FinderActionRuleTests: XCTestCase {
             rules[action] = NSPredicate(format: try XCTUnwrap(entry["NSExtensionFileProviderActionActivationRule"]))
         }
         XCTAssertEqual(Set(rules.keys), Set(Action.allCases), "Every action needs a rule")
+
+        let entries = try XCTUnwrap((plist["NSExtension"] as? [String: Any])?["NSFileProviderUserInteractions"] as? [[String: Any]])
+        for entry in entries {
+            let alert = try XCTUnwrap(entry["Alert"] as? [String: Any])
+            let options = alert["RecoveryOptions"] as? [String: Bool]
+            XCTAssertNotNil(alert["LocalizedSubTitle"] as? String)
+            interactions.append((NSPredicate(format: try XCTUnwrap(entry["ActivationRule"] as? String)),
+                                 try XCTUnwrap(alert["LocalizedTitle"] as? String), options?["Continue"] ?? true))
+        }
+    }
+
+    /// The alert Finder shows when the user tries `action` on `item`, if any.
+    private func alert(for action: String, on item: NSObject) -> String? {
+        let context: [String: Any] = ["action": action, "sourceItem": item, "sourceItemsCount": 1]
+        let matches = interactions.filter { $0.rule.evaluate(with: context) }
+        XCTAssertLessThanOrEqual(matches.count, 1, "\(action) matches several alerts")
+        XCTAssertTrue(matches.allSatisfy { !$0.canContinue }, "The operation can't succeed, so the alert only explains")
+        return matches.first?.title
     }
 
     private func visibleActions(for items: [NSObject]) -> Set<Action> {
@@ -82,6 +101,31 @@ final class FinderActionRuleTests: XCTestCase {
     func testItemsThatHaveNotPublishedTheirStateKeepEveryAction() {
         XCTAssertEqual(visibleActions(for: [UnpublishedItem()]), Set(Action.allCases),
                        "Finder may still hold items from before Findle published their state")
+    }
+
+    func testChangingAMoodleItemExplainsWhyItCannotBeDone() {
+        let moodleItems = [item("course-a-1", directory: true), item("section-a-1-2", directory: true),
+                           item("folder-a-9", directory: true), item("file-a-1"), item("file-a-2", kept: true)]
+        for moodleItem in moodleItems {
+            let name = moodleItem.itemIdentifier.rawValue
+            XCTAssertEqual(alert(for: "Trash", on: moodleItem), "Files from Moodle can’t be deleted", name)
+            XCTAssertEqual(alert(for: "Delete", on: moodleItem), "Files from Moodle can’t be deleted", name)
+            XCTAssertEqual(alert(for: "Rename", on: moodleItem), "Files from Moodle can’t be renamed", name)
+            XCTAssertEqual(alert(for: "Move", on: moodleItem), "Files from Moodle can’t be moved", name)
+            XCTAssertEqual(alert(for: "MoveOut", on: moodleItem), "Files from Moodle can’t be moved", name)
+            XCTAssertNil(alert(for: "Copy", on: moodleItem), "Copying a Moodle file is how to keep your own")
+            XCTAssertNil(alert(for: "CopyOut", on: moodleItem))
+        }
+    }
+
+    func testPersonalFilesAndTheRootChangeWithoutAlerts() {
+        let others: [NSObject] = [item("local-essay", personal: true), item("local-notes", directory: true, personal: true),
+                                  RootContainerItem(filename: "Findle"), UnpublishedItem()]
+        for other in others {
+            for action in ["Trash", "Delete", "Rename", "Move", "MoveOut", "Copy", "CopyOut", "MoveIn", "CopyIn", "Create"] {
+                XCTAssertNil(alert(for: action, on: other), "\(action) on \(other)")
+            }
+        }
     }
 
     func testPublishedStateReachesTheSystemAsNewMetadata() {
