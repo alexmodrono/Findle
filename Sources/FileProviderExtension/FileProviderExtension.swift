@@ -17,6 +17,8 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     private let stateLock = NSLock()
     private var _database: Database?
     private var databaseSecurityScopedURL: URL?
+    /// Created after `super.init` so it can read the database through `self`.
+    private var courseDataService: CourseDataServiceSource?
     /// Name of the folder this domain mounts as under `~/Library/CloudStorage`.
     /// Built from the product name so a Nightly domain for the same Moodle site
     /// can't collide with the release one.
@@ -46,6 +48,11 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     required init(domain: NSFileProviderDomain) {
         self.domain = domain
         super.init()
+        nonisolated(unsafe) weak let owner = self
+        courseDataService = CourseDataServiceSource(source: {
+            guard let owner, let database = owner.database, let siteID = owner.siteID else { return nil }
+            return (database, siteID)
+        })
 
         logger.info("File Provider extension initialized for domain: \(domain.identifier.rawValue, privacy: .private)")
     }
@@ -112,6 +119,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         databaseSecurityScopedURL?.stopAccessingSecurityScopedResource()
         databaseSecurityScopedURL = nil
         _database = nil
+        courseDataService?.invalidate()
         logger.info("File Provider extension invalidated")
     }
 
@@ -859,5 +867,21 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         }
 
         return Progress()
+    }
+}
+
+// MARK: - Services
+
+extension FileProviderExtension: NSFileProviderServicing {
+    /// Every item offers the course data service, so a client can reach it
+    /// through any file or folder in the Findle location.
+    func supportedServiceSources(
+        for itemIdentifier: NSFileProviderItemIdentifier,
+        completionHandler: @escaping ([any NSFileProviderServiceSource]?, (any Error)?) -> Void
+    ) -> Progress {
+        completionHandler(courseDataService.map { [$0] } ?? [], nil)
+        let progress = Progress(totalUnitCount: 1)
+        progress.completedUnitCount = 1
+        return progress
     }
 }

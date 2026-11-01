@@ -473,6 +473,7 @@ targets:
       - path: Sources/FileProviderExtension/SyncedItemModification.swift
       - path: Sources/FileProviderExtension/DownloadRetention.swift
       - path: Sources/FileProviderExtension/FinderActionState.swift
+      - path: Sources/FileProviderExtension/CourseDataServiceSource.swift
     dependencies:
       - target: SharedDomain
       - target: FindleNetworking
