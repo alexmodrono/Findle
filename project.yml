@@ -467,6 +467,7 @@ targets:
       - path: Sources/FileProviderExtension/ProviderAccess.swift
       - path: Sources/FileProviderExtension/DownloadPublication.swift
       - path: Sources/FileProviderExtension/SyncedItemModification.swift
+      - path: Sources/FileProviderExtension/DownloadRetention.swift
     dependencies:
       - target: SharedDomain
       - target: FindleNetworking

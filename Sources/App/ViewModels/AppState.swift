@@ -160,6 +160,9 @@ final class AppState: ObservableObject {
     private static let currentSiteIDKey = "currentSiteID"
     private static let lastKnownAppVersionKey = "lastKnownAppVersion"
     private static let personalFilesShortcutAttemptedKey = "personalFilesShortcutAttempted"
+    /// Set once items kept before Findle published a content policy have been
+    /// reported to the system again, so they start staying downloaded.
+    private static let keptItemsRepublishedKey = "keptItemsRepublishedForContentPolicy"
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
@@ -1982,6 +1985,7 @@ final class AppState: ObservableObject {
     }
 
     private func signalFileProviderChanges(for site: MoodleSite) {
+        republishKeptItemsIfNeeded()
         let domainID = BundleIdentifiers.fileProviderDomainID(siteID: site.id)
         let displayName = site.displayName
         let logger = self.logger
@@ -1989,6 +1993,17 @@ final class AppState: ObservableObject {
             await Self.performSignalEnumerators(
                 domainID: domainID, displayName: displayName, logger: logger
             )
+        }
+    }
+
+    private func republishKeptItemsIfNeeded() {
+        guard !userDefaults.bool(forKey: Self.keptItemsRepublishedKey), let database else { return }
+        do {
+            let count = try database.republishPinnedItems()
+            userDefaults.set(true, forKey: Self.keptItemsRepublishedKey)
+            logger.info("Republished \(count, privacy: .public) kept items for their content policy")
+        } catch {
+            logger.warning("Could not republish kept items: \(DiagnosticFailure(error).summary, privacy: .public)")
         }
     }
 

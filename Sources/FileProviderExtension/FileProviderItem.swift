@@ -86,7 +86,8 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
 
     var itemVersion: NSFileProviderItemVersion {
         let contentVersion = localItem.contentVersion ?? "1"
-        let metadataVersion = localItem.modificationDate.map { String($0.timeIntervalSince1970) } ?? contentVersion
+        let metadataVersion = (localItem.modificationDate.map { String($0.timeIntervalSince1970) } ?? contentVersion)
+            + DownloadRetention.metadataVersionSuffix(for: localItem)
         return NSFileProviderItemVersion(
             contentVersion: Data(contentVersion.utf8),
             metadataVersion: Data(metadataVersion.utf8)
@@ -115,6 +116,10 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
 
     var tagData: Data? {
         localItem.tagData
+    }
+
+    var contentPolicy: NSFileProviderContentPolicy {
+        DownloadRetention.contentPolicy(for: localItem)
     }
 
     // MARK: - Type Inference

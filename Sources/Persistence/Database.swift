@@ -1958,6 +1958,38 @@ extension Database {
         }
     }
 
+    /// Report pinned rows as changed once, so the system re-reads their content
+    /// policy. Items pinned before Findle published a policy keep the stale one
+    /// until their metadata changes.
+    @discardableResult
+    public func republishPinnedItems() throws -> Int {
+        try queue.sync {
+            try executeUnsafe("UPDATE items SET is_pinned = 1 WHERE is_pinned = 1")
+            return Int(sqlite3_changes(db))
+        }
+    }
+
+    /// Moodle files at or below `id`. Personal files and folders are excluded:
+    /// only synced files can be evicted and downloaded again.
+    public func fetchSyncedFiles(underItemID id: String) throws -> [LocalItem] {
+        let sql = """
+            WITH RECURSIVE subtree(id) AS (
+                SELECT id FROM items WHERE id = ?
+                UNION ALL
+                SELECT items.id FROM items JOIN subtree ON items.parent_id = subtree.id
+            )
+            SELECT * FROM items
+            WHERE id IN (SELECT id FROM subtree) AND is_directory = 0 AND is_local = 0
+            ORDER BY filename
+            """
+        return try queue.sync {
+            let stmt = try prepareStatement(sql)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            return try readItems(from: stmt)
+        }
+    }
+
     public func fetchPinnedItems(siteID: String) throws -> [LocalItem] {
         let sql = "SELECT * FROM items WHERE site_id = ? AND is_pinned = 1 AND is_directory = 0 ORDER BY filename"
         return try queue.sync {

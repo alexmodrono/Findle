@@ -120,30 +120,23 @@ extension FileProviderExtension: NSFileProviderCustomAction {
             completionHandler(nil)
 
         case Self.keepDownloadedIdentifier:
+            // The new content policy makes the system download and keep the items.
             do {
-                for identifier in itemIdentifiers where identifier != .rootContainer {
-                    try db.pinItemsRecursively(id: identifier.rawValue, isPinned: true)
-                }
-                logger.info("Pinned \(itemIdentifiers.count) items for offline access")
+                try DownloadRetention.keep(itemIdentifiers.filter { $0 != .rootContainer }.map(\.rawValue), database: db)
+                logger.info("Kept \(itemIdentifiers.count) items downloaded")
                 signalChanges()
                 completionHandler(nil)
             } catch {
-                logger.error("Failed to pin items: \(DiagnosticFailure(error).summary, privacy: .public)")
+                logger.error("Failed to keep items downloaded: \(DiagnosticFailure(error).summary, privacy: .public)")
                 completionHandler(error)
             }
 
         case Self.removeDownloadIdentifier:
-            do {
-                for identifier in itemIdentifiers where identifier != .rootContainer {
-                    try db.pinItemsRecursively(id: identifier.rawValue, isPinned: false)
-                }
-                logger.info("Unpinned \(itemIdentifiers.count) items")
-                signalChanges()
-                completionHandler(nil)
-            } catch {
-                logger.error("Failed to unpin items: \(DiagnosticFailure(error).summary, privacy: .public)")
-                completionHandler(error)
-            }
+            removeDownloads(
+                itemIdentifiers.filter { $0 != .rootContainer }.map(\.rawValue),
+                database: db, progress: progress, completionHandler: completionHandler
+            )
+            return progress
 
         case Self.syncNowIdentifier:
             // The extension has no sync engine of its own — it only reads rows
@@ -163,6 +156,37 @@ extension FileProviderExtension: NSFileProviderCustomAction {
     private func signalChanges() {
         guard let manager = NSFileProviderManager(for: domain) else { return }
         manager.signalEnumerator(for: .workingSet) { _ in }
+    }
+
+    /// Unpin, then ask the system to evict. The action finishes once eviction
+    /// has been attempted, so Finder reports a file that couldn't be removed.
+    private func removeDownloads(
+        _ ids: [String],
+        database: Database,
+        progress: Progress,
+        completionHandler: @escaping (Error?) -> Void
+    ) {
+        let completion = ActionCompletion(progress: progress, handler: completionHandler)
+        guard let manager = NSFileProviderManager(for: domain) else {
+            completion.finish(NSFileProviderError(.providerNotFound))
+            return
+        }
+        let log = logger
+        nonisolated(unsafe) let unsafeManager = manager
+        Task {
+            do {
+                try await DownloadRetention.remove(
+                    ids, database: database,
+                    signal: { try? await unsafeManager.signalEnumerator(for: .workingSet) },
+                    evict: { try await unsafeManager.evictItem(identifier: NSFileProviderItemIdentifier($0)) }
+                )
+                log.info("Removed downloads for \(ids.count) items")
+                completion.finish(nil)
+            } catch {
+                log.error("Failed to remove downloads: \(DiagnosticFailure(error).summary, privacy: .public)")
+                completion.finish(error)
+            }
+        }
     }
 
     /// Ask the main app to sync immediately, launching it first if it isn't
@@ -206,5 +230,26 @@ extension FileProviderExtension: NSFileProviderCustomAction {
                 log.warning("Sync Now: failed to launch app: \(DiagnosticFailure(error).summary, privacy: .public)")
             }
         }
+    }
+}
+
+/// Hands an action's completion handler to asynchronous work and calls it once.
+private final class ActionCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private let progress: Progress
+    private var handler: ((Error?) -> Void)?
+
+    init(progress: Progress, handler: @escaping (Error?) -> Void) {
+        self.progress = progress
+        self.handler = handler
+    }
+
+    func finish(_ error: Error?) {
+        lock.lock()
+        let handler = self.handler
+        self.handler = nil
+        lock.unlock()
+        progress.completedUnitCount = progress.totalUnitCount
+        handler?(error)
     }
 }

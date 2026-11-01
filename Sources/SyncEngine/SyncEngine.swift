@@ -16,8 +16,6 @@ public actor SyncEngine {
     private let logger = Logger(subsystem: "es.amodrono.findle.sync", category: "SyncEngine")
 
     private var activeTasks: [Int: Task<Date?, Error>] = [:]
-    /// Pinned-item downloads in flight, tracked so `stopAllSyncs` can cancel and await them.
-    private var pinnedDownloadTasks: Set<Task<[Int: DiagnosticFailure], Error>> = []
     private var syncProgress: [Int: SyncProgress] = [:]
     private var isStopping = false
 
@@ -122,24 +120,6 @@ public actor SyncEngine {
             syncProgress[course.id]?.state = .stale
         }
 
-        let published = Set(outcomes.values.filter { $0.outcome == .succeeded }.map(\.courseID))
-        if !wasCancelled, !authenticationFailed, !published.isEmpty {
-            do {
-                let failures = try await runPinnedDownloads(site: site, token: token, courseIDs: published)
-                for (courseID, failure) in failures {
-                    guard let previous = outcomes[courseID] else { continue }
-                    outcomes[courseID] = SyncCourseOutcome(
-                        courseID: courseID, outcome: .incomplete, startedAt: previous.startedAt,
-                        lastSuccessfulSync: previous.lastSuccessfulSync, failure: failure
-                    )
-                    syncProgress[courseID]?.state = .stale
-                }
-            } catch {
-                runFailure = DiagnosticFailure(error)
-                authenticationFailed = (error as? FindleError)?.requiresReauthentication == true
-                wasCancelled = Self.isCancellation(error) || Task.isCancelled
-            }
-        }
         let report = SyncRunReport(
             id: attemptID, siteID: site.id, startedAt: startedAt,
             courses: selected.compactMap { outcomes[$0.id] }, wasCancelled: wasCancelled,
@@ -187,15 +167,10 @@ public actor SyncEngine {
         }
     }
 
-    /// Sync a single course, then materialize any pinned items that still need
-    /// downloading. Batch runs use `syncCourseTracked` directly and download
-    /// pinned items once at the end instead.
+    /// Sync a single course. Kept items are downloaded by the system, which
+    /// reads their content policy from the File Provider extension.
     public func syncCourse(site: MoodleSite, token: AuthToken, course: MoodleCourse) async throws {
-        guard try await syncCourseTracked(site: site, token: token, course: course) != nil else { return }
-        let failures = try await runPinnedDownloads(site: site, token: token, courseIDs: [course.id])
-        if !failures.isEmpty {
-            throw FindleError.downloadFailed(itemID: "course-\(course.id)", reason: "Pinned files could not finish downloading. Try again.")
-        }
+        _ = try await syncCourseTracked(site: site, token: token, course: course)
     }
 
     /// Sync a single course: enumerate content, diff against local state, update database.
@@ -359,49 +334,6 @@ public actor SyncEngine {
         syncProgress[course.id]?.state = .synced
         logger.info("Course \(course.id) sync complete: \(allItems.count) items")
         return cursor.lastSyncDate
-    }
-
-    /// Track downloads so database replacement can cancel and await them too.
-    private func runPinnedDownloads(
-        site: MoodleSite, token: AuthToken, courseIDs: Set<Int>
-    ) async throws -> [Int: DiagnosticFailure] {
-        if isStopping { throw CancellationError() }
-        let task = Task { [self] in
-            try await downloadPinnedItems(site: site, token: token, courseIDs: courseIDs)
-        }
-        pinnedDownloadTasks.insert(task)
-        defer { pinnedDownloadTasks.remove(task) }
-        return try await withTaskCancellationHandler {
-            try await task.value
-        } onCancel: {
-            task.cancel()
-        }
-    }
-
-    /// Failed materializations remain retryable and make their course incomplete.
-    private func downloadPinnedItems(
-        site: MoodleSite, token: AuthToken, courseIDs: Set<Int>
-    ) async throws -> [Int: DiagnosticFailure] {
-        let pending = try database.fetchPinnedItems(siteID: site.id).filter {
-            courseIDs.contains($0.courseID) && $0.syncState != .materialized
-        }
-        var failures: [Int: DiagnosticFailure] = [:]
-        for item in pending {
-            try Task.checkCancellation()
-            guard item.remoteURL != nil else { continue }
-            let pathExtension = (item.filename as NSString).pathExtension
-            let baseName = item.id.replacingOccurrences(of: "/", with: "_")
-            let tempFilename = pathExtension.isEmpty ? baseName : "\(baseName).\(pathExtension)"
-            let destination = FileManager.default.temporaryDirectory.appendingPathComponent(tempFilename)
-            do {
-                try await downloadItem(itemID: item.id, site: site, token: token, destination: destination)
-            } catch {
-                if Self.isCancellation(error) || Task.isCancelled { throw CancellationError() }
-                if (error as? FindleError)?.requiresReauthentication == true { throw error }
-                failures[item.courseID] = DiagnosticFailure(error)
-            }
-        }
-        return failures
     }
 
     // MARK: - Item Building
@@ -691,21 +623,15 @@ public actor SyncEngine {
             syncProgress[id]?.state = .stale
         }
         activeTasks.removeAll()
-        for task in pinnedDownloadTasks {
-            task.cancel()
-        }
     }
 
-    /// Cancel and await every in-flight course and pinned-download task before
-    /// callers replace or delete the database those tasks may still be writing.
+    /// Cancel and await every in-flight course task before callers replace or
+    /// delete the database those tasks may still be writing.
     public func stopAllSyncs() async {
         isStopping = true
         let tasks = Array(activeTasks.values)
-        let pinnedTasks = Array(pinnedDownloadTasks)
         for task in tasks { task.cancel() }
-        for task in pinnedTasks { task.cancel() }
         for task in tasks { _ = try? await task.value }
-        for task in pinnedTasks { _ = try? await task.value }
         for id in activeTasks.keys {
             syncProgress[id]?.state = .stale
         }

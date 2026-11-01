@@ -182,7 +182,7 @@ final class SyncRunReportTests: XCTestCase {
         } catch { XCTAssertEqual(signIn.attempts, 1) }
     }
 
-    func testPinnedDownloadFailureIsIncompleteAndNextRunRetriesIt() async throws {
+    func testKeptItemsAreLeftToTheSystemAndDoNotAffectTheReport() async throws {
         let provider = ReportProvider()
         let engine = SyncEngine(provider: provider, database: database)
         let selected = courses(1)
@@ -190,26 +190,14 @@ final class SyncRunReportTests: XCTestCase {
         let item = try XCTUnwrap(database.fetchItems(courseID: 1, siteID: site.id).first { !$0.isDirectory })
         try database.updateItemPinned(id: item.id, isPinned: true)
         await provider.setDownloadFailure(.networkUnavailable)
-        let partial = await engine.syncAllCourses(site: site, token: token, courses: selected)
-        XCTAssertEqual(partial.incompleteCount, 1)
-        XCTAssertFalse(partial.allSucceeded)
-        XCTAssertEqual(try database.fetchItem(id: item.id)?.syncState, .error)
-        do {
-            try await engine.syncCourse(site: site, token: token, course: selected[0])
-            XCTFail("Single-course callers must also observe failed pinned downloads")
-        } catch let error as FindleError {
-            guard case .downloadFailed = error else { return XCTFail("Expected safe download failure") }
-        }
-        await provider.setDownloadFailure(nil)
-        let recovery = await engine.syncAllCourses(site: site, token: token, courses: selected)
-        XCTAssertTrue(recovery.allSucceeded)
-        let materialized = try XCTUnwrap(database.fetchItem(id: item.id))
-        XCTAssertEqual(materialized.syncState, .materialized)
-        let localPath = try XCTUnwrap(materialized.localPath)
-        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: localPath)), Data("complete".utf8))
-        try FileManager.default.removeItem(atPath: localPath)
+        let report = await engine.syncAllCourses(site: site, token: token, courses: selected)
+        XCTAssertTrue(report.allSucceeded, "Kept files are downloaded by the system, not by a sync")
+        try await engine.syncCourse(site: site, token: token, course: selected[0])
+        let kept = try XCTUnwrap(database.fetchItem(id: item.id))
+        XCTAssertTrue(kept.isPinned, "A sync must preserve the user's choice")
+        XCTAssertEqual(kept.syncState, item.syncState)
         let downloads = await provider.downloadAttempts
-        XCTAssertEqual(downloads, 3)
+        XCTAssertEqual(downloads, 0)
     }
 }
 
