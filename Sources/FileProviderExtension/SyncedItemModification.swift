@@ -14,13 +14,22 @@ enum SyncedItemModification {
         to localItem: LocalItem,
         changedFields: NSFileProviderItemFields,
         tagData: Data?,
+        lastUsedDate: Date? = nil,
         hasNewContents: Bool,
         siteID: String?,
         database: Database
     ) throws -> Result {
-        let supportedRequestFields: NSFileProviderItemFields = [.tagData, .contentModificationDate]
+        let supportedRequestFields: NSFileProviderItemFields = [.tagData, .contentModificationDate, .lastUsedDate]
         guard !hasNewContents, changedFields.subtracting(supportedRequestFields).isEmpty else {
             throw NSFileProviderError(.cannotSynchronize)
+        }
+
+        // The system reports when the user opens an item. Opening a folder
+        // shows its contents, so both end what counts as new (FI-04).
+        var openedAt: Date?
+        if changedFields.contains(.lastUsedDate), let lastUsedDate {
+            try database.markItemOpened(id: localItem.id, at: lastUsedDate)
+            openedAt = lastUsedDate
         }
 
         // macOS 12+ treats unchanged stillPendingFields as unsupported, rather
@@ -28,7 +37,7 @@ enum SyncedItemModification {
         // a nil successful result asks the system to delete it from disk.
         let pending = changedFields.intersection(.contentModificationDate)
         guard changedFields.contains(.tagData) else {
-            return Result(item: FileProviderItem(localItem: localItem), stillPendingFields: pending)
+            return Result(item: FileProviderItem(localItem: localItem, lastUsedDate: openedAt), stillPendingFields: pending)
         }
 
         let parts = localItem.id.split(separator: "-")
@@ -42,6 +51,6 @@ enum SyncedItemModification {
         guard let updated = try database.fetchItem(id: localItem.id) else {
             throw NSFileProviderError(.noSuchItem)
         }
-        return Result(item: FileProviderItem(localItem: updated), stillPendingFields: pending)
+        return Result(item: FileProviderItem(localItem: updated, lastUsedDate: openedAt), stillPendingFields: pending)
     }
 }

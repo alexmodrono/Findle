@@ -323,11 +323,14 @@ public actor SyncEngine {
             lastModified: Date(),
             itemCount: allItems.count
         )
+        // The first sync of a course is its baseline: nothing in it is new.
+        let arrivedItemIDs = existingItems.isEmpty ? [] : changes.arrived.map(\.id)
         try database.commitCourseSync(
             items: changes.added + changes.modified,
             deletingItemIDs: changes.removed.map(\.id),
             cursor: cursor,
-            outline: CourseOutlineSnapshot(courseID: course.id, sections: sections)
+            outline: CourseOutlineSnapshot(courseID: course.id, sections: sections),
+            arrivedItemIDs: arrivedItemIDs
         )
 
         syncProgress[course.id]?.processedItems = allItems.count
@@ -500,6 +503,8 @@ public actor SyncEngine {
         let added: [LocalItem]
         let modified: [LocalItem]
         let removed: [LocalItem]
+        /// Added items and items whose content changed; a rename alone doesn't count.
+        let arrived: [LocalItem]
     }
 
     private func diffItems(existing: [LocalItem], incoming: [LocalItem]) -> DiffResult {
@@ -515,6 +520,7 @@ public actor SyncEngine {
         var added: [LocalItem] = []
         var modified: [LocalItem] = []
         var removed: [LocalItem] = []
+        var arrived: [LocalItem] = []
 
         for (id, var item) in incomingByID {
             if let existing = existingByID[id] {
@@ -526,6 +532,7 @@ public actor SyncEngine {
                    existing.fileSize != item.fileSize {
                     // Content changed: keep the placeholder reset so it re-downloads.
                     modified.append(item)
+                    arrived.append(item)
                 } else if existing.filename != item.filename {
                     // Only the display name changed. Keep any materialized copy.
                     item.syncState = existing.syncState
@@ -534,6 +541,7 @@ public actor SyncEngine {
                 }
             } else {
                 added.append(item)
+                arrived.append(item)
             }
         }
 
@@ -543,7 +551,7 @@ public actor SyncEngine {
             }
         }
 
-        return DiffResult(added: added, modified: modified, removed: removed)
+        return DiffResult(added: added, modified: modified, removed: removed, arrived: arrived)
     }
 
     // MARK: - Download

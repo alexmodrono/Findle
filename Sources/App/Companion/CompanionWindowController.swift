@@ -22,6 +22,8 @@ final class CompanionWindowController: NSWindowController {
     private var preferredMode: FinderPanelPlacement.Mode = UserDefaults.standard.bool(forKey: "finderCompanionCollapsed") ? .compact : .expanded
     private let logger = Logger(subsystem: "es.amodrono.findle", category: "FinderCompanion")
     private var lastDiagnostic: String?
+    /// The folder last recorded as opened, so each visit is recorded once.
+    private var recordedFolder: URL?
 
     init(state: AppState, openSettings: @escaping @MainActor () -> Void) {
         self.state = state
@@ -170,6 +172,10 @@ final class CompanionWindowController: NSWindowController {
         content.setMode(layout.mode, canExpand: canExpand, attachedOnRight: frame.minX >= snapshot.frame.maxX,
                         width: frame.width, animated: animate)
         content.show(course: course)
+        if let course, recordedFolder != snapshot.folderURL {
+            recordedFolder = snapshot.folderURL
+            state.recordFolderOpened(course: course, subpath: Array(parts.dropFirst()))
+        }
         frameAnimator.setFrame(frame, of: window,
                                animated: animate && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         guard !isShowing else { return }
@@ -191,6 +197,8 @@ final class CompanionWindowController: NSWindowController {
     }
 
     private func hide() {
+        // Coming back to the same folder later is another visit.
+        recordedFolder = nil
         guard let window, isShowing else { return }
         isShowing = false
         visibilityGeneration = UUID()

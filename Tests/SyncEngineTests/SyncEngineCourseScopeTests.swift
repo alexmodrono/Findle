@@ -208,6 +208,34 @@ final class SyncEngineCourseScopeTests: XCTestCase {
         return SyncEngine(provider: client, database: database)
     }
 
+    func testLaterSyncsBringInAddedAndChangedFiles() async throws {
+        let site = MoodleSite(id: "site-1", displayName: "Example", baseURL: URL(string: "https://moodle.example.edu")!)
+        let course = MoodleCourse(id: 101, shortName: "C101", fullName: "Course 101", siteID: site.id)
+        let token = AuthToken(token: "token")
+        func snapshot(_ files: [(module: Int, name: String, modified: Int)]) -> String {
+            let modules = files.map { #"{"id":\#($0.module),"modname":"resource","contents":[{"type":"file","filename":"\#($0.name)","filesize":20,"timemodified":\#($0.modified)}]}"# }
+            return #"[{"id":10,"section":1,"modules":["# + modules.joined(separator: ",") + "]}]"
+        }
+        func newNames() throws -> Set<String> {
+            Set(try database.fetchNewItems(courseID: course.id, siteID: site.id).map(\.filename))
+        }
+
+        try await engine(snapshot: snapshot([(301, "syllabus.pdf", 1)])).syncCourse(site: site, token: token, course: course)
+        XCTAssertEqual(try newNames(), [], "The first sync of a course is its baseline")
+
+        try await engine(snapshot: snapshot([(301, "syllabus.pdf", 1), (302, "week1.pdf", 1)]))
+            .syncCourse(site: site, token: token, course: course)
+        XCTAssertEqual(try newNames(), ["week1.pdf"])
+
+        let week1 = try XCTUnwrap(database.fetchItems(courseID: course.id, siteID: site.id).first { $0.filename == "week1.pdf" })
+        try database.markItemOpened(id: try XCTUnwrap(week1.parentID), at: Date())
+        XCTAssertEqual(try newNames(), [])
+
+        try await engine(snapshot: snapshot([(301, "syllabus.pdf", 2), (302, "week1.pdf", 1)]))
+            .syncCourse(site: site, token: token, course: course)
+        XCTAssertEqual(try newNames(), ["syllabus.pdf"], "Replaced content is new again; unchanged files stay seen")
+    }
+
     func testSyncCourseOnlyDiffsItemsFromCurrentCourse() async throws {
         let site = MoodleSite(
             id: "site-1",

@@ -51,7 +51,7 @@ public final class Database: @unchecked Sendable {
             .path
     }
 
-    public static let schemaVersion = 15
+    public static let schemaVersion = 16
 
     /// Opens the database.
     ///
@@ -503,6 +503,18 @@ public final class Database: @unchecked Sendable {
             )
         """)
 
+        // When a sync brought each item in (or replaced its content) and when the
+        // user last opened it. Kept apart from items so syncs rewriting a row
+        // don't lose it and Finder isn't told about changes it doesn't show.
+        try executeUnsafe("""
+            CREATE TABLE IF NOT EXISTS item_activity (
+                item_id TEXT PRIMARY KEY,
+                site_id TEXT NOT NULL,
+                arrived_at REAL,
+                opened_at REAL
+            )
+        """)
+
         try executeUnsafe("""
             CREATE INDEX IF NOT EXISTS idx_items_parent ON items(parent_id)
         """)
@@ -786,6 +798,12 @@ public final class Database: @unchecked Sendable {
             logger.info("Migrated database schema to version 15 (site-scoped tombstones)")
         }
 
+        if currentVersion < 16 {
+            // v15 -> v16: item_activity, created above. Existing items have no
+            // arrival, so nothing counts as new until a sync adds or changes it.
+            logger.info("Migrated database schema to version 16 (item activity)")
+        }
+
         // Databases created before the seed marker was introduced were already
         // authoritative app databases. Promote only those legacy databases
         // that contain a session; a partial v14+ snapshot must remain false.
@@ -1056,6 +1074,13 @@ extension Database {
                     throw FindleError.databaseError(detail: "Failed to delete account items: \(String(cString: sqlite3_errmsg(db)))")
                 }
 
+                let deleteActivity = try prepareStatement("DELETE FROM item_activity WHERE site_id IN (SELECT site_id FROM accounts WHERE id = ?)")
+                defer { sqlite3_finalize(deleteActivity) }
+                sqlite3_bind_text(deleteActivity, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                guard sqlite3_step(deleteActivity) == SQLITE_DONE else {
+                    throw FindleError.databaseError(detail: "Failed to delete account item activity: \(String(cString: sqlite3_errmsg(db)))")
+                }
+
                 let deleteAccount = try prepareStatement("DELETE FROM accounts WHERE id = ?")
                 defer { sqlite3_finalize(deleteAccount) }
                 sqlite3_bind_text(deleteAccount, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
@@ -1294,7 +1319,8 @@ extension Database {
             defer { try? provider.executeUnsafe("ROLLBACK") }
             try provider.verifyRecoveryStateUnsafe(requireComplete: false)
             let tables = ["sites", "accounts", "courses", "course_tags", "course_outlines", "items",
-                          "sync_cursors", "assignments", "grade_items", "quizzes", "quiz_attempts", "pending_deletions"]
+                          "sync_cursors", "assignments", "grade_items", "quizzes", "quiz_attempts", "pending_deletions",
+                          "item_activity"]
             let hasSavedRows = try tables.contains { table in
                 try provider.scalarUnsafe("SELECT EXISTS(SELECT 1 FROM \(table) LIMIT 1)") != 0
             }
@@ -1391,7 +1417,7 @@ extension Database {
                 }
                 let tables = ["sites", "accounts", "courses", "course_tags", "course_outlines", "items",
                               "sync_cursors", "assignments", "grade_items", "quizzes", "quiz_attempts",
-                              "pending_deletions", "system_metadata"]
+                              "pending_deletions", "item_activity", "system_metadata"]
                 for table in tables.reversed() { try executeUnsafe("DELETE FROM main.\(table)") }
                 for table in tables { try executeUnsafe("INSERT INTO main.\(table) SELECT * FROM recovery.\(table)") }
                 if resetRemoteContent {
@@ -1441,11 +1467,14 @@ extension Database {
     /// one, including its tombstones, change counters, cursor, and outline.
     /// Callers check cancellation before entering; this synchronous operation has
     /// no cancellation boundary that could expose only part of a course update.
+    /// `arrivedItemIDs` are the items this sync added or whose content it
+    /// replaced; they count as new until the user opens them or their folder.
     public func commitCourseSync(
         items: [LocalItem],
         deletingItemIDs: [String],
         cursor: SyncCursor,
-        outline: CourseOutlineSnapshot
+        outline: CourseOutlineSnapshot,
+        arrivedItemIDs: [String] = []
     ) throws {
         guard outline.courseID == cursor.courseID,
               items.allSatisfy({ $0.courseID == cursor.courseID && $0.siteID == cursor.siteID }) else {
@@ -1456,6 +1485,7 @@ extension Database {
             try transactionUnsafe {
                 try saveItemsUnsafe(items)
                 try deleteItemsWithTombstoneUnsafe(ids: deletingItemIDs)
+                try recordArrivalsUnsafe(ids: arrivedItemIDs, siteID: cursor.siteID, at: cursor.lastSyncDate)
                 try saveSyncCursorUnsafe(cursor)
                 try saveCourseOutlineUnsafe(courseID: outline.courseID, siteID: cursor.siteID, payload: payload)
             }
@@ -1471,6 +1501,104 @@ extension Database {
         } catch {
             try? executeUnsafe("ROLLBACK")
             throw error
+        }
+    }
+}
+
+// MARK: - Item Activity
+
+extension Database {
+    /// The caller must hold `queue`. Also drops activity for items that are gone,
+    /// so an item Moodle removes and later restores arrives again.
+    private func recordArrivalsUnsafe(ids: [String], siteID: String, at date: Date) throws {
+        let stmt = try prepareStatement("""
+            INSERT INTO item_activity (item_id, site_id, arrived_at) VALUES (?, ?, ?)
+            ON CONFLICT(item_id) DO UPDATE SET arrived_at = excluded.arrived_at
+            """)
+        defer { sqlite3_finalize(stmt) }
+        for id in ids {
+            sqlite3_reset(stmt)
+            sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_double(stmt, 3, date.timeIntervalSince1970)
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw FindleError.databaseError(detail: "Failed to record item arrival")
+            }
+        }
+        let prune = try prepareStatement("DELETE FROM item_activity WHERE site_id = ? AND item_id NOT IN (SELECT id FROM items)")
+        defer { sqlite3_finalize(prune) }
+        sqlite3_bind_text(prune, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(prune) == SQLITE_DONE else {
+            throw FindleError.databaseError(detail: "Failed to prune item activity")
+        }
+    }
+
+    /// Record that the user opened an item (a file, or a folder whose contents
+    /// they then saw). Earlier dates never replace a later one.
+    public func markItemOpened(id: String, at date: Date) throws {
+        try queue.sync {
+            let stmt = try prepareStatement("""
+                INSERT INTO item_activity (item_id, site_id, opened_at)
+                SELECT id, site_id, ? FROM items WHERE id = ?
+                ON CONFLICT(item_id) DO UPDATE SET opened_at = MAX(COALESCE(item_activity.opened_at, 0), excluded.opened_at)
+                """)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_double(stmt, 1, date.timeIntervalSince1970)
+            sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw FindleError.databaseError(detail: "Failed to record opened item")
+            }
+        }
+    }
+
+    /// An item is new from when a sync brings it in until the user opens it or
+    /// the folder that holds it. Personal files are never new.
+    private static let newItemCondition = """
+        items.is_local = 0
+        AND activity.arrived_at IS NOT NULL
+        AND activity.arrived_at > COALESCE(activity.opened_at, 0)
+        AND activity.arrived_at > COALESCE(parent.opened_at, 0)
+        """
+
+    /// What is new in a course since the user last looked.
+    public func fetchNewItems(courseID: Int, siteID: String) throws -> [LocalItem] {
+        let sql = """
+            SELECT items.* FROM items
+            JOIN item_activity activity ON activity.item_id = items.id
+            LEFT JOIN item_activity parent ON parent.item_id = items.parent_id
+            WHERE items.site_id = ? AND items.course_id = ? AND \(Self.newItemCondition)
+            ORDER BY activity.arrived_at DESC, items.filename
+            """
+        return try queue.sync {
+            let stmt = try prepareStatement(sql)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_int64(stmt, 2, Int64(courseID))
+            return try readItems(from: stmt)
+        }
+    }
+
+    /// How many new items each course of a site has. Courses with none are omitted.
+    public func newItemCounts(siteID: String) throws -> [Int: Int] {
+        let sql = """
+            SELECT items.course_id, COUNT(*) FROM items
+            JOIN item_activity activity ON activity.item_id = items.id
+            LEFT JOIN item_activity parent ON parent.item_id = items.parent_id
+            WHERE items.site_id = ? AND \(Self.newItemCondition)
+            GROUP BY items.course_id
+            """
+        return try queue.sync {
+            let stmt = try prepareStatement(sql)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            var counts: [Int: Int] = [:]
+            var status = sqlite3_step(stmt)
+            while status == SQLITE_ROW {
+                counts[Int(sqlite3_column_int64(stmt, 0))] = Int(sqlite3_column_int64(stmt, 1))
+                status = sqlite3_step(stmt)
+            }
+            guard status == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to count new items") }
+            return counts
         }
     }
 }

@@ -2010,6 +2010,28 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Record that the user is looking at a folder of `course` in Finder, given its
+    /// folder names below the course folder. Its contents stop counting as new.
+    /// A name that matches several folders is skipped rather than guessed.
+    func recordFolderOpened(course: MoodleCourse, subpath: [String]) {
+        guard let database else { return }
+        let logger = self.logger
+        Task.detached(priority: .utility) {
+            var id = "course-\(course.siteID)-\(course.id)"
+            do {
+                for name in subpath {
+                    let matches = try database.fetchItems(parentID: id, siteID: course.siteID)
+                        .filter { $0.isDirectory && $0.filename == name }
+                    guard matches.count == 1 else { return }
+                    id = matches[0].id
+                }
+                try database.markItemOpened(id: id, at: Date())
+            } catch {
+                logger.warning("Could not record the opened folder: \(DiagnosticFailure(error).summary, privacy: .public)")
+            }
+        }
+    }
+
     /// Called when the app becomes active (e.g. when the user clicks "Sign In" in Finder).
     /// If already authenticated, re-signals auth resolution to the File Provider.
     func resolveFileProviderAuthIfNeeded() {

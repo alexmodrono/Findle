@@ -569,6 +569,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                 to: localItem,
                 changedFields: changedFields,
                 tagData: item.tagData ?? nil,
+                lastUsedDate: item.lastUsedDate ?? nil,
                 hasNewContents: newContents != nil,
                 siteID: siteID,
                 database: db

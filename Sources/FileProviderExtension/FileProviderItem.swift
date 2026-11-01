@@ -21,9 +21,12 @@ func isContainer(_ item: LocalItem) -> Bool {
 /// Adapts a LocalItem to NSFileProviderItem for the File Provider framework.
 final class FileProviderItem: NSObject, NSFileProviderItem {
     private let localItem: LocalItem
+    private let openedAt: Date?
 
-    init(localItem: LocalItem) {
+    /// `lastUsedDate` echoes a date the system just reported, so its replica keeps it.
+    init(localItem: LocalItem, lastUsedDate: Date? = nil) {
         self.localItem = localItem
+        self.openedAt = lastUsedDate
     }
 
     var itemIdentifier: NSFileProviderItemIdentifier {
@@ -121,6 +124,10 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
 
     var contentPolicy: NSFileProviderContentPolicy {
         DownloadRetention.contentPolicy(for: localItem)
+    }
+
+    var lastUsedDate: Date? {
+        openedAt
     }
 
     var userInfo: [AnyHashable: Any]? {

@@ -95,7 +95,7 @@ final class SyncedItemModificationTests: XCTestCase {
         let f = try fixture()
         let item = try XCTUnwrap(f.database.fetchItem(id: "file-a"))
         let anchor = try f.database.currentChangeCounter()
-        for field: NSFileProviderItemFields in [.contents, .filename, .parentItemIdentifier, .lastUsedDate] {
+        for field: NSFileProviderItemFields in [.contents, .filename, .parentItemIdentifier, .creationDate] {
             assertProviderError(.cannotSynchronize) {
                 _ = try SyncedItemModification.apply(
                     to: item, changedFields: [field, .tagData, .contentModificationDate],
@@ -110,6 +110,27 @@ final class SyncedItemModificationTests: XCTestCase {
         }
         XCTAssertEqual(try f.database.fetchItem(id: item.id), item)
         XCTAssertEqual(try f.database.currentChangeCounter(), anchor)
+    }
+
+    func testOpeningAnItemRecordsTheVisitAndSettlesTheField() throws {
+        let f = try fixture()
+        let item = try XCTUnwrap(f.database.fetchItem(id: "file-a"))
+        let arrived = Date(timeIntervalSince1970: 1_000)
+        try f.database.commitCourseSync(
+            items: [item], deletingItemIDs: [],
+            cursor: SyncCursor(courseID: 1, siteID: "a", lastSyncDate: arrived, itemCount: 1),
+            outline: CourseOutlineSnapshot(courseID: 1, capturedAt: arrived, sections: []), arrivedItemIDs: [item.id])
+        XCTAssertEqual(try f.database.fetchNewItems(courseID: 1, siteID: "a").map(\.id), [item.id])
+        let anchor = try f.database.currentChangeCounter()
+
+        let opened = arrived.addingTimeInterval(60)
+        let result = try SyncedItemModification.apply(
+            to: item, changedFields: [.lastUsedDate, .contentModificationDate],
+            tagData: nil, lastUsedDate: opened, hasNewContents: false, siteID: "a", database: f.database)
+        XCTAssertEqual(result.stillPendingFields, .contentModificationDate, "Only the unsupported timestamp stays pending")
+        XCTAssertEqual(result.item.lastUsedDate ?? nil, opened, "The system's replica keeps the date it reported")
+        XCTAssertEqual(try f.database.fetchNewItems(courseID: 1, siteID: "a"), [])
+        XCTAssertEqual(try f.database.currentChangeCounter(), anchor, "A visit is not a change Finder needs to hear about")
     }
 
     func testTagStorageFailureDoesNotReturnSuccessfulMetadataResult() throws {
