@@ -105,8 +105,9 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     }
 
     private func databaseIsReady(_ database: Database) throws -> Bool {
-        if let siteID, try database.fetchSite(id: siteID) == nil {
-            return false
+        if let siteID {
+            guard let site = try database.fetchSite(id: siteID) else { return false }
+            MoodleSiteLinks.register(site)
         }
 
 

@@ -51,7 +51,7 @@ public final class Database: @unchecked Sendable {
             .path
     }
 
-    public static let schemaVersion = 17
+    public static let schemaVersion = 18
 
     /// Opens the database.
     ///
@@ -818,6 +818,14 @@ public final class Database: @unchecked Sendable {
             // v16 -> v17: generated_contents, created above and filled by the
             // next sync of each course.
             logger.info("Migrated database schema to version 17 (generated contents)")
+        }
+
+        if currentVersion < 18 {
+            // Added at the end, so recovery's positional copy lines up in every database.
+            if !(try existingColumns(table: "items")).contains("author") {
+                try executeUnsafe("ALTER TABLE items ADD COLUMN author TEXT")
+            }
+            logger.info("Migrated database schema to version 18 (item authors)")
         }
 
         // Databases created before the seed marker was introduced were already
@@ -1870,8 +1878,8 @@ extension Database {
         let sql = """
             INSERT OR REPLACE INTO items (id, parent_id, site_id, course_id, remote_id,
                 filename, is_directory, content_type, file_size, creation_date,
-                modification_date, sync_state, is_pinned, local_path, remote_url, content_version, tag_data, is_local)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                modification_date, sync_state, is_pinned, local_path, remote_url, content_version, tag_data, is_local, author)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         let clearTombstoneStmt = try prepareStatement("DELETE FROM pending_deletions WHERE item_id = ?")
         defer { sqlite3_finalize(clearTombstoneStmt) }
@@ -1911,6 +1919,7 @@ extension Database {
                 sqlite3_bind_null(stmt, 17)
             }
             sqlite3_bind_int(stmt, 18, item.isLocal ? 1 : 0)
+            if let author = item.author { sqlite3_bind_text(stmt, 19, (author as NSString).utf8String, -1, SQLITE_TRANSIENT) }
 
             guard sqlite3_step(stmt) == SQLITE_DONE else {
                 throw FindleError.databaseError(detail: "saveItems step failed: \(String(cString: sqlite3_errmsg(db)))")
@@ -2864,6 +2873,7 @@ extension Database {
         // decoded value stays correct across both column layouts.
         let isLocalIndex = columnIndex(stmt, named: "is_local")
         let isLocal = isLocalIndex.map { sqlite3_column_int(stmt, $0) == 1 } ?? false
+        let author = columnIndex(stmt, named: "author").flatMap { sqlite3_column_text(stmt, $0) }.map { String(cString: $0) }
 
         return LocalItem(
             id: String(cString: sqlite3_column_text(stmt, 0)),
@@ -2883,7 +2893,8 @@ extension Database {
             remoteURL: sqlite3_column_text(stmt, 14).flatMap { URL(string: String(cString: $0)) },
             contentVersion: sqlite3_column_text(stmt, 15).map { String(cString: $0) },
             tagData: tagData,
-            isLocal: isLocal
+            isLocal: isLocal,
+            author: author
         )
     }
 

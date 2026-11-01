@@ -19,7 +19,7 @@ enum SyncedItemModification {
         siteID: String?,
         database: Database
     ) throws -> Result {
-        let supportedRequestFields: NSFileProviderItemFields = [.tagData, .contentModificationDate, .lastUsedDate]
+        let supportedRequestFields: NSFileProviderItemFields = [.tagData, .contentModificationDate, .lastUsedDate, .extendedAttributes]
         guard !hasNewContents, changedFields.subtracting(supportedRequestFields).isEmpty else {
             throw NSFileProviderError(.cannotSynchronize)
         }
@@ -35,7 +35,9 @@ enum SyncedItemModification {
         // macOS 12+ treats unchanged stillPendingFields as unsupported, rather
         // than parking the item with cannotSynchronize. Return a real item:
         // a nil successful result asks the system to delete it from disk.
-        let pending = changedFields.intersection(.contentModificationDate)
+        // Findle owns the extended attributes of Moodle items ("Where from",
+        // author), so edits to them settle like timestamp uploads: no write, no error.
+        let pending = changedFields.intersection([.contentModificationDate, .extendedAttributes])
         guard changedFields.contains(.tagData) else {
             return Result(item: FileProviderItem(localItem: localItem, lastUsedDate: openedAt), stillPendingFields: pending)
         }

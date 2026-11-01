@@ -136,6 +136,20 @@ final class ItemActivityTests: XCTestCase {
         XCTAssertEqual(try newIDs(), ["slides"])
     }
 
+    func testAuthorsAreStoredAndUpgradingFromVersion17AddsThem() throws {
+        try database.saveItems([LocalItem(id: "notes", parentID: "week-1", siteID: site, courseID: 1, remoteID: 1,
+                                          filename: "notes.pdf", author: "Prof. Smith")])
+        XCTAssertEqual(try database.fetchItem(id: "notes")?.author, "Prof. Smith")
+        database = nil
+        try raw("ALTER TABLE items DROP COLUMN author; PRAGMA user_version = 17;")
+        database = try Database(path: path)
+        XCTAssertEqual(try scalar("PRAGMA user_version"), Int64(Database.schemaVersion))
+        XCTAssertNil(try database.fetchItem(id: "notes")?.author)
+        try database.saveItems([LocalItem(id: "notes", parentID: "week-1", siteID: site, courseID: 1, remoteID: 1,
+                                          filename: "notes.pdf", author: "Dr. Jones")])
+        XCTAssertEqual(try database.fetchItem(id: "notes")?.author, "Dr. Jones")
+    }
+
     private func raw(_ sql: String) throws {
         var connection: OpaquePointer?
         guard sqlite3_open(path, &connection) == SQLITE_OK else { throw CocoaError(.fileReadUnknown) }

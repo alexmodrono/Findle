@@ -137,6 +137,8 @@ public struct LocalItem: Sendable, Codable, Equatable, Identifiable {
     /// When `true`, the item was created locally by the user and should never be
     /// synced to Moodle.  The sync engine skips local items entirely.
     public var isLocal: Bool
+    /// Who uploaded the file to Moodle, when Moodle says.
+    public var author: String?
 
     public init(
         id: String = UUID().uuidString,
@@ -156,7 +158,8 @@ public struct LocalItem: Sendable, Codable, Equatable, Identifiable {
         remoteURL: URL? = nil,
         contentVersion: String? = nil,
         tagData: Data? = nil,
-        isLocal: Bool = false
+        isLocal: Bool = false,
+        author: String? = nil
     ) {
         self.id = id
         self.parentID = parentID
@@ -176,5 +179,6 @@ public struct LocalItem: Sendable, Codable, Equatable, Identifiable {
         self.contentVersion = contentVersion
         self.tagData = tagData
         self.isLocal = isLocal
+        self.author = author
     }
 }

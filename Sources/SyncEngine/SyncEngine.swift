@@ -440,7 +440,8 @@ public actor SyncEngine {
                 modificationDate: html?.timeModified,
                 syncState: .placeholder,
                 remoteURL: html?.fileURL,
-                contentVersion: html?.timeModified.map { String(Int($0.timeIntervalSince1970)) }
+                contentVersion: html?.timeModified.map { String(Int($0.timeIntervalSince1970)) },
+                author: Self.author(of: html)
             )
             items.append(item)
 
@@ -576,9 +577,15 @@ public actor SyncEngine {
                 modificationDate: content.timeModified,
                 syncState: .placeholder,
                 remoteURL: content.fileURL,
-                contentVersion: content.timeModified.map { String(Int($0.timeIntervalSince1970)) }
+                contentVersion: content.timeModified.map { String(Int($0.timeIntervalSince1970)) },
+                author: Self.author(of: content)
             )
         }
+    }
+
+    private static func author(of content: MoodleFileContent?) -> String? {
+        guard let name = content?.author?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else { return nil }
+        return name
     }
 
     /// Item ID for a file inside a module. Root-level files keep the original ID so
@@ -714,8 +721,9 @@ public actor SyncEngine {
                     }
                 } else if existing.filename != item.filename ||
                           existing.modificationDate != item.modificationDate ||
-                          existing.creationDate != item.creationDate {
-                    // Only the name or dates changed. Keep any materialized copy.
+                          existing.creationDate != item.creationDate ||
+                          existing.author != item.author {
+                    // Only the name, dates or author changed. Keep any materialized copy.
                     item.syncState = existing.syncState
                     item.localPath = existing.localPath
                     modified.append(item)

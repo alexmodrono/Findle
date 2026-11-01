@@ -293,6 +293,29 @@ final class SyncEngineCourseScopeTests: XCTestCase {
         XCTAssertEqual(try date(courseID), max(700, readmeDate))
     }
 
+    func testAuthorsComeFromMoodleAndAChangeKeepsTheDownload() async throws {
+        let site = MoodleSite(id: "site-1", displayName: "Example", baseURL: URL(string: "https://moodle.example.edu")!)
+        let course = MoodleCourse(id: 101, shortName: "C101", fullName: "Course 101", siteID: site.id)
+        let token = AuthToken(token: "token")
+        func snapshot(author: String) -> String {
+            #"[{"id":10,"section":1,"modules":[{"id":301,"modname":"resource","contents":[{"type":"file","filename":"notes.pdf","filesize":20,"timemodified":100,"author":"\#(author)"}]}]}]"#
+        }
+        let id = "file-site-1-101-301-notes.pdf"
+        try await engine(snapshot: snapshot(author: " Prof. Smith ")).syncCourse(site: site, token: token, course: course)
+        XCTAssertEqual(try database.fetchItem(id: id)?.author, "Prof. Smith")
+
+        var downloaded = try XCTUnwrap(database.fetchItem(id: id))
+        downloaded.syncState = .materialized
+        try database.saveItems([downloaded])
+        try await engine(snapshot: snapshot(author: "Dr. Jones")).syncCourse(site: site, token: token, course: course)
+        let updated = try XCTUnwrap(database.fetchItem(id: id))
+        XCTAssertEqual(updated.author, "Dr. Jones")
+        XCTAssertEqual(updated.syncState, .materialized)
+
+        try await engine(snapshot: snapshot(author: "")).syncCourse(site: site, token: token, course: course)
+        XCTAssertNil(try database.fetchItem(id: id)?.author)
+    }
+
     func testPagesFromEarlierBuildsGainAVersionWithoutBecomingNew() async throws {
         let site = MoodleSite(id: "site-1", displayName: "Example", baseURL: URL(string: "https://moodle.example.edu")!)
         let course = MoodleCourse(id: 101, shortName: "C101", fullName: "Course 101", siteID: site.id)

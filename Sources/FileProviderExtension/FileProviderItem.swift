@@ -5,6 +5,7 @@
 
 import CryptoKit
 import FileProvider
+import Synchronization
 import UniformTypeIdentifiers
 import SharedDomain
 
@@ -17,6 +18,20 @@ func isUserItem(_ item: LocalItem) -> Bool {
 /// Whether `item` can hold children, whichever kind of directory it is.
 func isContainer(_ item: LocalItem) -> Bool {
     item.isDirectory
+}
+
+/// The Moodle address of each site the extension serves, so items can say where
+/// they came from without each caller looking the site up.
+enum MoodleSiteLinks {
+    private static let baseURLs = Mutex<[String: URL]>([:])
+
+    static func register(_ site: MoodleSite) {
+        baseURLs.withLock { $0[site.id] = site.baseURL }
+    }
+
+    static func baseURL(siteID: String) -> URL? {
+        baseURLs.withLock { $0[siteID] }
+    }
 }
 
 /// Adapts a LocalItem to NSFileProviderItem for the File Provider framework.
@@ -90,10 +105,11 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
 
     var itemVersion: NSFileProviderItemVersion {
         let contentVersion = localItem.contentVersion ?? "1"
-        // Renaming or tagging leaves the date alone, so the name and tags go in
-        // the version for the system to notice them.
+        // Renaming, tagging or a new link or author leaves the date alone, so
+        // they go in the version for the system to notice them.
+        let described = [localItem.filename, moodleLink?.absoluteString ?? "", localItem.author ?? ""].joined(separator: "\u{0}")
         let metadataVersion = (localItem.modificationDate.map { String($0.timeIntervalSince1970) } ?? contentVersion)
-            + "|" + Self.digest(Data(localItem.filename.utf8) + Data([0]) + (localItem.tagData ?? Data()))
+            + "|" + Self.digest(Data(described.utf8) + Data([0]) + (localItem.tagData ?? Data()))
             + DownloadRetention.metadataVersionSuffix(for: localItem)
             + "|" + FinderActionState.revision
         return NSFileProviderItemVersion(
@@ -136,6 +152,30 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
 
     var userInfo: [AnyHashable: Any]? {
         FinderActionState.userInfo(for: localItem)
+    }
+
+    /// Where the item lives on Moodle, for Get Info's "Where from".
+    private var moodleLink: URL? {
+        guard !localItem.isLocal, let baseURL = MoodleSiteLinks.baseURL(siteID: localItem.siteID) else { return nil }
+        return MoodleURLBuilder.webURL(baseURL: baseURL, itemID: localItem.id, courseID: localItem.courseID,
+                                       remoteID: localItem.remoteID, isDirectory: localItem.isDirectory,
+                                       parentID: localItem.parentID)
+    }
+
+    /// Spotlight metadata the system writes on the file: Get Info shows the link
+    /// as "Where from", and the author makes the file findable by teacher.
+    var extendedAttributes: [String: Data] {
+        var attributes: [String: Data] = [:]
+        if let moodleLink { attributes[Self.whereFromsAttribute] = Self.plist([moodleLink.absoluteString]) }
+        if !localItem.isLocal, let author = localItem.author { attributes[Self.authorsAttribute] = Self.plist([author]) }
+        return attributes
+    }
+
+    static let whereFromsAttribute = "com.apple.metadata:kMDItemWhereFroms"
+    static let authorsAttribute = "com.apple.metadata:kMDItemAuthors"
+
+    private static func plist(_ values: [String]) -> Data? {
+        try? PropertyListSerialization.data(fromPropertyList: values, format: .binary, options: 0)
     }
 
     /// A short digest; versions are compared, never read.

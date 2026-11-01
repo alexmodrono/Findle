@@ -31,6 +31,17 @@ final class SyncedItemModificationTests: XCTestCase {
         }
     }
 
+    func testEditedExtendedAttributesSettleWithoutWrites() throws {
+        let f = try fixture()
+        let item = try XCTUnwrap(f.database.fetchItem(id: "file-a"))
+        let anchor = try f.database.currentChangeCounter()
+        let result = try SyncedItemModification.apply(
+            to: item, changedFields: .extendedAttributes,
+            tagData: nil, hasNewContents: false, siteID: "a", database: f.database)
+        XCTAssertEqual(result.stillPendingFields, .extendedAttributes)
+        XCTAssertEqual(try f.database.currentChangeCounter(), anchor)
+    }
+
     func testTaggingAndRenamingChangeTheMetadataVersionButNotTheDate() throws {
         let f = try fixture()
         var item = try XCTUnwrap(f.database.fetchItem(id: "file-a"))

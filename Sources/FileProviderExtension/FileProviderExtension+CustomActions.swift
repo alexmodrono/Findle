@@ -69,7 +69,8 @@ extension FileProviderExtension: NSFileProviderCustomAction {
                     itemID: localItem.id,
                     courseID: localItem.courseID,
                     remoteID: localItem.remoteID,
-                    isDirectory: localItem.isDirectory
+                    isDirectory: localItem.isDirectory,
+                    parentID: localItem.parentID
                 )
             } else {
                 url = site.baseURL
@@ -90,7 +91,8 @@ extension FileProviderExtension: NSFileProviderCustomAction {
                     itemID: localItem.id,
                     courseID: localItem.courseID,
                     remoteID: localItem.remoteID,
-                    isDirectory: localItem.isDirectory
+                    isDirectory: localItem.isDirectory,
+                    parentID: localItem.parentID
                 )
             } else {
                 url = site.baseURL

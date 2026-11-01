@@ -17,7 +17,8 @@ public enum MoodleURLBuilder {
         itemID: String,
         courseID: Int,
         remoteID: Int,
-        isDirectory: Bool
+        isDirectory: Bool,
+        parentID: String? = nil
     ) -> URL {
         // Course root items link to the course page.
         if itemID.hasPrefix("course-") {
@@ -42,6 +43,15 @@ public enum MoodleURLBuilder {
         // Folder modules link to the folder view page.
         if isDirectory {
             return moduleURL(baseURL: baseURL, moduleName: "folder", cmid: remoteID)
+        }
+
+        // A file inside a folder module or an assignment carries that module's
+        // ID, so it opens the folder or assignment it belongs to.
+        if let parentID, parentID.hasPrefix("folder-") {
+            return moduleURL(baseURL: baseURL, moduleName: "folder", cmid: remoteID)
+        }
+        if let parentID, parentID.hasPrefix("assign-") {
+            return moduleURL(baseURL: baseURL, moduleName: "assign", cmid: remoteID)
         }
 
         // URL resources link to their module page directly.
