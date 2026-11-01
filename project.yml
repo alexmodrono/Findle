@@ -368,25 +368,29 @@ targets:
           NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).FileProviderExtension"
           NSExtensionFileProviderDocumentGroup: "$(APP_GROUP_IDENTIFIER)"
           NSExtensionFileProviderSupportsEnumeration: true
+          # Each rule reads the state items publish in userInfo (FinderActionState) and
+          # hides the action where it does nothing; FinderActionRuleTests evaluates them.
+          # Items Finder cached before they published any state (kind == nil) keep
+          # every action, as before.
           NSExtensionFileProviderActions:
             - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.sync-now
               NSExtensionFileProviderActionName: Sync Now
               NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
             - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.open-in-moodle
               NSExtensionFileProviderActionName: Open in Moodle
-              NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
+              NSExtensionFileProviderActionActivationRule: 'fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.kind == "root" OR $item.userInfo.moodle == YES).@count == 1'
             - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.copy-moodle-link
               NSExtensionFileProviderActionName: Copy Moodle Link
-              NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
+              NSExtensionFileProviderActionActivationRule: 'fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.kind == "root" OR $item.userInfo.moodle == YES).@count == 1'
             - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.open-course-page
               NSExtensionFileProviderActionName: Open Course Page
-              NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
+              NSExtensionFileProviderActionActivationRule: 'fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR ($item.userInfo.moodle == YES AND ($item.userInfo.kind == "folder" OR $item.userInfo.kind == "file"))).@count == 1'
             - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.keep-downloaded
               NSExtensionFileProviderActionName: Keep Downloaded
-              NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
+              NSExtensionFileProviderActionActivationRule: 'SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR ($item.userInfo.moodle == YES AND $item.userInfo.kept == NO)).@count > 0'
             - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.remove-download
               NSExtensionFileProviderActionName: Remove Download
-              NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
+              NSExtensionFileProviderActionActivationRule: 'SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.kept == YES).@count > 0'
 
   FindleMCP:
     type: tool
@@ -468,6 +472,7 @@ targets:
       - path: Sources/FileProviderExtension/DownloadPublication.swift
       - path: Sources/FileProviderExtension/SyncedItemModification.swift
       - path: Sources/FileProviderExtension/DownloadRetention.swift
+      - path: Sources/FileProviderExtension/FinderActionState.swift
     dependencies:
       - target: SharedDomain
       - target: FindleNetworking

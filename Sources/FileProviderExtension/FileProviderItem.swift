@@ -88,6 +88,7 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
         let contentVersion = localItem.contentVersion ?? "1"
         let metadataVersion = (localItem.modificationDate.map { String($0.timeIntervalSince1970) } ?? contentVersion)
             + DownloadRetention.metadataVersionSuffix(for: localItem)
+            + "|" + FinderActionState.revision
         return NSFileProviderItemVersion(
             contentVersion: Data(contentVersion.utf8),
             metadataVersion: Data(metadataVersion.utf8)
@@ -122,6 +123,10 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
         DownloadRetention.contentPolicy(for: localItem)
     }
 
+    var userInfo: [AnyHashable: Any]? {
+        FinderActionState.userInfo(for: localItem)
+    }
+
     // MARK: - Type Inference
 
     private func inferType() -> UTType {
@@ -148,6 +153,8 @@ final class RootContainerItem: NSObject, NSFileProviderItem {
     var capabilities: NSFileProviderItemCapabilities { [.allowsReading, .allowsContentEnumerating, .allowsAddingSubItems] }
     var itemVersion: NSFileProviderItemVersion {
         let versionData = Data(rootName.utf8)
-        return NSFileProviderItemVersion(contentVersion: versionData, metadataVersion: versionData)
+        let metadataVersion = Data((rootName + "|" + FinderActionState.revision).utf8)
+        return NSFileProviderItemVersion(contentVersion: versionData, metadataVersion: metadataVersion)
     }
+    var userInfo: [AnyHashable: Any]? { FinderActionState.rootUserInfo() }
 }

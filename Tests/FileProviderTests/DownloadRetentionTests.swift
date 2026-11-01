@@ -109,11 +109,14 @@ final class DownloadRetentionTests: XCTestCase {
         XCTAssertEqual(try database.fetchItem(id: "lab")?.syncState, .placeholder)
     }
 
-    func testRepublishingReportsOnlyKeptItemsAsChanged() throws {
+    func testRepublishingReportsEveryItemAsChangedWithoutChangingIt() throws {
         try database.updateItemPinned(id: "lab", isPinned: true)
+        let before = try database.fetchItem(id: "lab")
         let anchor = try database.currentChangeCounter()
-        XCTAssertEqual(try database.republishPinnedItems(), 1)
-        XCTAssertEqual(try database.fetchItemsChangedSince(anchor: anchor, siteID: "a").map(\.id), ["lab"])
+        XCTAssertEqual(try database.republishAllItems(), 6)
+        XCTAssertEqual(Set(try database.fetchItemsChangedSince(anchor: anchor, siteID: "a").map(\.id)),
+                       ["course", "slides", "notes", "week", "lab", "local-essay"])
+        XCTAssertEqual(try database.fetchItem(id: "lab")?.isPinned, before?.isPinned)
     }
 }
 

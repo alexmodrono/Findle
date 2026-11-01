@@ -1958,13 +1958,13 @@ extension Database {
         }
     }
 
-    /// Report pinned rows as changed once, so the system re-reads their content
-    /// policy. Items pinned before Findle published a policy keep the stale one
-    /// until their metadata changes.
+    /// Report every row as changed, so the system re-reads metadata that Findle
+    /// started publishing after it last saw the item (content policy, action
+    /// state). Without this, items keep their old metadata until they change.
     @discardableResult
-    public func republishPinnedItems() throws -> Int {
+    public func republishAllItems() throws -> Int {
         try queue.sync {
-            try executeUnsafe("UPDATE items SET is_pinned = 1 WHERE is_pinned = 1")
+            try executeUnsafe("UPDATE items SET is_pinned = is_pinned")
             return Int(sqlite3_changes(db))
         }
     }

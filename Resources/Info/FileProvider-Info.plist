@@ -42,7 +42,7 @@
 			</dict>
 			<dict>
 				<key>NSExtensionFileProviderActionActivationRule</key>
-				<string>TRUEPREDICATE</string>
+				<string>fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.kind == "root" OR $item.userInfo.moodle == YES).@count == 1</string>
 				<key>NSExtensionFileProviderActionIdentifier</key>
 				<string>$(FINDLE_BUNDLE_PREFIX).action.open-in-moodle</string>
 				<key>NSExtensionFileProviderActionName</key>
@@ -50,7 +50,7 @@
 			</dict>
 			<dict>
 				<key>NSExtensionFileProviderActionActivationRule</key>
-				<string>TRUEPREDICATE</string>
+				<string>fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.kind == "root" OR $item.userInfo.moodle == YES).@count == 1</string>
 				<key>NSExtensionFileProviderActionIdentifier</key>
 				<string>$(FINDLE_BUNDLE_PREFIX).action.copy-moodle-link</string>
 				<key>NSExtensionFileProviderActionName</key>
@@ -58,7 +58,7 @@
 			</dict>
 			<dict>
 				<key>NSExtensionFileProviderActionActivationRule</key>
-				<string>TRUEPREDICATE</string>
+				<string>fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR ($item.userInfo.moodle == YES AND ($item.userInfo.kind == "folder" OR $item.userInfo.kind == "file"))).@count == 1</string>
 				<key>NSExtensionFileProviderActionIdentifier</key>
 				<string>$(FINDLE_BUNDLE_PREFIX).action.open-course-page</string>
 				<key>NSExtensionFileProviderActionName</key>
@@ -66,7 +66,7 @@
 			</dict>
 			<dict>
 				<key>NSExtensionFileProviderActionActivationRule</key>
-				<string>TRUEPREDICATE</string>
+				<string>SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR ($item.userInfo.moodle == YES AND $item.userInfo.kept == NO)).@count &gt; 0</string>
 				<key>NSExtensionFileProviderActionIdentifier</key>
 				<string>$(FINDLE_BUNDLE_PREFIX).action.keep-downloaded</string>
 				<key>NSExtensionFileProviderActionName</key>
@@ -74,7 +74,7 @@
 			</dict>
 			<dict>
 				<key>NSExtensionFileProviderActionActivationRule</key>
-				<string>TRUEPREDICATE</string>
+				<string>SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.kept == YES).@count &gt; 0</string>
 				<key>NSExtensionFileProviderActionIdentifier</key>
 				<string>$(FINDLE_BUNDLE_PREFIX).action.remove-download</string>
 				<key>NSExtensionFileProviderActionName</key>

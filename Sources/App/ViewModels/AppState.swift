@@ -160,9 +160,11 @@ final class AppState: ObservableObject {
     private static let currentSiteIDKey = "currentSiteID"
     private static let lastKnownAppVersionKey = "lastKnownAppVersion"
     private static let personalFilesShortcutAttemptedKey = "personalFilesShortcutAttempted"
-    /// Set once items kept before Findle published a content policy have been
-    /// reported to the system again, so they start staying downloaded.
-    private static let keptItemsRepublishedKey = "keptItemsRepublishedForContentPolicy"
+    /// The item metadata revision last reported to the system. When Findle starts
+    /// publishing new item metadata (content policy, Finder action state), bump
+    /// `itemMetadataRevision` so existing items are reported again once.
+    private static let republishedItemMetadataRevisionKey = "republishedItemMetadataRevision"
+    private static let itemMetadataRevision = 1
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
@@ -1985,7 +1987,7 @@ final class AppState: ObservableObject {
     }
 
     private func signalFileProviderChanges(for site: MoodleSite) {
-        republishKeptItemsIfNeeded()
+        republishItemsIfNeeded()
         let domainID = BundleIdentifiers.fileProviderDomainID(siteID: site.id)
         let displayName = site.displayName
         let logger = self.logger
@@ -1996,14 +1998,15 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func republishKeptItemsIfNeeded() {
-        guard !userDefaults.bool(forKey: Self.keptItemsRepublishedKey), let database else { return }
+    private func republishItemsIfNeeded() {
+        guard userDefaults.integer(forKey: Self.republishedItemMetadataRevisionKey) < Self.itemMetadataRevision,
+              let database else { return }
         do {
-            let count = try database.republishPinnedItems()
-            userDefaults.set(true, forKey: Self.keptItemsRepublishedKey)
-            logger.info("Republished \(count, privacy: .public) kept items for their content policy")
+            let count = try database.republishAllItems()
+            userDefaults.set(Self.itemMetadataRevision, forKey: Self.republishedItemMetadataRevisionKey)
+            logger.info("Republished \(count, privacy: .public) items for new item metadata")
         } catch {
-            logger.warning("Could not republish kept items: \(DiagnosticFailure(error).summary, privacy: .public)")
+            logger.warning("Could not republish items: \(DiagnosticFailure(error).summary, privacy: .public)")
         }
     }
 
