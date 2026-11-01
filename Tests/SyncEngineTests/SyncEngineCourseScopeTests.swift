@@ -251,6 +251,68 @@ final class SyncEngineCourseScopeTests: XCTestCase {
         XCTAssertNil(try text("readme-site-1-101-10"))
     }
 
+    func testDatesComeFromMoodleAndAnUnchangedSyncLeavesThemAlone() async throws {
+        let site = MoodleSite(id: "site-1", displayName: "Example", baseURL: URL(string: "https://moodle.example.edu")!)
+        let course = MoodleCourse(id: 101, shortName: "C101", fullName: "Course 101", siteID: site.id)
+        let token = AuthToken(token: "token")
+        func snapshot(folderFileModified: Int) -> String {
+            let file = #"{"id":301,"modname":"resource","contents":[{"type":"file","filename":"notes.pdf","filesize":20,"timemodified":100}]}"#
+            let folder = #"{"id":302,"name":"Labs","modname":"folder","contents":[{"type":"file","filename":"a.pdf","filesize":5,"timemodified":200},{"type":"file","filename":"b.pdf","filesize":5,"timemodified":\#(folderFileModified)}]}"#
+            let page = #"{"id":303,"name":"Welcome","modname":"page","contents":[{"type":"file","filename":"index.html","filepath":"/","filesize":50,"timecreated":10,"timemodified":400,"fileurl":"https://moodle.example.edu/webservice/pluginfile.php/1/mod_page/content/1/index.html"},{"type":"file","filename":"photo.png","filepath":"/","filesize":9,"timemodified":900}]}"#
+            return #"[{"id":10,"section":1,"modules":["# + [file, folder, page].joined(separator: ",") + #"]},{"id":11,"section":2,"modules":[{"id":501,"modname":"label","description":"<p>Bring a laptop</p>"}]}]"#
+        }
+        func date(_ id: String) throws -> TimeInterval? {
+            try database.fetchItem(id: id)?.modificationDate?.timeIntervalSince1970
+        }
+        let courseID = "course-site-1-101", section = "section-site-1-101-10", folder = "folder-site-1-101-302"
+        let page = "page-site-1-101-303", labels = "section-site-1-101-11", readme = "readme-site-1-101-11"
+
+        try await engine(snapshot: snapshot(folderFileModified: 300)).syncCourse(site: site, token: token, course: course)
+        XCTAssertEqual(try date(folder), 300, "A folder shows the newest file inside it")
+        XCTAssertEqual(try date(section), 400)
+        XCTAssertEqual(try date(courseID), try XCTUnwrap(date(labels)), "The section README is the newest item")
+        let welcome = try XCTUnwrap(database.fetchItem(id: page))
+        XCTAssertEqual(welcome.modificationDate?.timeIntervalSince1970, 400, "Its images don't date the page")
+        XCTAssertEqual(welcome.creationDate?.timeIntervalSince1970, 10)
+        XCTAssertEqual(welcome.fileSize, 50)
+        XCTAssertNotNil(welcome.remoteURL)
+        let readmeDate = try XCTUnwrap(date(readme))
+        XCTAssertEqual(readmeDate, readmeDate.rounded(.down), "A first-seen date reads back unchanged")
+        let items = try database.fetchItems(courseID: course.id, siteID: site.id)
+        XCTAssertTrue(items.allSatisfy { $0.modificationDate != nil })
+
+        let anchor = try database.currentChangeCounter()
+        try await engine(snapshot: snapshot(folderFileModified: 300)).syncCourse(site: site, token: token, course: course)
+        XCTAssertEqual(try database.currentChangeCounter(), anchor, "An unchanged sync rewrites nothing")
+        XCTAssertEqual(try database.fetchItems(courseID: course.id, siteID: site.id), items)
+
+        try await engine(snapshot: snapshot(folderFileModified: 700)).syncCourse(site: site, token: token, course: course)
+        XCTAssertEqual(try date(folder), 700)
+        XCTAssertEqual(try date(section), 700)
+        XCTAssertEqual(try date(readme), readmeDate, "Unchanged text keeps its date")
+        XCTAssertEqual(try date(courseID), max(700, readmeDate))
+    }
+
+    func testPagesFromEarlierBuildsGainAVersionWithoutBecomingNew() async throws {
+        let site = MoodleSite(id: "site-1", displayName: "Example", baseURL: URL(string: "https://moodle.example.edu")!)
+        let course = MoodleCourse(id: 101, shortName: "C101", fullName: "Course 101", siteID: site.id)
+        let token = AuthToken(token: "token")
+        try database.saveItems([
+            LocalItem(id: "course-site-1-101", siteID: site.id, courseID: 101, remoteID: 101, filename: "C101",
+                      isDirectory: true, modificationDate: Date(), syncState: .materialized),
+            LocalItem(id: "section-site-1-101-10", parentID: "course-site-1-101", siteID: site.id, courseID: 101,
+                      remoteID: 10, filename: "Section 1", isDirectory: true, modificationDate: Date(), syncState: .materialized),
+            LocalItem(id: "page-site-1-101-303", parentID: "section-site-1-101-10", siteID: site.id, courseID: 101,
+                      remoteID: 303, filename: "Welcome.html", contentType: "text/html", modificationDate: Date())
+        ])
+        let snapshot = #"[{"id":10,"section":1,"modules":[{"id":303,"name":"Welcome","modname":"page","contents":[{"type":"file","filename":"index.html","filepath":"/","filesize":50,"timemodified":400,"fileurl":"https://moodle.example.edu/webservice/pluginfile.php/1/mod_page/content/1/index.html"}]}]}]"#
+        try await engine(snapshot: snapshot).syncCourse(site: site, token: token, course: course)
+        let page = try XCTUnwrap(database.fetchItem(id: "page-site-1-101-303"))
+        XCTAssertEqual(page.fileSize, 50)
+        XCTAssertEqual(page.modificationDate?.timeIntervalSince1970, 400)
+        XCTAssertEqual(try database.fetchNewItems(courseID: course.id, siteID: site.id), [])
+    }
+
     func testLaterSyncsBringInAddedAndChangedFiles() async throws {
         let site = MoodleSite(id: "site-1", displayName: "Example", baseURL: URL(string: "https://moodle.example.edu")!)
         let course = MoodleCourse(id: 101, shortName: "C101", fullName: "Course 101", siteID: site.id)

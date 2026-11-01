@@ -31,6 +31,26 @@ final class SyncedItemModificationTests: XCTestCase {
         }
     }
 
+    func testTaggingAndRenamingChangeTheMetadataVersionButNotTheDate() throws {
+        let f = try fixture()
+        var item = try XCTUnwrap(f.database.fetchItem(id: "file-a"))
+        item.modificationDate = Date(timeIntervalSince1970: 123)
+        try f.database.saveItems([item])
+        let before = FileProviderItem(localItem: item).itemVersion
+
+        try f.database.updateItemTagData(id: item.id, tagData: FinderTag.tagData(from: [.init(name: "Review", color: .blue)]))
+        let tagged = try XCTUnwrap(f.database.fetchItem(id: item.id))
+        XCTAssertEqual(tagged.modificationDate, item.modificationDate)
+        let afterTagging = FileProviderItem(localItem: tagged).itemVersion
+        XCTAssertNotEqual(afterTagging.metadataVersion, before.metadataVersion)
+        XCTAssertEqual(afterTagging.contentVersion, before.contentVersion)
+
+        try f.database.updateItemFilename(id: item.id, filename: "renamed.pdf")
+        let renamed = try XCTUnwrap(f.database.fetchItem(id: item.id))
+        XCTAssertEqual(renamed.modificationDate, item.modificationDate)
+        XCTAssertNotEqual(FileProviderItem(localItem: renamed).itemVersion.metadataVersion, afterTagging.metadataVersion)
+    }
+
     func testTagAndModificationTimeUploadSavesTagsThenSettlesTimestampRetryWithoutWriting() throws {
         let f = try fixture()
         let item = try XCTUnwrap(f.database.fetchItem(id: "file-a"))

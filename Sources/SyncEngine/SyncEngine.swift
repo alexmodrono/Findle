@@ -258,7 +258,6 @@ public actor SyncEngine {
             filename: course.effectiveFolderName,
             isDirectory: true,
             creationDate: course.startDate,
-            modificationDate: Date(),
             syncState: .materialized,
             tagData: courseTagData
         )
@@ -279,7 +278,6 @@ public actor SyncEngine {
                 remoteID: section.id,
                 filename: section.sanitizedFolderName,
                 isDirectory: true,
-                modificationDate: Date(),
                 syncState: .materialized
             )
             allItems.append(sectionItem)
@@ -328,6 +326,7 @@ public actor SyncEngine {
             item.parentID.map(foldersWithoutBrief.contains) == true && !built.contains(item.id)
         }
 
+        allItems = Self.settleDates(allItems, existing: existingItems, now: Date())
         let changes = diffItems(existing: existingItems, incoming: allItems)
 
         try Task.checkCancellation()
@@ -393,7 +392,6 @@ public actor SyncEngine {
                 remoteID: module.id,
                 filename: FileNameSanitizer.sanitize(module.name),
                 isDirectory: true,
-                modificationDate: Date(),
                 syncState: .materialized
             )
             items.append(folder)
@@ -423,7 +421,10 @@ public actor SyncEngine {
             }
 
         case .page:
-            // Represent page resources as HTML files
+            // A page is its index.html; the other files are the images it shows.
+            let html = module.contents.first { content in
+                content.type == "file" && content.fileName == "index.html" && (content.filePath ?? "/") == "/"
+            }
             let itemID = "page-\(siteID)-\(courseID)-\(module.id)"
             let item = LocalItem(
                 id: itemID,
@@ -434,9 +435,12 @@ public actor SyncEngine {
                 filename: FileNameSanitizer.sanitize(module.name) + ".html",
                 isDirectory: false,
                 contentType: "text/html",
-                fileSize: 0,
-                modificationDate: Date(),
-                syncState: .placeholder
+                fileSize: html?.fileSize ?? 0,
+                creationDate: html?.timeCreated,
+                modificationDate: html?.timeModified,
+                syncState: .placeholder,
+                remoteURL: html?.fileURL,
+                contentVersion: html?.timeModified.map { String(Int($0.timeIntervalSince1970)) }
             )
             items.append(item)
 
@@ -626,6 +630,48 @@ public actor SyncEngine {
         return pathExtension.isEmpty ? "\(stem) (\(suffix))" : "\(stem) (\(suffix)).\(pathExtension)"
     }
 
+    // MARK: - Dates
+
+    /// Gives every item a date that only moves when Moodle changes something.
+    ///
+    /// Moodle dates files and pages. Items it doesn't date (READMEs Findle
+    /// writes, pages without content) keep the date they were first seen with
+    /// until their content changes. A folder shows the newest date inside it, or
+    /// the date it was first seen with when nothing inside has one.
+    static func settleDates(_ items: [LocalItem], existing: [LocalItem], now: Date) -> [LocalItem] {
+        let previous = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+        // Whole seconds, so the date reads back from the database unchanged.
+        let now = Date(timeIntervalSince1970: now.timeIntervalSince1970.rounded(.down))
+        var settled = items.map { item -> LocalItem in
+            guard !item.isDirectory, item.modificationDate == nil else { return item }
+            var item = item
+            let old = previous[item.id]
+            let unchanged = old.map { $0.contentVersion == item.contentVersion && $0.fileSize == item.fileSize } ?? false
+            item.modificationDate = unchanged ? old?.modificationDate ?? now : now
+            return item
+        }
+
+        var children: [String: [Int]] = [:]
+        for (index, item) in settled.enumerated() {
+            if let parentID = item.parentID { children[parentID, default: []].append(index) }
+        }
+        var newest: [Int: Date?] = [:]
+        func newestDate(inside index: Int) -> Date? {
+            if let known = newest[index] { return known }
+            newest[index] = .some(nil)
+            let date = (children[settled[index].id] ?? []).compactMap { child in
+                settled[child].isDirectory ? newestDate(inside: child) : settled[child].modificationDate
+            }.max()
+            newest[index] = date
+            return date
+        }
+        for index in settled.indices where settled[index].isDirectory {
+            let date = newestDate(inside: index) ?? previous[settled[index].id]?.modificationDate ?? now
+            settled[index].modificationDate = date
+        }
+        return settled
+    }
+
     // MARK: - Diffing
 
     private struct DiffResult {
@@ -661,9 +707,15 @@ public actor SyncEngine {
                    existing.fileSize != item.fileSize {
                     // Content changed: keep the placeholder reset so it re-downloads.
                     modified.append(item)
-                    arrived.append(item)
-                } else if existing.filename != item.filename {
-                    // Only the display name changed. Keep any materialized copy.
+                    // An item getting its first version is Findle learning it,
+                    // not Moodle changing it.
+                    if existing.contentVersion != nil || item.contentVersion == nil {
+                        arrived.append(item)
+                    }
+                } else if existing.filename != item.filename ||
+                          existing.modificationDate != item.modificationDate ||
+                          existing.creationDate != item.creationDate {
+                    // Only the name or dates changed. Keep any materialized copy.
                     item.syncState = existing.syncState
                     item.localPath = existing.localPath
                     modified.append(item)

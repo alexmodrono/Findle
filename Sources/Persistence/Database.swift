@@ -2000,13 +2000,12 @@ extension Database {
     }
 
     public func updateItemFilename(id: String, filename: String) throws {
-        let sql = "UPDATE items SET filename = ?, modification_date = ? WHERE id = ?"
+        let sql = "UPDATE items SET filename = ? WHERE id = ?"
         try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_text(stmt, 1, (filename as NSString).utf8String, -1, SQLITE_TRANSIENT)
-            sqlite3_bind_double(stmt, 2, Date().timeIntervalSince1970)
-            sqlite3_bind_text(stmt, 3, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
             let status = sqlite3_step(stmt)
             guard status == SQLITE_DONE else {
                 throw FindleError.databaseError(detail: "Failed to update item filename")
@@ -2015,7 +2014,7 @@ extension Database {
     }
 
     public func updateItemTagData(id: String, tagData: Data?) throws {
-        let sql = "UPDATE items SET tag_data = ?, modification_date = ? WHERE id = ?"
+        let sql = "UPDATE items SET tag_data = ? WHERE id = ?"
         try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
@@ -2024,8 +2023,7 @@ extension Database {
             } else {
                 sqlite3_bind_null(stmt, 1)
             }
-            sqlite3_bind_double(stmt, 2, Date().timeIntervalSince1970)
-            sqlite3_bind_text(stmt, 3, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
             let status = sqlite3_step(stmt)
             guard status == SQLITE_DONE else {
                 throw FindleError.databaseError(detail: "Failed to update item tag data")

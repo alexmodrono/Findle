@@ -161,10 +161,10 @@ final class AppState: ObservableObject {
     private static let lastKnownAppVersionKey = "lastKnownAppVersion"
     private static let personalFilesShortcutAttemptedKey = "personalFilesShortcutAttempted"
     /// The item metadata revision last reported to the system. When Findle starts
-    /// publishing new item metadata (content policy, Finder action state), bump
-    /// `itemMetadataRevision` so existing items are reported again once.
+    /// publishing new item metadata (content policy, Finder action state, stable
+    /// dates), bump `itemMetadataRevision` so existing items are reported again once.
     private static let republishedItemMetadataRevisionKey = "republishedItemMetadataRevision"
-    private static let itemMetadataRevision = 1
+    private static let itemMetadataRevision = 2
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults

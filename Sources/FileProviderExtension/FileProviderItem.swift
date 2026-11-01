@@ -3,6 +3,7 @@
 // Licensed under the Apache License, Version 2.0.
 // You may obtain a copy of the License in the LICENSE file at the root of this repository.
 
+import CryptoKit
 import FileProvider
 import UniformTypeIdentifiers
 import SharedDomain
@@ -89,7 +90,10 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
 
     var itemVersion: NSFileProviderItemVersion {
         let contentVersion = localItem.contentVersion ?? "1"
+        // Renaming or tagging leaves the date alone, so the name and tags go in
+        // the version for the system to notice them.
         let metadataVersion = (localItem.modificationDate.map { String($0.timeIntervalSince1970) } ?? contentVersion)
+            + "|" + Self.digest(Data(localItem.filename.utf8) + Data([0]) + (localItem.tagData ?? Data()))
             + DownloadRetention.metadataVersionSuffix(for: localItem)
             + "|" + FinderActionState.revision
         return NSFileProviderItemVersion(
@@ -132,6 +136,11 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
 
     var userInfo: [AnyHashable: Any]? {
         FinderActionState.userInfo(for: localItem)
+    }
+
+    /// A short digest; versions are compared, never read.
+    private static func digest(_ data: Data) -> String {
+        SHA256.hash(data: data).prefix(6).map { String(format: "%02x", $0) }.joined()
     }
 
     // MARK: - Type Inference
