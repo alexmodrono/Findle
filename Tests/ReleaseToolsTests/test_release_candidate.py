@@ -72,14 +72,14 @@ class ReleaseCandidateTests(unittest.TestCase):
         (self.root / 'soak-evidence.json').write_text('{"fixture": "not real release evidence"}')
         self.record = dict(decision='go', source_revision='a' * 40, airlock_revision='b' * 40,
                            candidate_sha256=candidate.digest(self.path), open_p0_p1=0, signed_candidate=True,
-                           cycles=100, started_at='2026-10-01T01:00:00Z', finished_at='2026-10-03T01:00:00Z',
+                           started_at='2026-10-01T01:00:00Z', finished_at='2026-10-04T01:00:00Z',
                            passed_scenarios=sorted(candidate.SCENARIOS), personal_files_lost=0,
                            personal_files_corrupted=0, reviewer='fixture reviewer',
                            evidence=[dict(path='soak-evidence.json', sha256=candidate.digest(self.root / 'soak-evidence.json'))])
 
     def qualify(self):
         candidate.validate_qualification(self.record, self.manifest, self.path, self.root,
-                                         now=dt.datetime(2026, 10, 4, tzinfo=dt.timezone.utc))
+                                         now=dt.datetime(2026, 10, 5, tzinfo=dt.timezone.utc))
 
     def test_complete_matching_candidate_and_record(self):
         candidate.validate_manifest(self.manifest, self.root)
@@ -110,8 +110,8 @@ class ReleaseCandidateTests(unittest.TestCase):
     def test_each_incomplete_qualification_rejects_promotion(self):
         cases = {'decision': 'no-go', 'source_revision': 'c' * 40, 'airlock_revision': 'c' * 40,
                  'candidate_sha256': '0' * 64, 'open_p0_p1': 1, 'signed_candidate': False,
-                 'cycles': 99, 'started_at': '2026-10-02T01:00:00Z',
-                 'finished_at': '2026-10-05T01:00:00Z', 'passed_scenarios': ['relaunch'],
+                 'started_at': '2026-10-02T01:00:00Z',
+                 'finished_at': '2026-10-06T01:00:00Z', 'passed_scenarios': ['relaunch'],
                  'personal_files_lost': 1, 'personal_files_corrupted': 1, 'reviewer': '', 'evidence': []}
         for key, value in cases.items():
             with self.subTest(key=key):

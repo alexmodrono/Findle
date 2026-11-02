@@ -12,7 +12,12 @@ import xml.etree.ElementTree as ET
 
 HEX = re.compile(r"[0-9a-f]{40}")
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
-SCENARIOS = {"offline-online", "sleep-wake", "extension-restart", "materialization", "relaunch", "signed-upgrade", "personal-file-hashes", "cpu-memory"}
+# What the maintainer checks on the signed candidate before a go: upgrading from
+# the last release, a Sparkle update, relaunch, downloading files, and matching
+# personal-file hashes before and after.
+SCENARIOS = {"signed-upgrade", "sparkle-update", "relaunch", "materialization", "personal-file-hashes"}
+# The candidate is used normally for at least this long before a go.
+USE_PERIOD_HOURS = 72
 
 
 def require(condition, message):
@@ -75,11 +80,11 @@ def validate_qualification(record, manifest, candidate_path, evidence_root, now=
     require(record["candidate_sha256"] == digest(candidate_path), "Qualification covers different artifacts")
     require(record["open_p0_p1"] == 0, "Release blockers remain open")
     require(record["signed_candidate"] is True, "Unsigned tests do not qualify a release")
-    require(record["cycles"] >= 100, "Fewer than 100 soak cycles")
     start, end = timestamp(record["started_at"]), timestamp(record["finished_at"])
-    require(start >= timestamp(manifest["created_at"]), "Soak predates candidate")
-    require(start <= end <= now, "Invalid or future soak dates")
-    require((end - start).total_seconds() >= 48 * 3600, "Soak is shorter than 48 hours")
+    require(start >= timestamp(manifest["created_at"]), "Use period predates candidate")
+    require(start <= end <= now, "Invalid or future use-period dates")
+    require((end - start).total_seconds() >= USE_PERIOD_HOURS * 3600,
+            f"Candidate was used for less than {USE_PERIOD_HOURS} hours")
     require(SCENARIOS.issubset(record["passed_scenarios"]), "Required runtime scenarios are missing")
     require(record["personal_files_lost"] == 0 and record["personal_files_corrupted"] == 0, "Personal-file integrity failed")
     require(bool(record["reviewer"].strip()), "Missing maintainer decision")

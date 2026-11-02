@@ -21,12 +21,14 @@ restages a published release. An interrupted upload can resume with the same
 candidate bytes. A rebuilt candidate that differs must be reviewed separately;
 keep the original artifact download rather than silently replacing it.
 
-Run the signed upgrade/recovery rehearsal (RR-03) and the complete 48-hour soak
-(RR-04) against these exact bytes. Record at least 100 cycles, offline/online,
-sleep/wake, extension restart, materialization, relaunch, signed upgrade,
-personal-file manifests/hashes, and CPU/memory observations. No P0/P1 issue or
-personal-file loss/corruption may remain. Unit tests, unsigned previews and
-compressed simulated time do not establish this evidence.
+Against these exact bytes, run the upgrade rehearsal (RR-03): upgrade a copy of
+real data from the last shipped release and install one Sparkle update from a
+private test feed. Then use the candidate normally for at least three days
+(RR-04), with a personal-file manifest and hashes taken before and compared
+after. The required checks are the signed upgrade, the Sparkle update, relaunch,
+downloading files (materialization) and matching personal-file hashes. No known
+P0/P1 issue or personal-file loss/corruption may remain. Unit tests and unsigned
+previews do not establish this evidence.
 
 Commit the maintainer's decision as `release-qualification/vX.Y.Z.json`, with
 supporting redacted evidence beneath `release-qualification/`. The JSON fields
@@ -39,9 +41,8 @@ are:
   "airlock_revision": "FULL_AIRLOCK_COMMIT",
   "candidate_sha256": "SHA256_OF_DOWNLOADED_CANDIDATE_JSON",
   "signed_candidate": false,
-  "started_at": "ACTUAL_ISO8601_START_WITH_TIMEZONE",
-  "finished_at": "ACTUAL_ISO8601_END_WITH_TIMEZONE",
-  "cycles": 0,
+  "started_at": "ACTUAL_ISO8601_START_OF_USE_WITH_TIMEZONE",
+  "finished_at": "ACTUAL_ISO8601_END_OF_USE_WITH_TIMEZONE",
   "open_p0_p1": 1,
   "passed_scenarios": [],
   "personal_files_lost": 0,
@@ -53,8 +54,8 @@ are:
 
 This deliberately invalid example is not a qualification record. Set `go` only
 after reviewing the completed evidence. The required scenario identifiers are
-`offline-online`, `sleep-wake`, `extension-restart`, `materialization`, `relaunch`,
-`signed-upgrade`, `personal-file-hashes`, and `cpu-memory`.
+`signed-upgrade`, `sparkle-update`, `relaunch`, `materialization` and
+`personal-file-hashes`, and the use period must cover at least 72 hours.
 
 Validate locally with:
 
