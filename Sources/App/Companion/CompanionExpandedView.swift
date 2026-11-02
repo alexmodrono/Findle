@@ -23,7 +23,10 @@ struct CompanionExpandedView: View {
             }
             .padding(14)
             Divider().padding(.horizontal, 14)
-            if !presentation.deadlines.isEmpty {
+            if let selection = presentation.selection {
+                CompanionSelectionView(selection: selection, actions: actions)
+                Divider().padding(.horizontal, 14)
+            } else if !presentation.deadlines.isEmpty {
                 CompanionDeadlinesView(deadlines: presentation.deadlines)
                 Divider().padding(.horizontal, 14)
             }

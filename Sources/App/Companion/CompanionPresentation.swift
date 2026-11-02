@@ -27,6 +27,8 @@ final class CompanionPresentation {
     var emptyMessage = "Choose courses in Settings."
     /// The course's assignments and quizzes not yet due, soonest first.
     var deadlines: [CompanionDeadline] = []
+    /// The single Findle item selected in Finder, shown above the course.
+    var selection: CompanionSelection?
     private(set) var nodes: [CompanionNode] = []
     private(set) var expandedIDs = Set<String>()
     private(set) var hasSnapshot = false

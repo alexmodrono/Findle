@@ -33,7 +33,10 @@ final class CompanionViewController: NSViewController {
             sync: { [weak self] in self?.sync() },
             openMoodle: { [weak self] in self?.openMoodle() },
             openSettings: openSettings,
-            openNode: { [weak self] in self?.open($0) }
+            openNode: { [weak self] in self?.open($0) },
+            openSelectionInMoodle: { selection in selection.moodleURL.map { _ = NSWorkspace.shared.open($0) } },
+            keepSelection: { [weak self] in self?.state.keepDownloaded(itemID: $0.itemID) },
+            removeSelectionDownload: { [weak self] in self?.state.removeDownload(itemID: $0.itemID) }
         )
         let hosting = CompanionHostingView(rootView: CompanionView(presentation: presentation, actions: actions))
         // Finder placement is the only source of window dimensions and behavior.
@@ -58,6 +61,12 @@ final class CompanionViewController: NSViewController {
         withAnimation(CompanionMotion.contentTransition(animated: animated)) {
             presentation.mode = mode
         }
+    }
+
+    /// Shows the item selected in Finder, or the course view when none or several are.
+    func showSelection(_ selection: CompanionSelection?) {
+        guard presentation.selection != selection else { return }
+        presentation.selection = selection
     }
 
     /// `folderIDs` are the folder Finder shows and the folders holding it,

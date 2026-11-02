@@ -29,6 +29,10 @@ final class CompanionWindowController: NSWindowController {
     private var resolvedFolder: (url: URL, siteID: String, identity: FolderIdentity)?
     private var resolvingFolder: URL?
     private var resolvingFolderTask: Task<Void, Never>?
+    /// The same for the single item selected in Finder.
+    private var resolvedSelection: (url: URL, identity: FolderIdentity)?
+    private var resolvingSelection: URL?
+    private var resolvingSelectionTask: Task<Void, Never>?
 
     enum FolderIdentity: Sendable, Equatable {
         case root
@@ -92,6 +96,10 @@ final class CompanionWindowController: NSWindowController {
         resolvingFolderTask = nil
         resolvingFolder = nil
         resolvedFolder = nil
+        resolvingSelectionTask?.cancel()
+        resolvingSelectionTask = nil
+        resolvingSelection = nil
+        resolvedSelection = nil
         rootURL = nil
         rootSiteID = nil
         observer.locationRootURL = nil
@@ -200,6 +208,7 @@ final class CompanionWindowController: NSWindowController {
         content.setMode(layout.mode, canExpand: canExpand, attachedOnRight: frame.minX >= snapshot.frame.maxX,
                         width: frame.width, animated: animate)
         content.show(course: course, folderIDs: location?.folderIDs ?? [])
+        content.showSelection(siteID.flatMap { selection(in: snapshot, siteID: $0) })
         if let course, recordedFolder != snapshot.folderURL {
             recordedFolder = snapshot.folderURL
             if let folderID = location?.folderIDs.first, let siteID {
@@ -237,6 +246,28 @@ final class CompanionWindowController: NSWindowController {
             self.resolvingFolder = nil
             self.resolvedFolder = (folderURL, siteID, identity)
             if identity == .unknown { self.diagnose("Finder folder has no File Provider identity; matching by name") }
+            self.scheduleRefresh()
+        }
+        return nil
+    }
+
+    /// The Findle item selected in Finder, when exactly one is. Nothing or
+    /// several selected falls back to the course view.
+    private func selection(in snapshot: FinderWindowObserver.Snapshot, siteID: String) -> CompanionSelection? {
+        guard snapshot.selectionCount == 1, let url = snapshot.selectedURL else { return nil }
+        if let resolvedSelection, resolvedSelection.url == url {
+            guard case .item(let id) = resolvedSelection.identity else { return nil }
+            return state.companionSelection(itemID: id, url: url)
+        }
+        guard resolvingSelection != url else { return nil }
+        resolvingSelectionTask?.cancel()
+        resolvingSelection = url
+        let domainID = BundleIdentifiers.fileProviderDomainID(siteID: siteID)
+        resolvingSelectionTask = Task { [weak self] in
+            let identity = await Self.lookUpIdentity(of: url, domainID: domainID)
+            guard let self, !Task.isCancelled, self.resolvingSelection == url else { return }
+            self.resolvingSelection = nil
+            self.resolvedSelection = (url, identity)
             self.scheduleRefresh()
         }
         return nil

@@ -183,6 +183,7 @@ targets:
       - path: Sources/App/Companion/CompanionPresentation.swift
       - path: Sources/App/Companion/CompanionLocation.swift
       - path: Sources/App/Companion/CompanionDeadline.swift
+      - path: Sources/App/Companion/CompanionSelection.swift
       - path: Sources/App/Companion/FinderWindowObserver.swift
       - path: Sources/App/Companion/CompanionFrameAnimator.swift
       - path: Sources/App/Companion/CompanionMotion.swift
@@ -214,6 +215,8 @@ targets:
           enabled: 1
     sources:
       - path: Sources/App
+      # Keep Downloaded and Remove Download work the same from the companion.
+      - path: Sources/FileProviderExtension/DownloadRetention.swift
       - path: Resources/Assets.xcassets
         buildPhase: resources
     dependencies:

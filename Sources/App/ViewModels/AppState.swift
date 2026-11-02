@@ -2085,6 +2085,54 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// The item selected in Finder, with its Moodle context, for the companion.
+    func companionSelection(itemID: String, url: URL) -> CompanionSelection? {
+        guard let database, let site = currentSite, let item = try? database.fetchItem(id: itemID), item.siteID == site.id
+        else { return nil }
+        var ancestors: [LocalItem] = []
+        var next = item.parentID
+        while let id = next, ancestors.count < 32, let parent = try? database.fetchItem(id: id), !parent.id.hasPrefix("course-") {
+            ancestors.insert(parent, at: 0)
+            next = parent.parentID
+        }
+        let status = try? url.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey]).ubiquitousItemDownloadingStatus
+        return CompanionSelection.make(item: item, ancestors: ancestors, downloaded: status.map { $0 == .current },
+                                       baseURL: site.baseURL)
+    }
+
+    /// Keep Downloaded from the companion, as from Finder's menu.
+    func keepDownloaded(itemID: String) {
+        guard let database, let site = currentSite else { return }
+        do {
+            try DownloadRetention.keep([itemID], database: database)
+            signalFileProviderChanges(for: site)
+            objectWillChange.send()
+        } catch {
+            errorMessage = "Could not keep this downloaded: \(error.localizedDescription)"
+        }
+    }
+
+    /// Remove Download from the companion, as from Finder's menu.
+    func removeDownload(itemID: String) {
+        guard let database, let site = currentSite else { return }
+        let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: site.id)),
+                                          displayName: site.displayName)
+        guard let manager = NSFileProviderManager(for: domain) else { return }
+        nonisolated(unsafe) let unsafeManager = manager
+        let logger = self.logger
+        Task.detached { [weak self] in
+            do {
+                try await DownloadRetention.remove(
+                    [itemID], database: database,
+                    signal: { try? await unsafeManager.signalEnumerator(for: .workingSet) },
+                    evict: { try await unsafeManager.evictItem(identifier: NSFileProviderItemIdentifier($0)) })
+            } catch {
+                logger.warning("Could not remove a download: \(DiagnosticFailure(error).summary, privacy: .public)")
+            }
+            await self?.objectWillChange.send()
+        }
+    }
+
     /// The course's assignments and quizzes not yet due, for the companion.
     func companionDeadlines(for course: MoodleCourse) -> [CompanionDeadline] {
         guard let database, currentSite?.id == course.siteID else { return [] }
