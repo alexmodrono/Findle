@@ -406,7 +406,21 @@ final class SyncEngineCourseScopeTests: XCTestCase {
                        "New files follow their folder: a new section of a kept course is kept, a folder whose download was removed is not")
     }
 
-    func testSyncCourseOnlyDiffsItemsFromCurrentCourse() async throws {
+    func testInteractivePackagesAppearAsFilesQuickLookCanPreview() async throws {
+        let site = MoodleSite(id: "site-1", displayName: "Example", baseURL: URL(string: "https://moodle.example.edu")!)
+        let course = MoodleCourse(id: 101, shortName: "C101", fullName: "Course 101", siteID: site.id)
+        let h5p = #"{"id":601,"name":"Cell video","modname":"h5pactivity","contents":[{"type":"file","filename":"cells.h5p","filesize":900,"timemodified":50,"fileurl":"https://moodle.example.edu/webservice/pluginfile.php/9/mod_h5pactivity/package/0/cells.h5p"}]}"#
+        let scorm = #"{"id":602,"name":"Lab safety","modname":"scorm","contents":[{"type":"file","filename":"package.zip","filesize":800,"timemodified":60,"fileurl":"https://moodle.example.edu/webservice/pluginfile.php/9/mod_scorm/package/0/package.zip"}]}"#
+        let snapshot = #"[{"id":10,"section":1,"modules":["# + h5p + "," + scorm + "]}]"
+        try await engine(snapshot: snapshot).syncCourse(site: site, token: AuthToken(token: "t"), course: course)
+        let files = Dictionary(uniqueKeysWithValues: try database.fetchItems(courseID: course.id, siteID: site.id)
+            .filter { !$0.isDirectory }.map { ($0.filename, $0) })
+        XCTAssertEqual(Set(files.keys), ["cells.h5p", "Lab safety.scorm"], "A SCORM zip gets its own extension")
+        XCTAssertEqual(files["Lab safety.scorm"]?.fileSize, 800)
+        XCTAssertNotNil(files["Lab safety.scorm"]?.remoteURL)
+    }
+
+        func testSyncCourseOnlyDiffsItemsFromCurrentCourse() async throws {
         let site = MoodleSite(
             id: "site-1",
             displayName: "Example",

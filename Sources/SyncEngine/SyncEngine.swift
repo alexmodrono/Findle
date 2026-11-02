@@ -382,6 +382,21 @@ public actor SyncEngine {
         case .file:
             items.append(contentsOf: fileItems(for: module, parentID: parentID, siteID: siteID, courseID: courseID))
 
+        case .h5p, .scorm:
+            // The package itself, which Quick Look can preview (FX-10). A SCORM
+            // zip gets its own extension so only these zips get that preview.
+            let packages = fileItems(for: module, parentID: parentID, siteID: siteID, courseID: courseID)
+            if module.resourceType == .scorm, let package = packages.first(where: { $0.filename.lowercased().hasSuffix(".zip") }) {
+                items.append(LocalItem(
+                    id: package.id, parentID: parentID, siteID: siteID, courseID: courseID, remoteID: module.id,
+                    filename: FileNameSanitizer.sanitize(module.name) + ".scorm", contentType: "application/zip",
+                    fileSize: package.fileSize, creationDate: package.creationDate, modificationDate: package.modificationDate,
+                    syncState: .placeholder, remoteURL: package.remoteURL, contentVersion: package.contentVersion,
+                    author: package.author))
+            } else if module.resourceType == .h5p {
+                items.append(contentsOf: packages.filter { $0.filename.lowercased().hasSuffix(".h5p") })
+            }
+
         case .folder:
             let folderID = "folder-\(siteID)-\(courseID)-\(module.id)"
             let folder = LocalItem(

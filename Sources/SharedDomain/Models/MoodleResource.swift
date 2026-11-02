@@ -62,6 +62,10 @@ public enum ResourceType: String, Sendable, Codable, Equatable {
     case forum = "forum"
     case quiz = "quiz"
     case workshop = "workshop"
+    /// An H5P activity: its package is a .h5p file.
+    case h5p = "h5pactivity"
+    /// A SCORM activity: its package is a zip, saved as .scorm.
+    case scorm = "scorm"
     case unknown
 
     /// Whether this resource type can be represented as a downloadable file.
@@ -73,6 +77,8 @@ public enum ResourceType: String, Sendable, Codable, Equatable {
             return true // represented as .webloc
         case .page:
             return true // represented as .html or .webarchive
+        case .h5p, .scorm:
+            return true // their package, as .h5p or .scorm
         default:
             return false
         }

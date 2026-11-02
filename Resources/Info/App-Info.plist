@@ -2,8 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>FindleSourceRevision</key>
-    <string>$(FINDLE_SOURCE_REVISION)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleExecutable</key>
@@ -35,6 +33,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>FindlePersonalFilesFolderName</key>
 	<string>$(FINDLE_PERSONAL_FILES_FOLDER)</string>
+	<key>FindleSourceRevision</key>
+	<string>$(FINDLE_SOURCE_REVISION)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.education</string>
 	<key>LSMinimumSystemVersion</key>
@@ -49,5 +49,47 @@
 	<string>$(FINDLE_APPCAST_URL)</string>
 	<key>SUPublicEDKey</key>
 	<string>0J4Dy2ctl0ueMVmU3Cf+/n1Dz2EO6MmwtyfqiwUnQa0=</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.zip-archive</string>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>SCORM Package</string>
+			<key>UTTypeIdentifier</key>
+			<string>es.amodrono.findle.scorm-package</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>scorm</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.zip-archive</string>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>H5P Package</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.h5p.h5p</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>h5p</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>

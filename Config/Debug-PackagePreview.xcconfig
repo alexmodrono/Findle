@@ -1,0 +1,6 @@
+// Debug configuration for the Quick Look preview extension for H5P and SCORM packages.
+//
+// See Debug-App.xcconfig. The extension needs the same Team ID so its app-group
+// and File Provider entitlements resolve under Automatic signing.
+
+#include? "Signing.local.xcconfig"

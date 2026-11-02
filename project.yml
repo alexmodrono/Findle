@@ -231,6 +231,9 @@ targets:
       - target: FindleWidgets
         embed: true
         codeSign: true
+      - target: FindlePackagePreview
+        embed: true
+        codeSign: true
       - target: FindleMCP
         copy:
           destination: executables
@@ -524,6 +527,47 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
+  # Quick Look for H5P and SCORM packages. Read-only and sandboxed; it needs no
+  # App Group or keychain, so release signing needs no provisioning profile.
+  FindlePackagePreview:
+    type: app-extension
+    platform: macOS
+    configFiles:
+      Debug: Config/Debug-PackagePreview.xcconfig
+      Nightly: Config/Nightly-PackagePreview.xcconfig
+      Release: Config/Release-PackagePreview.xcconfig
+    sources:
+      - path: Sources/PackagePreview
+    dependencies:
+      - target: SharedDomain
+      - sdk: QuickLookUI.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.package-preview
+        INFOPLIST_FILE: Resources/Info/PackagePreview-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/PackagePreview.entitlements
+        ENABLE_APP_SANDBOX: YES
+        LD_RUNPATH_SEARCH_PATHS:
+          - "@executable_path/../Frameworks"
+          - "@executable_path/../../../../Frameworks"
+      configs:
+        Nightly:
+          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly.package-preview
+    info:
+      path: Resources/Info/PackagePreview-Info.plist
+      properties:
+        CFBundleDisplayName: Findle Package Preview
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.quicklook.preview
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).PreviewProvider"
+          NSExtensionAttributes:
+            QLIsDataBasedPreview: true
+            QLSupportsSearchableItems: false
+            QLSupportedContentTypes:
+              - org.h5p.h5p
+              - es.amodrono.findle.scorm-package
 
   FindleMCP:
     type: tool
