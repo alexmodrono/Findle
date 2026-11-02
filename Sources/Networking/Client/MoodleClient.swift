@@ -723,7 +723,7 @@ public final class MoodleClient: LMSProvider, Sendable {
         try credentialOrigin(site: site, destination: fileURL).fileRequest(url: fileURL, token: token)
     }
 
-    private func credentialOrigin(site: MoodleSite, destination: URL) throws -> AuthenticatedRequestOrigin {
+    func credentialOrigin(site: MoodleSite, destination: URL) throws -> AuthenticatedRequestOrigin {
         // Background sessions follow redirects without consulting the delegate.
         guard session.configuration.identifier == nil else {
             throw AuthenticatedRequestError.unsupportedBackgroundSession
@@ -735,7 +735,7 @@ public final class MoodleClient: LMSProvider, Sendable {
 
     // MARK: - Web Service Call
 
-    private func callWebService<T: Decodable>(
+    func callWebService<T: Decodable>(
         site: MoodleSite,
         token: AuthToken,
         function: String,
@@ -833,7 +833,7 @@ public final class MoodleClient: LMSProvider, Sendable {
     }
 
     /// Parses a response body as JSON. HTML from an SSO or proxy page is reported as an invalid response.
-    private static func parseJSON(_ data: Data, context: String) throws -> Any {
+    static func parseJSON(_ data: Data, context: String) throws -> Any {
         guard let json = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else {
             throw FindleError.invalidResponse(
                 detail: "\(context) returned a non-JSON response. The server may be showing a login or proxy page."
@@ -850,24 +850,28 @@ public final class MoodleClient: LMSProvider, Sendable {
 
     // MARK: - Request Execution
 
-    private enum RequestPolicy {
+    enum RequestPolicy {
         case standard
         case interactiveValidation
         case interactiveCompatibilityProbe
         /// Sign-in POST. Carries the password, so it must never be replayed.
         case authentication
+        /// A file upload. A replay could add the file to the draft area twice.
+        case upload
 
         var retryCount: Int {
             switch self {
             case .standard:
                 return 3
-            case .interactiveValidation, .interactiveCompatibilityProbe, .authentication:
+            case .interactiveValidation, .interactiveCompatibilityProbe, .authentication, .upload:
                 return 1
             }
         }
 
         var timeoutInterval: TimeInterval {
             switch self {
+            case .upload:
+                return 120
             case .standard, .authentication:
                 return 15
             case .interactiveValidation:
@@ -879,7 +883,7 @@ public final class MoodleClient: LMSProvider, Sendable {
 
         var mapsHostErrorsToSiteUnreachable: Bool {
             switch self {
-            case .standard, .authentication:
+            case .standard, .authentication, .upload:
                 return false
             case .interactiveValidation, .interactiveCompatibilityProbe:
                 return true
@@ -887,7 +891,7 @@ public final class MoodleClient: LMSProvider, Sendable {
         }
     }
 
-    private func performRequest(
+    func performRequest(
         _ request: URLRequest,
         policy: RequestPolicy = .standard,
         credentialOrigin: AuthenticatedRequestOrigin? = nil
