@@ -391,6 +391,10 @@ targets:
             UTTypeDescription: Findle New Badge
             UTTypeConformsTo: [com.apple.icon-decoration.badge, com.apple.icon-decoration-position.trailing-bottom]
             UTTypeIconFile: NewBadge
+          - UTTypeIdentifier: $(FINDLE_BUNDLE_PREFIX).badge-image.updated
+            UTTypeDescription: Findle Updated Badge
+            UTTypeConformsTo: [com.apple.icon-decoration.badge, com.apple.icon-decoration-position.trailing-bottom]
+            UTTypeIconFile: UpdatedBadge
           - UTTypeIdentifier: $(FINDLE_BUNDLE_PREFIX).badge-image.due-soon
             UTTypeDescription: Findle Due Soon Badge
             UTTypeConformsTo: [com.apple.icon-decoration.badge, com.apple.icon-decoration-position.trailing-bottom]
@@ -411,6 +415,10 @@ targets:
               BadgeImageType: $(FINDLE_BUNDLE_PREFIX).badge-image.new
               Category: Badge
               Label: New
+            - Identifier: $(FINDLE_BUNDLE_PREFIX).badge.updated
+              BadgeImageType: $(FINDLE_BUNDLE_PREFIX).badge-image.updated
+              Category: Badge
+              Label: Updated
             - Identifier: $(FINDLE_BUNDLE_PREFIX).badge.completed
               BadgeImageType: com.apple.icon-decoration.badge.checkmark
               Category: Badge
@@ -453,6 +461,13 @@ targets:
             - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.mark-not-done
               NSExtensionFileProviderActionName: Mark as Not Done
               NSExtensionFileProviderActionActivationRule: 'SUBQUERY(fileproviderItems, $item, $item.userInfo.completion == "done").@count > 0'
+            # Files Moodle replaced after the user downloaded them keep their previous version.
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.show-previous-version
+              NSExtensionFileProviderActionName: Show Previous Version
+              NSExtensionFileProviderActionActivationRule: 'fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.previous == YES).@count == 1'
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.discard-previous-version
+              NSExtensionFileProviderActionName: Discard Previous Version
+              NSExtensionFileProviderActionActivationRule: 'SUBQUERY(fileproviderItems, $item, $item.userInfo.previous == YES).@count > 0'
             - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.show-in-findle
               NSExtensionFileProviderActionName: Show in Findle
               NSExtensionFileProviderActionActivationRule: 'fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.moodle == YES).@count == 1'

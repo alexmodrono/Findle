@@ -420,6 +420,36 @@ final class SyncEngineCourseScopeTests: XCTestCase {
         XCTAssertNotNil(files["Lab safety.scorm"]?.remoteURL)
     }
 
+        func testADownloadedFileMoodleReplacesIsOfferedForKeepingFirst() async throws {
+        let site = MoodleSite(id: "site-1", displayName: "Example", baseURL: URL(string: "https://moodle.example.edu")!)
+        let course = MoodleCourse(id: 101, shortName: "C101", fullName: "Course 101", siteID: site.id)
+        func snapshot(_ modified: Int) -> String {
+            #"[{"id":10,"section":1,"modules":[{"id":301,"modname":"resource","contents":[{"type":"file","filename":"slides.pdf","filesize":20,"timemodified":\#(modified)},{"type":"file","filename":"other.pdf","filesize":20,"timemodified":\#(modified)}]}]}]"#
+        }
+        let replaced = ReplacedItems()
+        func engine(_ json: String) -> SyncEngine {
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [CourseSnapshotURLProtocol.self]
+            configuration.httpAdditionalHeaders = ["X-Test-Course-Snapshot": json]
+            return SyncEngine(provider: MoodleClient(session: URLSession(configuration: configuration)), database: database) {
+                await replaced.add($0)
+            }
+        }
+        try await engine(snapshot(1)).syncCourse(site: site, token: AuthToken(token: "t"), course: course)
+        var slides = try XCTUnwrap(database.fetchItems(courseID: course.id, siteID: site.id).first { $0.filename == "slides.pdf" })
+        slides.syncState = .materialized
+        try database.saveItems([slides])
+
+        try await engine(snapshot(1)).syncCourse(site: site, token: AuthToken(token: "t"), course: course)
+        let unchanged = await replaced.items
+        XCTAssertTrue(unchanged.isEmpty, "Nothing is replaced when Moodle didn't change the file")
+
+        try await engine(snapshot(2)).syncCourse(site: site, token: AuthToken(token: "t"), course: course)
+        let offered = await replaced.items
+        XCTAssertEqual(offered.map(\.filename), ["slides.pdf"], "Only the downloaded file; the other was never on this Mac")
+        XCTAssertEqual(offered.first?.contentVersion, "1", "It is offered as the version the user had")
+    }
+
         func testSyncCourseOnlyDiffsItemsFromCurrentCourse() async throws {
         let site = MoodleSite(
             id: "site-1",
@@ -826,4 +856,9 @@ private final class CourseSnapshotURLProtocol: URLProtocol {
         }
         return String(decoding: data, as: UTF8.self)
     }
+}
+
+private actor ReplacedItems {
+    var items: [LocalItem] = []
+    func add(_ new: [LocalItem]) { items += new }
 }

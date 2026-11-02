@@ -26,12 +26,14 @@ public struct ItemBadges: OptionSet, Sendable, Codable, Hashable {
     /// Not drawn: the activity uses manual completion, so Finder can offer
     /// Mark as Done or Mark as Not Done.
     public static let manualCompletion = ItemBadges(rawValue: 1 << 4)
+    /// Moodle replaced a file the user had downloaded; the previous version is kept.
+    public static let updated = ItemBadges(rawValue: 1 << 5)
 
     /// How far ahead an assignment counts as due soon.
     public static let dueSoonWindow: TimeInterval = 3 * 24 * 60 * 60
 
     /// Finder shows one badge per item, so the most pressing one goes first.
-    public static let priority: [ItemBadges] = [.dueSoon, .new, .completed, .kept]
+    public static let priority: [ItemBadges] = [.dueSoon, .new, .updated, .completed, .kept]
 
     /// The badges in the order Finder should consider them.
     public var ordered: [ItemBadges] {

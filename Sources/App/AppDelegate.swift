@@ -90,6 +90,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 await state.openFileProviderInFinder(selecting: state.courses.first { $0.id == courseID })
             }
         }
+        for request in urls.compactMap(FindleLinks.previousVersionRequest(in:)) {
+            if request.discard { state.discardPreviousVersion(itemID: request.itemID) } else { state.openPreviousVersion(itemID: request.itemID) }
+        }
         if urls.contains(FindleLinks.settings) { showSettings() }
         if urls.contains(FindleLinks.reconnect) { showSetup() }
         for url in urls where url.scheme == "findle" && url.host == "sync" {

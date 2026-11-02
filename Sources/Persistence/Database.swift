@@ -51,7 +51,7 @@ public final class Database: @unchecked Sendable {
             .path
     }
 
-    public static let schemaVersion = 23
+    public static let schemaVersion = 24
 
     /// Every column Finder shows, so changing one reports the item to Finder.
     private static let itemsBumpAfterUpdateTrigger = """
@@ -517,6 +517,19 @@ public final class Database: @unchecked Sendable {
         // When a sync brought each item in (or replaced its content) and when the
         // user last opened it. Kept apart from items so syncs rewriting a row
         // don't lose it and Finder isn't told about changes it doesn't show.
+        // The version of a file the user had before Moodle replaced it (FI-15).
+        // The copy lives in the app's container; this records where.
+        try executeUnsafe("""
+            CREATE TABLE IF NOT EXISTS previous_versions (
+                item_id TEXT PRIMARY KEY,
+                site_id TEXT NOT NULL,
+                course_id INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                replaced_at REAL NOT NULL
+            )
+        """)
+
         // Activity completion on Moodle, by course module. Fetched again with
         // the coursework, so recovery doesn't need to keep it.
         try executeUnsafe("""
@@ -892,6 +905,11 @@ public final class Database: @unchecked Sendable {
         if currentVersion < 22 {
             // v21 -> v22: activity_completion, created above. Filled by the next coursework refresh.
             logger.info("Migrated database schema to version 22 (activity completion)")
+        }
+
+        if currentVersion < 24 {
+            // v23 -> v24: previous_versions, created above.
+            logger.info("Migrated database schema to version 24 (previous versions)")
         }
 
         if currentVersion < 23 {
@@ -1821,6 +1839,12 @@ extension Database {
             return parent.remoteID != row.remoteID || parent.id.hasPrefix("section-") || parent.id.hasPrefix("course-")
         }
 
+        let previous = try prepareStatement("SELECT item_id FROM previous_versions WHERE site_id = ?")
+        defer { sqlite3_finalize(previous) }
+        sqlite3_bind_text(previous, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        var updatedIDs = Set<String>()
+        while sqlite3_step(previous) == SQLITE_ROW { updatedIDs.insert(String(cString: sqlite3_column_text(previous, 0))) }
+
         let parents = Dictionary(rows.map { ($0.id, $0.parentID) }, uniquingKeysWith: { first, _ in first })
         var newIDs = Set<String>()
         for row in rows where row.isNew && !row.isLocal {
@@ -1839,6 +1863,7 @@ extension Database {
                 if newIDs.contains(row.id) { badges.insert(.new) }
                 if row.isPinned { badges.insert(.kept) }
                 if row.id.hasPrefix("assign-"), dueSoon.contains([row.courseID, row.remoteID]) { badges.insert(.dueSoon) }
+                if updatedIDs.contains(row.id) { badges.insert(.updated) }
                 if let state = completionByModule[[row.courseID, row.remoteID]], isActivityItem(row) {
                     if state.complete { badges.insert(.completed) }
                     if state.manual { badges.insert(.manualCompletion) }
@@ -2559,6 +2584,81 @@ extension Database {
             guard status == SQLITE_DONE else {
                 throw FindleError.databaseError(detail: "Failed to update item pinned state")
             }
+        }
+    }
+
+    /// Records the kept copy of a file's previous version, replacing an older one.
+    /// Returns the path of the copy it replaced, which the caller removes.
+    @discardableResult
+    public func savePreviousVersion(itemID: String, siteID: String, courseID: Int, path: String, size: Int64,
+                                    replacedAt: Date = Date()) throws -> String? {
+        try queue.sync {
+            var replaced: String?
+            try transactionUnsafe {
+                let old = try prepareStatement("SELECT path FROM previous_versions WHERE item_id = ?")
+                defer { sqlite3_finalize(old) }
+                sqlite3_bind_text(old, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                if sqlite3_step(old) == SQLITE_ROW { replaced = sqlite3_column_text(old, 0).map { String(cString: $0) } }
+                let insert = try prepareStatement("""
+                    INSERT OR REPLACE INTO previous_versions (item_id, site_id, course_id, path, size, replaced_at) VALUES (?, ?, ?, ?, ?, ?)
+                    """)
+                defer { sqlite3_finalize(insert) }
+                sqlite3_bind_text(insert, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(insert, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_int64(insert, 3, Int64(courseID))
+                sqlite3_bind_text(insert, 4, (path as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_int64(insert, 5, size)
+                sqlite3_bind_double(insert, 6, replacedAt.timeIntervalSince1970)
+                guard sqlite3_step(insert) == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to record previous version") }
+                _ = try refreshFinderStateUnsafe(siteID: siteID, now: Date())
+            }
+            return replaced == path ? nil : replaced
+        }
+    }
+
+    /// Where the kept previous version of an item is, if there is one.
+    public func previousVersionPath(itemID: String) throws -> String? {
+        try queue.sync {
+            let stmt = try prepareStatement("SELECT path FROM previous_versions WHERE item_id = ?")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+            return sqlite3_column_text(stmt, 0).map { String(cString: $0) }
+        }
+    }
+
+    /// Forgets an item's previous version (the user dismissed it). Returns the
+    /// path of the copy, which the caller removes.
+    @discardableResult
+    public func discardPreviousVersion(itemID: String, siteID: String) throws -> String? {
+        try queue.sync {
+            var path: String?
+            try transactionUnsafe {
+                let read = try prepareStatement("SELECT path FROM previous_versions WHERE item_id = ? AND site_id = ?")
+                defer { sqlite3_finalize(read) }
+                sqlite3_bind_text(read, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(read, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                if sqlite3_step(read) == SQLITE_ROW { path = sqlite3_column_text(read, 0).map { String(cString: $0) } }
+                let delete = try prepareStatement("DELETE FROM previous_versions WHERE item_id = ? AND site_id = ?")
+                defer { sqlite3_finalize(delete) }
+                sqlite3_bind_text(delete, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(delete, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                guard sqlite3_step(delete) == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to discard previous version") }
+                _ = try refreshFinderStateUnsafe(siteID: siteID, now: Date())
+            }
+            return path
+        }
+    }
+
+    /// What a course's kept previous versions take on this Mac.
+    public func previousVersionBytes(courseID: Int, siteID: String) throws -> Int64 {
+        try queue.sync {
+            let stmt = try prepareStatement("SELECT COALESCE(SUM(size), 0) FROM previous_versions WHERE course_id = ? AND site_id = ?")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int64(stmt, 1, Int64(courseID))
+            sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+            return sqlite3_column_int64(stmt, 0)
         }
     }
 

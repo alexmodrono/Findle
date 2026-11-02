@@ -36,6 +36,24 @@ public enum FindleLinks {
     /// Start a sync in the background (the Control Center control).
     public static let sync = URL(string: "\(scheme)://sync")!
 
+    /// Open, or discard, the previous version of a file Moodle replaced. The
+    /// copy is in the app's container, so the app does both.
+    public static func previousVersion(itemID: String, discard: Bool = false) -> URL? {
+        var components = URLComponents()
+        components.scheme = scheme
+        components.host = discard ? "discard-previous" : "previous"
+        components.queryItems = [URLQueryItem(name: "item", value: itemID)]
+        return components.url
+    }
+
+    /// The item of a previous-version link, and whether it discards.
+    public static func previousVersionRequest(in url: URL) -> (itemID: String, discard: Bool)? {
+        guard url.scheme == scheme, url.host == "previous" || url.host == "discard-previous",
+              let item = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "item" })?.value
+        else { return nil }
+        return (item, url.host == "discard-previous")
+    }
+
     /// Sign in again after the session expired (Finder's Reconnect sheet).
     public static let reconnect = URL(string: "\(scheme)://reconnect")!
 

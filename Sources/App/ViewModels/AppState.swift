@@ -838,7 +838,7 @@ final class AppState: ObservableObject {
     func activateAfterOnboarding() {
         guard !isDatabaseTransitioning else { return }
         guard let site = currentSite, currentToken != nil, let db = database else { return }
-        if syncEngine == nil { syncEngine = SyncEngine(provider: moodleClient, database: db) }
+        if syncEngine == nil { syncEngine = makeSyncEngine(database: db) }
 
         do {
             courses = try db.fetchCourses(siteID: site.id)
@@ -895,7 +895,7 @@ final class AppState: ObservableObject {
             if let shared = await adoptSharedDatabaseWithRetry(siteID: site.id, seedFrom: database) {
                 guard sessionWork.isCurrent(lease), !Task.isCancelled else { return }
                 database = shared
-                syncEngine = SyncEngine(provider: moodleClient, database: shared)
+                syncEngine = makeSyncEngine(database: shared)
             }
         } catch {
             guard sessionWork.isCurrent(lease), !Task.isCancelled else { return }
@@ -2202,6 +2202,83 @@ final class AppState: ObservableObject {
             attempts: (try? database.fetchQuizAttempts(siteID: site.id)) ?? [], now: now)
     }
 
+    private func makeSyncEngine(database: Database) -> SyncEngine {
+        SyncEngine(provider: moodleClient, database: database) { [weak self] items in
+            await self?.keepPreviousVersions(items, database: database)
+        }
+    }
+
+    /// Where the previous versions of replaced files are kept (FI-15).
+    private nonisolated static var previousVersionsDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Findle/Previous Versions", isDirectory: true)
+    }
+
+    /// Copies files the user downloaded before Moodle's new version replaces
+    /// them. Only files that are fully on this Mac are copied, so reading them
+    /// never downloads anything.
+    func keepPreviousVersions(_ items: [LocalItem], database: Database) async {
+        guard let site = currentSite else { return }
+        let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: site.id)),
+                                          displayName: site.displayName)
+        guard let manager = NSFileProviderManager(for: domain) else { return }
+        let directory = Self.previousVersionsDirectory.appendingPathComponent(site.id, isDirectory: true)
+        for item in items where item.siteID == site.id {
+            guard let url = await Self.userVisibleFileProviderURL(using: manager, for: NSFileProviderItemIdentifier(item.id)).url else { continue }
+            let access = url.startAccessingSecurityScopedResource()
+            defer { if access { url.stopAccessingSecurityScopedResource() } }
+            let status = try? url.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey]).ubiquitousItemDownloadingStatus
+            guard status == .current else { continue }
+            let name = (item.filename as NSString).deletingPathExtension + " (previous)"
+                + ((item.filename as NSString).pathExtension.isEmpty ? "" : "." + (item.filename as NSString).pathExtension)
+            let destination = directory.appendingPathComponent(UUID().uuidString, isDirectory: true).appendingPathComponent(name)
+            var copyError: Error?
+            var coordinationError: NSError?
+            NSFileCoordinator().coordinate(readingItemAt: url, options: .withoutChanges, error: &coordinationError) { readable in
+                do {
+                    try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try FileManager.default.copyItem(at: readable, to: destination)
+                } catch { copyError = error }
+            }
+            if let failure = copyError ?? coordinationError {
+                logger.warning("Could not keep the previous version of a file: \(DiagnosticFailure(failure).summary, privacy: .public)")
+                continue
+            }
+            let size = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? item.fileSize
+            do {
+                if let older = try database.savePreviousVersion(itemID: item.id, siteID: site.id, courseID: item.courseID,
+                                                                 path: destination.path, size: size) {
+                    try? FileManager.default.removeItem(at: URL(fileURLWithPath: older).deletingLastPathComponent())
+                }
+            } catch {
+                try? FileManager.default.removeItem(at: destination.deletingLastPathComponent())
+                logger.warning("Could not record a previous version: \(DiagnosticFailure(error).summary, privacy: .public)")
+            }
+        }
+    }
+
+    /// Show Previous Version: opens the kept copy in its default app.
+    func openPreviousVersion(itemID: String) {
+        guard let path = try? database?.previousVersionPath(itemID: itemID) else {
+            errorMessage = "The previous version of this file isn't available any more."
+            return
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+    }
+
+    /// Discard Previous Version: removes the kept copy and the Updated badge.
+    func discardPreviousVersion(itemID: String) {
+        guard let database, let site = currentSite else { return }
+        do {
+            if let path = try database.discardPreviousVersion(itemID: itemID, siteID: site.id) {
+                try? FileManager.default.removeItem(at: URL(fileURLWithPath: path).deletingLastPathComponent())
+            }
+            signalFileProviderChanges(for: site)
+        } catch {
+            errorMessage = "Could not discard the previous version: \(error.localizedDescription)"
+        }
+    }
+
     /// The course's assignments and quizzes not yet due, for the companion.
     func companionDeadlines(for course: MoodleCourse) -> [CompanionDeadline] {
         guard let database, currentSite?.id == course.siteID else { return [] }
@@ -2473,7 +2550,7 @@ final class AppState: ObservableObject {
                 lastUsableDatabase = handle
                 self.database = handle
                 self.diagnosticDatabasePaths.insert(handle.filePath)
-                self.syncEngine = SyncEngine(provider: self.moodleClient, database: handle)
+                self.syncEngine = self.makeSyncEngine(database: handle)
                 // The original journal may disappear with its provider domain.
                 // Carry the attempt's start event to every replacement handle.
                 if let journal = DiagnosticJournal(databasePath: handle.filePath) {
@@ -2577,7 +2654,7 @@ final class AppState: ObservableObject {
         currentToken = token
         self.accounts = accounts
         sites = [site]
-        syncEngine = SyncEngine(provider: moodleClient, database: activeDatabase)
+        syncEngine = makeSyncEngine(database: activeDatabase)
         currentScreen = .workspace
 
         do {
@@ -2609,7 +2686,7 @@ final class AppState: ObservableObject {
                let sharedDatabase = await self.adoptSharedDatabaseWithRetry(siteID: site.id, seedFrom: sourceDatabase) {
                 guard self.sessionWork.isCurrent(lease) else { return }
                 self.database = sharedDatabase
-                self.syncEngine = SyncEngine(provider: self.moodleClient, database: sharedDatabase)
+                self.syncEngine = self.makeSyncEngine(database: sharedDatabase)
             }
             guard self.sessionWork.isCurrent(lease), self.incompatibleDatabaseError == nil else { return }
 

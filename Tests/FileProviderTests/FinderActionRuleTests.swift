@@ -17,6 +17,8 @@ final class FinderActionRuleTests: XCTestCase {
         case showInFindle = "show-in-findle"
         case markDone = "mark-done"
         case markNotDone = "mark-not-done"
+        case showPreviousVersion = "show-previous-version"
+        case discardPreviousVersion = "discard-previous-version"
     }
 
     private var rules: [Action: NSPredicate] = [:]
@@ -108,7 +110,8 @@ final class FinderActionRuleTests: XCTestCase {
     }
 
     func testItemsThatHaveNotPublishedTheirStateKeepEveryAction() {
-        XCTAssertEqual(visibleActions(for: [UnpublishedItem()]), Set(Action.allCases).subtracting([.markDone, .markNotDone]),
+        XCTAssertEqual(visibleActions(for: [UnpublishedItem()]),
+                       Set(Action.allCases).subtracting([.markDone, .markNotDone, .showPreviousVersion, .discardPreviousVersion]),
                        "Finder may still hold items from before Findle published their state; completion needs it")
     }
 
@@ -151,7 +154,14 @@ final class FinderActionRuleTests: XCTestCase {
         XCTAssertTrue(visibleActions(for: [item("file-a-1")]).isDisjoint(with: [.markDone, .markNotDone]))
     }
 
-    func testSheetsOpenOnlyOnTheirCourseOrAssignment() throws {
+    func testOnlyUpdatedFilesOfferTheirPreviousVersion() {
+        let updated = FileProviderItem(localItem: LocalItem(id: "file-a-1", parentID: "course-a-1", siteID: "a", courseID: 1,
+                                                            remoteID: 7, filename: "a.pdf", badges: .updated))
+        XCTAssertTrue(visibleActions(for: [updated]).isSuperset(of: [.showPreviousVersion, .discardPreviousVersion]))
+        XCTAssertTrue(visibleActions(for: [item("file-a-2")]).isDisjoint(with: [.showPreviousVersion, .discardPreviousVersion]))
+    }
+
+        func testSheetsOpenOnlyOnTheirCourseOrAssignment() throws {
         let plistURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Resources/Info/FinderUI-Info.plist")

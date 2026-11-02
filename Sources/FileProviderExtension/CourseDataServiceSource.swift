@@ -106,7 +106,8 @@ private final class CourseDataExport: NSObject, CourseDataSheetsProtocol, @unche
                 course: course, teachers: try database.fetchCourseTeachers(courseID: courseID, siteID: siteID),
                 outline: try database.fetchCourseOutline(courseID: courseID, siteID: siteID),
                 lastSync: try database.fetchSyncCursor(courseID: courseID, siteID: siteID)?.lastSyncDate,
-                items: try database.fetchItems(courseID: courseID, siteID: siteID))
+                items: try database.fetchItems(courseID: courseID, siteID: siteID),
+                keptPreviousBytes: try database.previousVersionBytes(courseID: courseID, siteID: siteID))
         }
     }
 

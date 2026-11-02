@@ -149,6 +149,21 @@ final class ItemBadgeTests: XCTestCase {
         XCTAssertEqual(try badges(assignmentFolder), [], "Completion changes made on Moodle are followed")
     }
 
+        func testAKeptPreviousVersionMarksTheFileUpdatedUntilDiscarded() throws {
+        XCTAssertNil(try database.savePreviousVersion(itemID: "slides", siteID: site, courseID: 1, path: "/tmp/a/slides (previous).pdf", size: 300))
+        XCTAssertEqual(try badges("slides"), .updated)
+        XCTAssertEqual(try database.previousVersionBytes(courseID: 1, siteID: site), 300, "It counts in the course's storage")
+
+        XCTAssertEqual(try database.savePreviousVersion(itemID: "slides", siteID: site, courseID: 1, path: "/tmp/b/slides (previous).pdf",
+                                                        size: 200), "/tmp/a/slides (previous).pdf",
+                       "A newer previous version replaces the older copy, which the caller removes")
+        XCTAssertEqual(try database.previousVersionPath(itemID: "slides"), "/tmp/b/slides (previous).pdf")
+
+        XCTAssertEqual(try database.discardPreviousVersion(itemID: "slides", siteID: site), "/tmp/b/slides (previous).pdf")
+        XCTAssertEqual(try badges("slides"), [])
+        XCTAssertNil(try database.previousVersionPath(itemID: "slides"))
+    }
+
         func testDueSoonComesFirstBecauseFinderShowsOneBadge() {
         XCTAssertEqual(ItemBadges([.kept, .new, .dueSoon, .completed, .manualCompletion]).ordered, [.dueSoon, .new, .completed, .kept])
     }

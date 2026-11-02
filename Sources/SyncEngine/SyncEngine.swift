@@ -32,10 +32,17 @@ public actor SyncEngine {
         }
     }
 
-    public init(provider: LMSProvider, database: Database) {
+    /// `willReplaceDownloads` runs before a course commits, with the downloaded
+    /// files whose content Moodle replaced, so the app can keep the version the
+    /// user had (FI-15).
+    public init(provider: LMSProvider, database: Database,
+                willReplaceDownloads: (@Sendable ([LocalItem]) async -> Void)? = nil) {
         self.provider = provider
         self.database = database
+        self.willReplaceDownloads = willReplaceDownloads
     }
+
+    private let willReplaceDownloads: (@Sendable ([LocalItem]) async -> Void)?
 
     // MARK: - Course Sync
 
@@ -328,6 +335,16 @@ public actor SyncEngine {
 
         allItems = Self.settleDates(allItems, existing: existingItems, now: Date())
         let changes = diffItems(existing: existingItems, incoming: allItems)
+
+        // Keep what the user downloaded before the new version replaces it.
+        let existingByID = Dictionary(existingItems.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let replaced = changes.modified.compactMap { item -> LocalItem? in
+            guard let old = existingByID[item.id], !old.isDirectory, old.syncState == .materialized,
+                  old.contentVersion != nil, old.contentVersion != item.contentVersion || old.fileSize != item.fileSize,
+                  !Self.becomesWebArchive(existing: old, incoming: item) else { return nil }
+            return old
+        }
+        if !replaced.isEmpty, let willReplaceDownloads { await willReplaceDownloads(replaced) }
 
         try Task.checkCancellation()
 

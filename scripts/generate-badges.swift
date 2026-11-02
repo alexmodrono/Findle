@@ -10,7 +10,7 @@
 import AppKit
 import CoreGraphics
 
-enum Kind { case newDot, clock }
+enum Kind { case newDot, clock, updated }
 
 func render(_ kind: Kind, size: Int) -> Data {
     let s = CGFloat(size)
@@ -39,6 +39,20 @@ func render(_ kind: Kind, size: Int) -> Data {
         ctx.move(to: c); ctx.addLine(to: CGPoint(x: c.x, y: c.y + r * 0.58))
         ctx.move(to: c); ctx.addLine(to: CGPoint(x: c.x + r * 0.42, y: c.y - r * 0.12))
         ctx.strokePath()
+    case .updated:
+        ctx.setFillColor(CGColor(srgbRed: 0.2, green: 0.78, blue: 0.35, alpha: 1)) // systemGreen
+        ctx.fillEllipse(in: inner)
+        let c = CGPoint(x: s / 2, y: s / 2)
+        let r = inner.width / 2
+        // An upward arrow: a newer version replaced this one.
+        ctx.setStrokeColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        ctx.setLineCap(.round)
+        ctx.setLineJoin(.round)
+        ctx.setLineWidth(max(1, r * 0.2))
+        ctx.move(to: CGPoint(x: c.x, y: c.y - r * 0.5)); ctx.addLine(to: CGPoint(x: c.x, y: c.y + r * 0.5))
+        ctx.move(to: CGPoint(x: c.x - r * 0.38, y: c.y + r * 0.12)); ctx.addLine(to: CGPoint(x: c.x, y: c.y + r * 0.5))
+        ctx.addLine(to: CGPoint(x: c.x + r * 0.38, y: c.y + r * 0.12))
+        ctx.strokePath()
     }
     let image = ctx.makeImage()!
     let rep = NSBitmapImageRep(cgImage: image)
@@ -46,7 +60,7 @@ func render(_ kind: Kind, size: Int) -> Data {
 }
 
 let out = CommandLine.arguments[1]
-for (kind, name) in [(Kind.newDot, "NewBadge"), (Kind.clock, "DueSoonBadge")] {
+for (kind, name) in [(Kind.newDot, "NewBadge"), (Kind.clock, "DueSoonBadge"), (Kind.updated, "UpdatedBadge")] {
     let dir = "\(out)/\(name).iconset"
     try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
     for base in [16, 32, 128, 256, 512] {

@@ -19,6 +19,8 @@ extension FileProviderExtension: NSFileProviderCustomAction {
     private static let keepCourseOfflineIdentifier = BundleIdentifiers.actionKeepCourseOffline
     private static let showInFindleIdentifier = BundleIdentifiers.actionShowInFindle
     private static let markDoneIdentifier = BundleIdentifiers.actionMarkDone
+    private static let showPreviousIdentifier = BundleIdentifiers.actionShowPreviousVersion
+    private static let discardPreviousIdentifier = BundleIdentifiers.actionDiscardPreviousVersion
     private static let markNotDoneIdentifier = BundleIdentifiers.actionMarkNotDone
     private static let removeDownloadIdentifier = BundleIdentifiers.actionRemoveDownload
     private static let syncNowIdentifier = BundleIdentifiers.actionSyncNow
@@ -159,6 +161,14 @@ extension FileProviderExtension: NSFileProviderCustomAction {
             }
             logger.info("Showing course \(localItem.courseID, privacy: .public) in Findle")
             NSWorkspace.shared.open(url)
+            completionHandler(nil)
+
+        case Self.showPreviousIdentifier, Self.discardPreviousIdentifier:
+            // The copies live in the app's container, so the app opens or removes them.
+            let discard = actionIdentifier.rawValue == Self.discardPreviousIdentifier
+            for identifier in (discard ? itemIdentifiers : Array(itemIdentifiers.prefix(1))) {
+                if let url = FindleLinks.previousVersion(itemID: identifier.rawValue, discard: discard) { NSWorkspace.shared.open(url) }
+            }
             completionHandler(nil)
 
         case Self.markDoneIdentifier, Self.markNotDoneIdentifier:

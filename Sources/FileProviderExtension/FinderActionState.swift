@@ -24,6 +24,8 @@ enum FinderActionState {
     static let completionKey = "completion"
     /// An assignment's folder, which has Assignment Details.
     static let assignmentKey = "assignment"
+    /// The file keeps the version Moodle replaced (FI-15).
+    static let previousKey = "previous"
 
     enum Kind: String {
         case root, course, section, folder, file
@@ -40,7 +42,8 @@ enum FinderActionState {
             // Moodle files can be downloaded again, so only they count as kept.
             keptKey: isMoodleItem && item.isPinned,
             personalKey: isUserItem(item),
-            assignmentKey: isMoodleItem && item.id.hasPrefix("assign-")
+            assignmentKey: isMoodleItem && item.id.hasPrefix("assign-"),
+            previousKey: isMoodleItem && item.badges.contains(.updated)
         ]
         if isMoodleItem, item.badges.contains(.manualCompletion) {
             info[completionKey] = item.badges.contains(.completed) ? "done" : "todo"

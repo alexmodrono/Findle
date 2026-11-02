@@ -13,6 +13,7 @@ enum FinderBadges {
     static let new = NSFileProviderItemDecorationIdentifier("\(BundleIdentifiers.prefix).badge.new")
     static let kept = NSFileProviderItemDecorationIdentifier("\(BundleIdentifiers.prefix).badge.kept")
     static let completed = NSFileProviderItemDecorationIdentifier("\(BundleIdentifiers.prefix).badge.completed")
+    static let updated = NSFileProviderItemDecorationIdentifier("\(BundleIdentifiers.prefix).badge.updated")
 
     static func identifier(for badge: ItemBadges) -> NSFileProviderItemDecorationIdentifier? {
         switch badge {
@@ -20,6 +21,7 @@ enum FinderBadges {
         case .new: new
         case .kept: kept
         case .completed: completed
+        case .updated: updated
         default: nil
         }
     }

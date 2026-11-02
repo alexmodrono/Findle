@@ -35,13 +35,15 @@ extension CourseDataService {
         }
     }
 
+    /// `keptPreviousBytes` are the previous versions Findle keeps for the course.
     public static func courseInfo(course: MoodleCourse, teachers: [String], outline: CourseOutlineSnapshot?,
-                                  lastSync: Date?, items: [LocalItem]) -> CourseInfo {
+                                  lastSync: Date?, items: [LocalItem], keptPreviousBytes: Int64 = 0) -> CourseInfo {
         let sections = (outline?.sections ?? []).filter(\.visible).sorted { $0.sectionNumber < $1.sectionNumber }.map(\.name)
         let onMac = items.filter { !$0.isDirectory && ($0.isLocal || $0.syncState == .materialized) }
         let courseFolder = items.first { $0.id == "course-\(course.siteID)-\(course.id)" }
         return CourseInfo(id: course.id, fullName: course.fullName, shortName: course.shortName, teachers: teachers,
-                          sections: sections, lastSync: lastSync, storageBytes: onMac.reduce(0) { $0 + max($1.fileSize, 0) },
+                          sections: sections, lastSync: lastSync,
+                          storageBytes: onMac.reduce(0) { $0 + max($1.fileSize, 0) } + keptPreviousBytes,
                           keptOffline: courseFolder?.isPinned ?? false)
     }
 
