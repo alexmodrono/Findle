@@ -542,6 +542,7 @@ targets:
       - path: Sources/FileProviderExtension/CourseDataServiceSource.swift
       - path: Sources/FileProviderExtension/ThumbnailFetcher.swift
       - path: Sources/FileProviderExtension/FinderBadges.swift
+      - path: Sources/FileProviderExtension/PageArchiver.swift
     dependencies:
       - target: SharedDomain
       - target: FindleNetworking

@@ -425,6 +425,9 @@ public actor SyncEngine {
             let html = module.contents.first { content in
                 content.type == "file" && content.fileName == "index.html" && (content.filePath ?? "/") == "/"
             }
+            // It is saved as a web archive with its images (FI-18), so its size
+            // counts them and a replaced image is a new version.
+            let files = module.contents.filter { $0.type == "file" }
             let itemID = "page-\(siteID)-\(courseID)-\(module.id)"
             let item = LocalItem(
                 id: itemID,
@@ -432,15 +435,17 @@ public actor SyncEngine {
                 siteID: siteID,
                 courseID: courseID,
                 remoteID: module.id,
-                filename: FileNameSanitizer.sanitize(module.name) + ".html",
+                filename: FileNameSanitizer.sanitize(module.name) + ".webarchive",
                 isDirectory: false,
-                contentType: "text/html",
-                fileSize: html?.fileSize ?? 0,
+                contentType: Self.webArchiveType,
+                fileSize: files.reduce(0) { $0 + max($1.fileSize, 0) },
                 creationDate: html?.timeCreated,
                 modificationDate: html?.timeModified,
                 syncState: .placeholder,
                 remoteURL: html?.fileURL,
-                contentVersion: html?.timeModified.map { String(Int($0.timeIntervalSince1970)) },
+                contentVersion: html.map { _ in
+                    Self.webArchiveVersionPrefix + String(Int(files.compactMap(\.timeModified).max()?.timeIntervalSince1970 ?? 0))
+                },
                 author: Self.author(of: html)
             )
             items.append(item)
@@ -500,6 +505,16 @@ public actor SyncEngine {
             generated[readme.item.id] = readme.data
         }
         return (items, generated)
+    }
+
+    static let webArchiveType = "application/x-webarchive"
+    static let webArchiveVersionPrefix = "webarchive-"
+
+    /// A page from a build that saved it as bare HTML.
+    static func becomesWebArchive(existing: LocalItem, incoming: LocalItem) -> Bool {
+        existing.id.hasPrefix("page-")
+            && existing.contentVersion?.hasPrefix(webArchiveVersionPrefix) != true
+            && incoming.contentVersion?.hasPrefix(webArchiveVersionPrefix) == true
     }
 
     static func briefText(_ brief: MoodleAssignmentBrief) -> String {
@@ -727,9 +742,10 @@ public actor SyncEngine {
                    existing.fileSize != item.fileSize {
                     // Content changed: keep the placeholder reset so it re-downloads.
                     modified.append(item)
-                    // An item getting its first version is Findle learning it,
-                    // not Moodle changing it.
-                    if existing.contentVersion != nil || item.contentVersion == nil {
+                    // An item getting its first version, or a page first saved as a
+                    // web archive, is Findle learning it, not Moodle changing it.
+                    if (existing.contentVersion != nil || item.contentVersion == nil)
+                        && !Self.becomesWebArchive(existing: existing, incoming: item) {
                         arrived.append(item)
                     }
                 } else if existing.filename != item.filename ||

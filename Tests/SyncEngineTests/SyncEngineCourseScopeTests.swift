@@ -274,7 +274,9 @@ final class SyncEngineCourseScopeTests: XCTestCase {
         let welcome = try XCTUnwrap(database.fetchItem(id: page))
         XCTAssertEqual(welcome.modificationDate?.timeIntervalSince1970, 400, "Its images don't date the page")
         XCTAssertEqual(welcome.creationDate?.timeIntervalSince1970, 10)
-        XCTAssertEqual(welcome.fileSize, 50)
+        XCTAssertEqual(welcome.fileSize, 59, "The web archive holds the page and its images")
+        XCTAssertEqual(welcome.filename, "Welcome.webarchive")
+        XCTAssertEqual(welcome.contentVersion, "webarchive-900", "A replaced image is a new version of the page")
         XCTAssertNotNil(welcome.remoteURL)
         let readmeDate = try XCTUnwrap(date(readme))
         XCTAssertEqual(readmeDate, readmeDate.rounded(.down), "A first-seen date reads back unchanged")
@@ -333,6 +335,18 @@ final class SyncEngineCourseScopeTests: XCTestCase {
         let page = try XCTUnwrap(database.fetchItem(id: "page-site-1-101-303"))
         XCTAssertEqual(page.fileSize, 50)
         XCTAssertEqual(page.modificationDate?.timeIntervalSince1970, 400)
+        XCTAssertEqual(try database.fetchNewItems(courseID: course.id, siteID: site.id), [])
+
+        // A page an earlier build saved as HTML downloads again as a web
+        // archive, without counting as new.
+        var html = page
+        html.contentVersion = "400"
+        html.syncState = .materialized
+        try database.saveItems([html])
+        try await engine(snapshot: snapshot).syncCourse(site: site, token: token, course: course)
+        let archive = try XCTUnwrap(database.fetchItem(id: "page-site-1-101-303"))
+        XCTAssertEqual(archive.contentVersion, "webarchive-400")
+        XCTAssertEqual(archive.syncState, .placeholder)
         XCTAssertEqual(try database.fetchNewItems(courseID: course.id, siteID: site.id), [])
     }
 

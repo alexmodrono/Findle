@@ -145,6 +145,12 @@ enum FileDownloader {
             throw NSFileProviderError(.serverUnreachable)
         }
 
+        if PageArchiver.isPage(item) {
+            PageArchiver.start(item: item, pageURL: remoteURL, origin: origin, token: AuthToken(token: tokenString),
+                               database: database, destination: destinationURL, progress: progress, bridge: completionBridge)
+            return
+        }
+
         DownloadCoordinator.shared.start(
             request: authenticatedRequest,
             origin: origin,
@@ -156,7 +162,7 @@ enum FileDownloader {
         )
     }
 
-    fileprivate static func resetToPlaceholderIfNeeded(item: LocalItem, database: Database) {
+    static func resetToPlaceholderIfNeeded(item: LocalItem, database: Database) {
         resetToPlaceholder(item: item, database: database)
     }
 
