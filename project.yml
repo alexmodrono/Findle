@@ -433,7 +433,7 @@ targets:
           # only items that published personal == NO, so personal files and items
           # Finder cached before publishing any state never see them.
           NSFileProviderUserInteractions:
-            - ActivationRule: '(action == "Trash" OR action == "Delete") AND sourceItem.userInfo.personal == NO AND sourceItem.userInfo.kind != "root"'
+            - ActivationRule: '(action == "Trash" OR action == "Delete") AND sourceItem.userInfo.personal == NO AND NOT sourceItem.userInfo.kind IN {"root", "collection", "link"}'
               Alert:
                 LocalizedTitle: Files from Moodle can’t be deleted
                 LocalizedSubTitle: Findle shows each course as it is on Moodle, so its files and folders stay until Moodle removes them. To free space on your Mac, choose Remove Download. The file stays here and downloads again when you open it.
@@ -441,7 +441,7 @@ targets:
                   Cancel: OK
                 RecoveryOptions:
                   Continue: false
-            - ActivationRule: 'action == "Rename" AND sourceItem.userInfo.personal == NO AND sourceItem.userInfo.kind != "root"'
+            - ActivationRule: 'action == "Rename" AND sourceItem.userInfo.personal == NO AND NOT sourceItem.userInfo.kind IN {"root", "collection", "link"}'
               Alert:
                 LocalizedTitle: Files from Moodle can’t be renamed
                 LocalizedSubTitle: Their names come from Moodle and follow any change made there. To keep your own copy under another name, hold Option while you drag it to make a copy, then rename the copy.
@@ -449,10 +449,19 @@ targets:
                   Cancel: OK
                 RecoveryOptions:
                   Continue: false
-            - ActivationRule: '(action == "Move" OR action == "MoveOut") AND sourceItem.userInfo.personal == NO AND sourceItem.userInfo.kind != "root"'
+            - ActivationRule: '(action == "Move" OR action == "MoveOut") AND sourceItem.userInfo.personal == NO AND NOT sourceItem.userInfo.kind IN {"root", "collection", "link"}'
               Alert:
                 LocalizedTitle: Files from Moodle can’t be moved
                 LocalizedSubTitle: They stay where they are in the course on Moodle. To put a copy somewhere else, hold Option while you drag it.
+                LocalizedRecoveryOptions:
+                  Cancel: OK
+                RecoveryOptions:
+                  Continue: false
+            # Collections (Recently Added, Due This Week, Kept Offline) update themselves.
+            - ActivationRule: '(action == "Trash" OR action == "Delete" OR action == "Rename" OR action == "Move" OR action == "MoveOut") AND sourceItem.userInfo.kind IN {"collection", "link"}'
+              Alert:
+                LocalizedTitle: Findle keeps this folder up to date
+                LocalizedSubTitle: It gathers items from your courses, and they leave it on their own, for example once you open a new file or remove a download. The items themselves stay in their courses.
                 LocalizedRecoveryOptions:
                   Cancel: OK
                 RecoveryOptions:

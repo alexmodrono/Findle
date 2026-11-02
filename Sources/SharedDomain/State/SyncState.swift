@@ -142,6 +142,9 @@ public struct LocalItem: Sendable, Codable, Equatable, Identifiable {
     /// The badges Finder shows on the item. The database works them out; a
     /// sync never sets them.
     public var badges: ItemBadges
+    /// For an entry of a Finder collection, the path of the item it links to,
+    /// relative to the entry's folder.
+    public var linkTarget: String?
 
     public init(
         id: String = UUID().uuidString,
@@ -163,7 +166,8 @@ public struct LocalItem: Sendable, Codable, Equatable, Identifiable {
         tagData: Data? = nil,
         isLocal: Bool = false,
         author: String? = nil,
-        badges: ItemBadges = []
+        badges: ItemBadges = [],
+        linkTarget: String? = nil
     ) {
         self.id = id
         self.parentID = parentID
@@ -185,5 +189,6 @@ public struct LocalItem: Sendable, Codable, Equatable, Identifiable {
         self.isLocal = isLocal
         self.author = author
         self.badges = badges
+        self.linkTarget = linkTarget
     }
 }

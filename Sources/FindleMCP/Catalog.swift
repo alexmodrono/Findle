@@ -237,6 +237,7 @@ struct Catalog {
                 // Folders are included: Moodle section/activity names like
                 // "Exámenes Anteriores" are exactly what a user searches for.
                 // The `isDirectory` field lets the agent tell them apart.
+                .filter { !$0.isInFinderCollection }
                 .filter { courseID == nil || $0.courseID == courseID }
                 // Case- and diacritic-insensitive so "examen" matches
                 // "Exámenes" — Moodle coursework is often accented Spanish.

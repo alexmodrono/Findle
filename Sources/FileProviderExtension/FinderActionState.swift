@@ -23,10 +23,12 @@ enum FinderActionState {
 
     enum Kind: String {
         case root, course, section, folder, file
+        /// A Finder collection (Recently Added, Due This Week, Kept Offline) and its entries.
+        case collection, link
     }
 
     static func userInfo(for item: LocalItem) -> [AnyHashable: Any] {
-        let isMoodleItem = !item.isLocal
+        let isMoodleItem = !item.isLocal && !item.isInFinderCollection
         return [
             kindKey: kind(of: item).rawValue,
             moodleKey: isMoodleItem,
@@ -44,6 +46,7 @@ enum FinderActionState {
     /// Course and section folders open the course page in Moodle, so Open Course
     /// Page only adds something for module folders and files.
     static func kind(of item: LocalItem) -> Kind {
+        if item.isInFinderCollection { return item.isDirectory ? .collection : .link }
         guard item.isDirectory else { return .file }
         if item.id.hasPrefix("course-") { return .course }
         if item.id.hasPrefix("section-") { return .section }

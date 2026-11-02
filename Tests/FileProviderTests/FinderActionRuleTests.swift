@@ -134,7 +134,27 @@ final class FinderActionRuleTests: XCTestCase {
         }
     }
 
-    func testPublishedStateReachesTheSystemAsNewMetadata() {
+    func testCollectionsExplainThatTheyUpdateThemselves() {
+        let folder = FileProviderItem(localItem: LocalItem(
+            id: FinderCollection.keptOffline.folderID(siteID: "a"), siteID: "a", courseID: 0, remoteID: 0,
+            filename: "Kept Offline", isDirectory: true))
+        let entry = FileProviderItem(localItem: LocalItem(
+            id: FinderCollection.keptOffline.entryID(siteID: "a", itemID: "file-a-1"),
+            parentID: FinderCollection.keptOffline.folderID(siteID: "a"), siteID: "a", courseID: 0, remoteID: 0,
+            filename: "a.pdf", linkTarget: "../Course/a.pdf"))
+        for item in [folder, entry] {
+            for action in ["Trash", "Delete", "Rename", "Move", "MoveOut"] {
+                XCTAssertEqual(alert(for: action, on: item), "Findle keeps this folder up to date", action)
+            }
+            XCTAssertEqual(visibleActions(for: [item]), [.syncNow], "Collections offer no Moodle actions")
+        }
+        XCTAssertEqual(entry.contentType, .symbolicLink)
+        XCTAssertEqual(entry.symlinkTargetPath ?? nil, "../Course/a.pdf")
+        XCTAssertEqual(entry.capabilities, [.allowsReading])
+        XCTAssertEqual(folder.capabilities, [.allowsReading, .allowsContentEnumerating], "Nothing can be added by hand")
+    }
+
+        func testPublishedStateReachesTheSystemAsNewMetadata() {
         let published = FileProviderItem(localItem: LocalItem(id: "file-a-1", siteID: "a", courseID: 1, remoteID: 7,
                                                               filename: "a.pdf", modificationDate: Date(timeIntervalSince1970: 5)))
         let metadata = String(decoding: published.itemVersion.metadataVersion, as: UTF8.self)

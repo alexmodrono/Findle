@@ -57,6 +57,10 @@ final class FileProviderItem: NSObject, NSFileProviderItem, NSFileProviderItemDe
     }
 
     var capabilities: NSFileProviderItemCapabilities {
+        // Findle keeps collections up to date; nothing goes in or out by hand.
+        if localItem.isInFinderCollection {
+            return localItem.isDirectory ? [.allowsReading, .allowsContentEnumerating] : [.allowsReading]
+        }
         if isUserItem(localItem) {
             var caps: NSFileProviderItemCapabilities = [
                 .allowsReading, .allowsWriting, .allowsRenaming,
@@ -85,6 +89,9 @@ final class FileProviderItem: NSObject, NSFileProviderItem, NSFileProviderItemDe
         if localItem.isDirectory {
             return .folder
         }
+        if localItem.linkTarget != nil {
+            return .symbolicLink
+        }
         if let mimeType = localItem.contentType {
             return UTType(mimeType: mimeType) ?? inferType()
         }
@@ -103,8 +110,14 @@ final class FileProviderItem: NSObject, NSFileProviderItem, NSFileProviderItemDe
         localItem.modificationDate
     }
 
+    /// A collection entry links to the real item.
+    var symlinkTargetPath: String? {
+        localItem.linkTarget
+    }
+
     var itemVersion: NSFileProviderItemVersion {
-        let contentVersion = localItem.contentVersion ?? "1"
+        // A link's target is its content.
+        let contentVersion = localItem.linkTarget.map { "link-" + Self.digest(Data($0.utf8)) } ?? localItem.contentVersion ?? "1"
         // Renaming, tagging or a new link or author leaves the date alone, so
         // they go in the version for the system to notice them.
         let described = [localItem.filename, moodleLink?.absoluteString ?? "", localItem.author ?? ""].joined(separator: "\u{0}")
@@ -161,7 +174,7 @@ final class FileProviderItem: NSObject, NSFileProviderItem, NSFileProviderItemDe
 
     /// Where the item lives on Moodle, for Get Info's "Where from".
     private var moodleLink: URL? {
-        guard !localItem.isLocal, let baseURL = MoodleSiteLinks.baseURL(siteID: localItem.siteID) else { return nil }
+        guard !localItem.isLocal, !localItem.isInFinderCollection, let baseURL = MoodleSiteLinks.baseURL(siteID: localItem.siteID) else { return nil }
         return MoodleURLBuilder.webURL(baseURL: baseURL, itemID: localItem.id, courseID: localItem.courseID,
                                        remoteID: localItem.remoteID, isDirectory: localItem.isDirectory,
                                        parentID: localItem.parentID)

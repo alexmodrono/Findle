@@ -142,7 +142,7 @@
 		<array>
 			<dict>
 				<key>ActivationRule</key>
-				<string>(action == "Trash" OR action == "Delete") AND sourceItem.userInfo.personal == NO AND sourceItem.userInfo.kind != "root"</string>
+				<string>(action == "Trash" OR action == "Delete") AND sourceItem.userInfo.personal == NO AND NOT sourceItem.userInfo.kind IN {"root", "collection", "link"}</string>
 				<key>Alert</key>
 				<dict>
 					<key>LocalizedRecoveryOptions</key>
@@ -163,7 +163,7 @@
 			</dict>
 			<dict>
 				<key>ActivationRule</key>
-				<string>action == "Rename" AND sourceItem.userInfo.personal == NO AND sourceItem.userInfo.kind != "root"</string>
+				<string>action == "Rename" AND sourceItem.userInfo.personal == NO AND NOT sourceItem.userInfo.kind IN {"root", "collection", "link"}</string>
 				<key>Alert</key>
 				<dict>
 					<key>LocalizedRecoveryOptions</key>
@@ -184,7 +184,7 @@
 			</dict>
 			<dict>
 				<key>ActivationRule</key>
-				<string>(action == "Move" OR action == "MoveOut") AND sourceItem.userInfo.personal == NO AND sourceItem.userInfo.kind != "root"</string>
+				<string>(action == "Move" OR action == "MoveOut") AND sourceItem.userInfo.personal == NO AND NOT sourceItem.userInfo.kind IN {"root", "collection", "link"}</string>
 				<key>Alert</key>
 				<dict>
 					<key>LocalizedRecoveryOptions</key>
@@ -196,6 +196,27 @@
 					<string>They stay where they are in the course on Moodle. To put a copy somewhere else, hold Option while you drag it.</string>
 					<key>LocalizedTitle</key>
 					<string>Files from Moodle can’t be moved</string>
+					<key>RecoveryOptions</key>
+					<dict>
+						<key>Continue</key>
+						<false/>
+					</dict>
+				</dict>
+			</dict>
+			<dict>
+				<key>ActivationRule</key>
+				<string>(action == "Trash" OR action == "Delete" OR action == "Rename" OR action == "Move" OR action == "MoveOut") AND sourceItem.userInfo.kind IN {"collection", "link"}</string>
+				<key>Alert</key>
+				<dict>
+					<key>LocalizedRecoveryOptions</key>
+					<dict>
+						<key>Cancel</key>
+						<string>OK</string>
+					</dict>
+					<key>LocalizedSubTitle</key>
+					<string>It gathers items from your courses, and they leave it on their own, for example once you open a new file or remove a download. The items themselves stay in their courses.</string>
+					<key>LocalizedTitle</key>
+					<string>Findle keeps this folder up to date</string>
 					<key>RecoveryOptions</key>
 					<dict>
 						<key>Continue</key>
