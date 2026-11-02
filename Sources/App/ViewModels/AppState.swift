@@ -100,6 +100,7 @@ final class AppState: ObservableObject {
     }
     private var syncSettingsObserver: NSObjectProtocol?
     private var syncNowObserver: DarwinNotification.Token?
+    private var courseCustomizationObserver: DarwinNotification.Token?
     /// Guards against a burst of "Sync Now" requests (the extension posts twice
     /// when it has to cold-launch the app) turning into overlapping syncs.
     private var lastSyncNowRequest: Date?
@@ -173,6 +174,7 @@ final class AppState: ObservableObject {
             try configureInitialDatabase()
             observeSyncSettings()
             observeSyncNowRequests()
+            observeCourseCustomizationChanges()
             loadAccounts()
         } catch {
             if let incompatible = error as? UnsupportedDatabaseSchemaError { rejectIncompatibleDatabase(incompatible) }
@@ -1174,23 +1176,59 @@ final class AppState: ObservableObject {
 
     // MARK: - Course Customization
 
+    /// Rename `course` in the app and in Finder. Passing `nil`, an empty
+    /// string, or the Moodle name restores the Moodle name.
     func updateCustomFolderName(for course: MoodleCourse, name: String?) {
         guard !isDatabaseTransitioning, let db = database, let site = currentSite,
               course.siteID == site.id else { return }
+        let normalized = course.normalizedCustomName(name)
+        guard normalized != course.customFolderName else { return }
         do {
-            try db.updateCourseCustomFolderName(courseID: course.id, siteID: course.siteID, customName: name)
+            try db.updateCourseCustomFolderName(courseID: course.id, siteID: course.siteID, customName: normalized)
             if let index = courses.firstIndex(where: { $0.id == course.id && $0.siteID == course.siteID }) {
-                courses[index].customFolderName = name
+                courses[index].customFolderName = normalized
             }
 
             // Update the course root item in the items table so the File Provider sees it
-            let courseItemID = "course-\(site.id)-\(course.id)"
             var updatedCourse = course
-            updatedCourse.customFolderName = name
-            try db.updateItemFilename(id: courseItemID, filename: updatedCourse.effectiveFolderName)
+            updatedCourse.customFolderName = normalized
+            try db.updateItemFilename(id: course.rootItemID, filename: updatedCourse.effectiveFolderName)
             signalFileProviderChanges()
         } catch {
             logger.error("Failed to update custom folder name: \(DiagnosticFailure(error).summary, privacy: .public)")
+        }
+    }
+
+    /// The other course whose Finder folder `course` would collide with if it
+    /// were renamed to `proposedName`, if any.
+    func folderNameConflict(for course: MoodleCourse, proposedName: String) -> MoodleCourse? {
+        course.folderNameConflict(forProposedName: proposedName, among: courses)
+    }
+
+    /// Re-read course customizations (names, icons, tags) from the database.
+    ///
+    /// The File Provider extension writes to the same database when the user
+    /// renames or tags a course folder in Finder, so this picks those edits up
+    /// without a network round-trip. Published values are only replaced when
+    /// they actually changed, to avoid needless view invalidation.
+    func refreshCourseCustomizationsFromDatabase() {
+        guard !isDatabaseTransitioning, currentScreen == .workspace,
+              let db = database, let site = currentSite else { return }
+        if let stored = try? db.fetchCourses(siteID: site.id), !stored.isEmpty, stored != courses {
+            courses = stored
+        }
+        if let storedTags = try? db.fetchAllCourseTags(siteID: site.id), storedTags != courseTags {
+            courseTags = storedTags
+        }
+    }
+
+    private func observeCourseCustomizationChanges() {
+        courseCustomizationObserver = DarwinNotification.addObserver(
+            for: BundleIdentifiers.courseCustomizationChangedNotification
+        ) { [weak self] in
+            Task { @MainActor in
+                self?.refreshCourseCustomizationsFromDatabase()
+            }
         }
     }
 
@@ -1246,11 +1284,6 @@ final class AppState: ObservableObject {
         } catch {
             logger.error("Failed to update course sync state: \(DiagnosticFailure(error).summary, privacy: .public)")
         }
-    }
-
-    func fetchCourseTags(for course: MoodleCourse) -> [FinderTag] {
-        guard let db = database else { return [] }
-        return (try? db.fetchCourseTags(courseID: course.id, siteID: course.siteID)) ?? []
     }
 
     /// Group `courses` by their Finder tags for the sidebar and gallery. Returns
@@ -1345,12 +1378,48 @@ final class AppState: ObservableObject {
             courseTags[course.id] = tags.isEmpty ? nil : tags
 
             // Update the course root item's tag data so the File Provider sees it
-            let courseItemID = "course-\(site.id)-\(course.id)"
             let tagData = FinderTag.tagData(from: tags)
-            try db.updateItemTagData(id: courseItemID, tagData: tagData)
+            try db.updateItemTagData(id: course.rootItemID, tagData: tagData)
             signalFileProviderChanges()
         } catch {
             logger.error("Failed to update course tags: \(DiagnosticFailure(error).summary, privacy: .public)")
+        }
+    }
+
+    /// Every tag in use on any course, sorted by name — offered when tagging
+    /// so the same tag keeps one spelling and color across courses.
+    var knownTags: [FinderTag] {
+        FinderTag.distinct(in: courseTags.values)
+    }
+
+    func tags(for course: MoodleCourse) -> [FinderTag] {
+        courseTags[course.id] ?? []
+    }
+
+    func hasTag(_ tag: FinderTag, on course: MoodleCourse) -> Bool {
+        tags(for: course).contains { $0.hasSameName(as: tag) }
+    }
+
+    /// Add `tag` to `course`. If a tag with the same name already exists on
+    /// any course, that tag (with its spelling and color) is used instead.
+    func addTag(_ tag: FinderTag, to course: MoodleCourse) {
+        let trimmedName = tag.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty, !hasTag(tag, on: course) else { return }
+        let canonical = FinderTag.existing(named: trimmedName, in: knownTags)
+            ?? FinderTag(name: trimmedName, color: tag.color)
+        updateCourseTags(for: course, tags: tags(for: course) + [canonical])
+    }
+
+    func removeTag(_ tag: FinderTag, from course: MoodleCourse) {
+        let remaining = tags(for: course).filter { !$0.hasSameName(as: tag) }
+        updateCourseTags(for: course, tags: remaining)
+    }
+
+    func toggleTag(_ tag: FinderTag, on course: MoodleCourse) {
+        if hasTag(tag, on: course) {
+            removeTag(tag, from: course)
+        } else {
+            addTag(tag, to: course)
         }
     }
 

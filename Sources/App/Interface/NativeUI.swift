@@ -1,4 +1,5 @@
 import AppKit
+import SharedDomain
 
 @MainActor
 final class ActionButton: NSButton {
@@ -107,4 +108,42 @@ class NativeFormController: NSViewController {
     }
 
     func buildForm() {}
+}
+
+// MARK: - Tag colors
+
+extension FinderTag.Color {
+    var nsColor: NSColor? {
+        switch self {
+        case .none: nil
+        case .gray: .systemGray
+        case .green: .systemGreen
+        case .purple: .systemPurple
+        case .blue: .systemBlue
+        case .yellow: .systemYellow
+        case .red: .systemRed
+        case .orange: .systemOrange
+        }
+    }
+
+    /// A colored dot for menus and pop-up buttons, drawn as a non-template
+    /// image so it keeps its color, like Finder's own tag menu.
+    var menuSwatch: NSImage {
+        let color = self
+        let image = NSImage(size: NSSize(width: 12, height: 12), flipped: false) { rect in
+            let path = NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1))
+            if let fill = color.nsColor {
+                fill.setFill()
+                path.fill()
+            } else {
+                NSColor.secondaryLabelColor.setStroke()
+                path.lineWidth = 1
+                path.stroke()
+            }
+            return true
+        }
+        image.isTemplate = false
+        image.accessibilityDescription = color.displayName
+        return image
+    }
 }
