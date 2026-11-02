@@ -9,6 +9,7 @@ import OSLog
 import SharedDomain
 import FindleNetworking
 import FindlePersistence
+import FindleSyncEngine
 
 /// The Submit folder of an open assignment is its draft submission (FX-06).
 /// The files dropped there are the user's personal files, kept like any
@@ -22,12 +23,7 @@ actor SubmissionDrafts {
     private var running: Set<String> = []
     private var dirty: Set<String> = []
 
-    static func isSubmitFolder(_ id: String?) -> Bool { id?.hasPrefix("submit-") == true }
-
-    /// The Submit folder of an assignment's folder.
-    static func submitFolderID(siteID: String, courseID: Int, moduleID: Int) -> String {
-        "submit-\(siteID)-\(courseID)-\(moduleID)"
-    }
+    static func isSubmitFolder(_ id: String?) -> Bool { SubmissionUploader.isSubmitFolder(id) }
 
     /// Brings the draft in line with the folder. Changes while an upload runs
     /// are picked up by one more pass, so the last state always wins.
@@ -53,34 +49,12 @@ actor SubmissionDrafts {
     }
 
     private func upload(_ folderID: String, database: Database) async throws {
-        guard let folder = try database.fetchItem(id: folderID),
-              let site = try database.fetchSite(id: folder.siteID),
-              let assignment = try database.fetchAssignments(siteID: folder.siteID)
-                .first(where: { $0.courseID == folder.courseID && $0.moduleID == folder.remoteID }),
-              assignment.acceptsFilesFromFinder else { return }
-        let accountID = try database.fetchAccounts().first { $0.siteID == site.id }?.id ?? site.id
-        guard let tokenValue = try KeychainManager.shared.retrieveToken(forAccount: accountID) else {
+        guard let folder = try database.fetchItem(id: folderID) else { return }
+        let accountID = try database.fetchAccounts().first { $0.siteID == folder.siteID }?.id ?? folder.siteID
+        guard let token = try KeychainManager.shared.retrieveToken(forAccount: accountID) else {
             throw NSFileProviderError(.notAuthenticated)
         }
-        let token = AuthToken(token: tokenValue)
-        let client = MoodleClient()
-        let files = try database.fetchItems(parentID: folderID, siteID: folder.siteID)
-            .filter { isUserItem($0) && !$0.isDirectory && $0.localPath != nil }
-            .sorted { $0.filename.localizedStandardCompare($1.filename) == .orderedAscending }
-        guard !files.isEmpty else {
-            try await client.clearSubmissionFiles(site: site, token: token, assignmentID: assignment.id)
-            logger.info("Cleared the draft submission")
-            return
-        }
-        var draftItemID: Int?
-        for file in files {
-            let data = try Data(contentsOf: URL(fileURLWithPath: file.localPath!))
-            draftItemID = try await client.uploadDraftFile(site: site, token: token, data: data, filename: file.filename,
-                                                           draftItemID: draftItemID).draftItemID
-        }
-        if let draftItemID {
-            try await client.saveSubmission(site: site, token: token, assignmentID: assignment.id, draftItemID: draftItemID)
-            logger.info("Saved a draft submission with \(files.count, privacy: .public) files")
-        }
+        let count = try await SubmissionUploader.saveDraft(folderID: folderID, database: database, token: AuthToken(token: token))
+        logger.info("Saved the draft submission with \(count, privacy: .public) files")
     }
 }

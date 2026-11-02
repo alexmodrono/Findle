@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private lazy var updates = UpdateController()
     private var companion: CompanionWindowController?
     private var settings: SettingsWindowController?
+    private var submission: SubmitWindowController?
     private var onboarding: AirlockWindowController?
     private var subscription: AnyCancellable?
     #if DEBUG
@@ -79,10 +80,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func application(_ application: NSApplication, open urls: [URL]) {
         // Double-clicking a coursework summary in Finder opens it on Moodle (FX-04).
+        // Any other file was shared to Findle to submit (FX-07).
+        var shared: [URL] = []
         for url in urls where url.isFileURL {
-            let access = url.startAccessingSecurityScopedResource()
-            defer { if access { url.stopAccessingSecurityScopedResource() } }
-            if let link = (try? Data(contentsOf: url)).flatMap(CourseworkSummary.decode)?.moodleURL { NSWorkspace.shared.open(link) }
+            let extensionName = url.pathExtension.lowercased()
+            if [CourseworkSummary.assignmentExtension, CourseworkSummary.quizExtension].contains(extensionName) {
+                let access = url.startAccessingSecurityScopedResource()
+                defer { if access { url.stopAccessingSecurityScopedResource() } }
+                if let link = (try? Data(contentsOf: url)).flatMap(CourseworkSummary.decode)?.moodleURL { NSWorkspace.shared.open(link) }
+            } else {
+                shared.append(url)
+            }
+        }
+        if !shared.isEmpty {
+            let controller = SubmitWindowController(state: state, files: shared)
+            controller.onClose = { [weak self] in self?.submission = nil; self?.updateActivationPolicy() }
+            submission = controller
+            controller.present()
         }
         if let courseID = urls.lazy.compactMap(FindleLinks.shownCourse(in:)).last {
             showCourse(courseID)

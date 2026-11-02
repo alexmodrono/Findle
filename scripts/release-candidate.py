@@ -135,6 +135,8 @@ def validate_app(app, version, build, revision, team, symbols):
     owned.append(app / "Contents/PlugIns/FindleFinderUI.appex")
     owned.append(app / "Contents/PlugIns/FindleThumbnails.appex")
     owned.append(app / "Contents/PlugIns/FindleSpotlightImporter.appex")
+    owned.append(app / "Contents/PlugIns/FindleShare.appex")
+    owned.append(app / "Contents/PlugIns/FindleQuickAction.appex")
     owned.append(app / "Contents/PlugIns/FindleWidgets.appex")
     infos = []
     for bundle in owned:

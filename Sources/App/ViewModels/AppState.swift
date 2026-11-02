@@ -2288,6 +2288,42 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Open assignments that take files, for the Submit to Moodle window (FX-07).
+    func submittableAssignments() -> [SubmittableAssignment] {
+        guard let database, let site = currentSite else { return [] }
+        let folders = Set(((try? database.fetchAllItems(siteID: site.id)) ?? []).filter { SubmissionUploader.isSubmitFolder($0.id) }.map(\.id))
+        return SubmittableAssignment.list(assignments: (try? database.fetchAssignments(siteID: site.id)) ?? [],
+                                          courses: courses, siteID: site.id, existingItemIDs: folders)
+    }
+
+    enum SharedSubmissionError: LocalizedError {
+        case notReady
+        var errorDescription: String? { "Findle isn't ready to submit. Open Findle, sync your courses and try again." }
+    }
+
+    /// Puts shared files into the assignment's Submit folder as personal files,
+    /// saves the folder as the draft, and submits only when asked to.
+    func submitShared(files: [URL], to assignment: SubmittableAssignment, forGrading: Bool, acceptStatement: Bool) async throws {
+        guard let database, let site = currentSite, let token = currentToken else { throw SharedSubmissionError.notReady }
+        let directory = try personalFileStore.directory(forParentID: assignment.submitFolderID, siteID: site.id,
+                                                        siteName: site.displayName, database: database)
+        for file in files {
+            let access = file.startAccessingSecurityScopedResource()
+            defer { if access { file.stopAccessingSecurityScopedResource() } }
+            try FileManager.default.copyItem(at: file, to: personalFileStore.uniqueURL(for: file.lastPathComponent, in: directory))
+        }
+        // The reconciler turns the copies into personal files in the Submit folder.
+        await reconcilePersonalFiles()
+        await personalFilesReconcileTask?.value
+        try await SubmissionUploader.saveDraft(folderID: assignment.submitFolderID, database: database, client: moodleClient, token: token)
+        if forGrading {
+            try await moodleClient.submitForGrading(site: site, token: token, assignmentID: assignment.id, acceptStatement: acceptStatement)
+        }
+        signalFileProviderChanges(for: site)
+        trackingRefreshTask?.cancel()
+        trackingRefreshTask = Task { [weak self] in await self?.refreshTracking() }
+    }
+
     /// The course's assignments and quizzes not yet due, for the companion.
     func companionDeadlines(for course: MoodleCourse) -> [CompanionDeadline] {
         guard let database, currentSite?.id == course.siteID else { return [] }

@@ -194,6 +194,7 @@ targets:
       - path: Sources/App/Services/SpotlightIndexer.swift
       - path: Sources/App/Services/NotificationPlanner.swift
       - path: Sources/App/Services/DueThisWeek.swift
+      - path: Sources/App/Services/SharedSubmission.swift
       - path: Sources/App/Services/SessionWorkCoordinator.swift
       - path: Sources/App/Services/ProviderResetCoordinator.swift
     dependencies:
@@ -244,6 +245,12 @@ targets:
         embed: true
         codeSign: true
       - target: FindleSpotlightImporter
+        embed: true
+        codeSign: true
+      - target: FindleShare
+        embed: true
+        codeSign: true
+      - target: FindleQuickAction
         embed: true
         codeSign: true
       - target: FindleMCP
@@ -715,6 +722,74 @@ targets:
               - es.amodrono.findle.assignment-summary
               - es.amodrono.findle.quiz-summary
 
+  # Share › Findle and the Submit to Moodle Quick Action (FX-07). They only hand
+  # files to the app, so they need no App Group, keychain or profile.
+  FindleShare:
+    type: app-extension
+    platform: macOS
+    configFiles:
+      Debug: Config/Debug-Share.xcconfig
+      Nightly: Config/Nightly-Share.xcconfig
+      Release: Config/Release-Share.xcconfig
+    sources:
+      - path: Sources/Share
+      - path: Sources/ShareHandoff
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.share
+        INFOPLIST_FILE: Resources/Info/Share-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/Share.entitlements
+        ENABLE_APP_SANDBOX: YES
+      configs:
+        Nightly:
+          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly.share
+    info:
+      path: Resources/Info/Share-Info.plist
+      properties:
+        CFBundleDisplayName: Findle
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).ShareViewController"
+          NSExtensionAttributes:
+            NSExtensionActivationRule: 'SUBQUERY(extensionItems, $extensionItem, SUBQUERY($extensionItem.attachments, $attachment, ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.file-url").@count >= 1).@count >= 1'
+
+
+  FindleQuickAction:
+    type: app-extension
+    platform: macOS
+    configFiles:
+      Debug: Config/Debug-QuickAction.xcconfig
+      Nightly: Config/Nightly-QuickAction.xcconfig
+      Release: Config/Release-QuickAction.xcconfig
+    sources:
+      - path: Sources/QuickAction
+      - path: Sources/ShareHandoff
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.quick-action
+        INFOPLIST_FILE: Resources/Info/QuickAction-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/QuickAction.entitlements
+        ENABLE_APP_SANDBOX: YES
+      configs:
+        Nightly:
+          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly.quick-action
+    info:
+      path: Resources/Info/QuickAction-Info.plist
+      properties:
+        CFBundleDisplayName: Findle
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.ui-services
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).ActionViewController"
+          NSExtensionAttributes:
+            NSExtensionActivationRule: 'SUBQUERY(extensionItems, $extensionItem, SUBQUERY($extensionItem.attachments, $attachment, ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.file-url").@count >= 1).@count >= 1'
+            NSExtensionServiceAllowsFinderPreviewItem: true
+            NSExtensionServiceAllowsTouchBarItem: false
+            NSExtensionServiceFinderPreviewLabel: Submit to Moodle
+            NSExtensionServiceFinderPreviewIconName: NSShareTemplate
+            NSExtensionServiceRoleType: NSExtensionServiceRoleTypeViewer
+
   # Quick Look for H5P and SCORM packages. Read-only and sandboxed; it needs no
   # App Group or keychain, so release signing needs no provisioning profile.
   FindlePackagePreview:
@@ -848,6 +923,7 @@ targets:
       - target: SharedDomain
       - target: FindleNetworking
       - target: FindlePersistence
+      - target: FindleSyncEngine
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.file-provider-tests
