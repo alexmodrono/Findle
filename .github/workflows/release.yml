@@ -76,10 +76,15 @@ jobs:
           APP_PROVISION_PROFILE_BASE64: ${{ secrets.APP_PROVISION_PROFILE_BASE64 }}
           FILEPROVIDER_PROVISION_PROFILE_BASE64: ${{ secrets.FILEPROVIDER_PROVISION_PROFILE_BASE64 }}
           WIDGETS_PROVISION_PROFILE_BASE64: ${{ secrets.WIDGETS_PROVISION_PROFILE_BASE64 }}
+          FINDERSYNC_PROVISION_PROFILE_BASE64: ${{ secrets.FINDERSYNC_PROVISION_PROFILE_BASE64 }}
         run: |
           # The widget extension reads the App Group, so it needs its own profile.
           if [ -z "$WIDGETS_PROVISION_PROFILE_BASE64" ]; then
             echo "::error::WIDGETS_PROVISION_PROFILE_BASE64 is missing: create a Developer ID profile for es.amodrono.findle.widgets with the App Group"
+            exit 1
+          fi
+          if [ -z "$FINDERSYNC_PROVISION_PROFILE_BASE64" ]; then
+            echo "::error::FINDERSYNC_PROVISION_PROFILE_BASE64 is missing: create a Developer ID profile for es.amodrono.findle.finder-sync with the App Group"
             exit 1
           fi
           PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
@@ -88,18 +93,22 @@ jobs:
           echo -n "$APP_PROVISION_PROFILE_BASE64" | base64 --decode -o "$PROFILES_DIR/app.provisionprofile"
           echo -n "$FILEPROVIDER_PROVISION_PROFILE_BASE64" | base64 --decode -o "$PROFILES_DIR/fileprovider.provisionprofile"
           echo -n "$WIDGETS_PROVISION_PROFILE_BASE64" | base64 --decode -o "$PROFILES_DIR/widgets.provisionprofile"
+          echo -n "$FINDERSYNC_PROVISION_PROFILE_BASE64" | base64 --decode -o "$PROFILES_DIR/findersync.provisionprofile"
 
           APP_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /dev/stdin <<< "$(security cms -D -i "$PROFILES_DIR/app.provisionprofile")")
           FP_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /dev/stdin <<< "$(security cms -D -i "$PROFILES_DIR/fileprovider.provisionprofile")")
           WIDGETS_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /dev/stdin <<< "$(security cms -D -i "$PROFILES_DIR/widgets.provisionprofile")")
+          FINDERSYNC_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /dev/stdin <<< "$(security cms -D -i "$PROFILES_DIR/findersync.provisionprofile")")
 
           mv "$PROFILES_DIR/app.provisionprofile" "$PROFILES_DIR/$APP_UUID.provisionprofile"
           mv "$PROFILES_DIR/fileprovider.provisionprofile" "$PROFILES_DIR/$FP_UUID.provisionprofile"
           mv "$PROFILES_DIR/widgets.provisionprofile" "$PROFILES_DIR/$WIDGETS_UUID.provisionprofile"
+          mv "$PROFILES_DIR/findersync.provisionprofile" "$PROFILES_DIR/$FINDERSYNC_UUID.provisionprofile"
 
           echo "APP_PROFILE_UUID=$APP_UUID" >> "$GITHUB_ENV"
           echo "FP_PROFILE_UUID=$FP_UUID" >> "$GITHUB_ENV"
           echo "WIDGETS_PROFILE_UUID=$WIDGETS_UUID" >> "$GITHUB_ENV"
+          echo "FINDERSYNC_PROFILE_UUID=$FINDERSYNC_UUID" >> "$GITHUB_ENV"
 
       - name: Write signing xcconfig files
         run: |
@@ -127,6 +136,14 @@ jobs:
           CODE_SIGN_IDENTITY = Developer ID Application
           DEVELOPMENT_TEAM = ${{ secrets.TEAM_ID }}
           PROVISIONING_PROFILE = $WIDGETS_PROFILE_UUID
+          OTHER_CODE_SIGN_FLAGS = --keychain $KEYCHAIN_PATH
+          XCCONFIG
+
+          cat >> Config/Release-FinderSync.xcconfig <<XCCONFIG
+          CODE_SIGN_STYLE = Manual
+          CODE_SIGN_IDENTITY = Developer ID Application
+          DEVELOPMENT_TEAM = ${{ secrets.TEAM_ID }}
+          PROVISIONING_PROFILE = $FINDERSYNC_PROFILE_UUID
           OTHER_CODE_SIGN_FLAGS = --keychain $KEYCHAIN_PATH
           XCCONFIG
 
@@ -162,7 +179,7 @@ jobs:
 
       - name: Set version in Info.plist
         run: |
-          for plist in Resources/Info/App-Info.plist Resources/Info/FileProvider-Info.plist Resources/Info/Widgets-Info.plist Resources/Info/PackagePreview-Info.plist Resources/Info/Framework-Info.plist; do
+          for plist in Resources/Info/App-Info.plist Resources/Info/FileProvider-Info.plist Resources/Info/Widgets-Info.plist Resources/Info/PackagePreview-Info.plist Resources/Info/FinderSync-Info.plist Resources/Info/Framework-Info.plist; do
             /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.version.outputs.version }}" "$plist"
             /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" "$plist"
           done
@@ -202,6 +219,8 @@ jobs:
                   <string>${FP_PROFILE_UUID}</string>
                   <key>es.amodrono.findle.widgets</key>
                   <string>${WIDGETS_PROFILE_UUID}</string>
+                  <key>es.amodrono.findle.finder-sync</key>
+                  <string>${FINDERSYNC_PROFILE_UUID}</string>
               </dict>
           </dict>
           </plist>

@@ -234,6 +234,9 @@ targets:
       - target: FindlePackagePreview
         embed: true
         codeSign: true
+      - target: FindleFinderSync
+        embed: true
+        codeSign: true
       - target: FindleMCP
         copy:
           destination: executables
@@ -527,6 +530,46 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
+  # The Findle button for Finder's toolbar. It reads only the snapshot the app
+  # writes to the App Group container and opens findle:// links.
+  FindleFinderSync:
+    type: app-extension
+    platform: macOS
+    configFiles:
+      Debug: Config/Debug-FinderSync.xcconfig
+      Nightly: Config/Nightly-FinderSync.xcconfig
+      Release: Config/Release-FinderSync.xcconfig
+    attributes:
+      SystemCapabilities:
+        com.apple.ApplicationGroups.Mac:
+          enabled: 1
+    sources:
+      - path: Sources/FinderSync
+    dependencies:
+      - target: SharedDomain
+      - sdk: FinderSync.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.finder-sync
+        INFOPLIST_FILE: Resources/Info/FinderSync-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/FinderSync.entitlements
+        ENABLE_APP_SANDBOX: YES
+        LD_RUNPATH_SEARCH_PATHS:
+          - "@executable_path/../Frameworks"
+          - "@executable_path/../../../../Frameworks"
+      configs:
+        Nightly:
+          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly.finder-sync
+    info:
+      path: Resources/Info/FinderSync-Info.plist
+      properties:
+        CFBundleDisplayName: Findle Toolbar Button
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.FinderSync
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).FinderSync"
+          NSExtensionAttributes: {}
 
   # Quick Look for H5P and SCORM packages. Read-only and sandboxed; it needs no
   # App Group or keychain, so release signing needs no provisioning profile.

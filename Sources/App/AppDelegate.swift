@@ -84,6 +84,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         for itemID in urls.compactMap(FindleLinks.revealedItem(in:)) {
             Task { await state.revealInFinder(itemID: itemID) }
         }
+        for courseID in urls.compactMap(FindleLinks.openedCourse(in:)) {
+            Task {
+                if state.courses.isEmpty { await state.loadCourses() }
+                await state.openFileProviderInFinder(selecting: state.courses.first { $0.id == courseID })
+            }
+        }
+        if urls.contains(FindleLinks.settings) { showSettings() }
         for url in urls where url.scheme == "findle" && url.host == "sync" {
             let courseID = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
                 .first { $0.name == "course" }?.value.flatMap(Int.init)

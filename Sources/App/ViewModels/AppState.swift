@@ -2169,7 +2169,9 @@ final class AppState: ObservableObject {
                 ((try? database.fetchNewItems(courseID: course.id, siteID: site.id)) ?? []).filter { !$0.isDirectory }
             }.prefix(6).map { WidgetSnapshot.RecentFile(itemID: $0.id, name: $0.filename, courseName: names[$0.courseID] ?? "") }
             snapshot = WidgetSnapshot(status: WidgetSnapshot.Status(syncStatus), lastSync: lastSyncDate,
-                                      deadlines: Array(deadlines), recentFiles: Array(recent))
+                                      deadlines: Array(deadlines), recentFiles: Array(recent),
+                                      courses: synced.sorted { $0.fullName.localizedStandardCompare($1.fullName) == .orderedAscending }
+                                          .map { WidgetSnapshot.CourseLink(id: $0.id, name: $0.fullName) })
         } else {
             snapshot = .signedOut
         }

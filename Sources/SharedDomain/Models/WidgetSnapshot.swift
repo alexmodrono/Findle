@@ -47,16 +47,31 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
         }
     }
 
+    /// A synced course, for the Finder toolbar button's menu.
+    public struct CourseLink: Codable, Sendable, Equatable, Identifiable {
+        public let id: Int
+        public let name: String
+
+        public init(id: Int, name: String) {
+            self.id = id
+            self.name = name
+        }
+    }
+
     public var status: Status
     public var lastSync: Date?
     public var deadlines: [Deadline]
     public var recentFiles: [RecentFile]
+    /// Missing from snapshots written before the toolbar button existed.
+    public var courses: [CourseLink]?
 
-    public init(status: Status, lastSync: Date? = nil, deadlines: [Deadline] = [], recentFiles: [RecentFile] = []) {
+    public init(status: Status, lastSync: Date? = nil, deadlines: [Deadline] = [], recentFiles: [RecentFile] = [],
+                courses: [CourseLink] = []) {
         self.status = status
         self.lastSync = lastSync
         self.deadlines = deadlines
         self.recentFiles = recentFiles
+        self.courses = courses
     }
 
     public static let signedOut = WidgetSnapshot(status: .signedOut)
