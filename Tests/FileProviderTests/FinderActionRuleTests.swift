@@ -14,6 +14,8 @@ final class FinderActionRuleTests: XCTestCase {
         case keepCourseOffline = "keep-course-offline"
         case removeDownload = "remove-download"
         case showInFindle = "show-in-findle"
+        case markDone = "mark-done"
+        case markNotDone = "mark-not-done"
     }
 
     private var rules: [Action: NSPredicate] = [:]
@@ -105,8 +107,8 @@ final class FinderActionRuleTests: XCTestCase {
     }
 
     func testItemsThatHaveNotPublishedTheirStateKeepEveryAction() {
-        XCTAssertEqual(visibleActions(for: [UnpublishedItem()]), Set(Action.allCases),
-                       "Finder may still hold items from before Findle published their state")
+        XCTAssertEqual(visibleActions(for: [UnpublishedItem()]), Set(Action.allCases).subtracting([.markDone, .markNotDone]),
+                       "Finder may still hold items from before Findle published their state; completion needs it")
     }
 
     func testChangingAMoodleItemExplainsWhyItCannotBeDone() {
@@ -132,6 +134,20 @@ final class FinderActionRuleTests: XCTestCase {
                 XCTAssertNil(alert(for: action, on: other), "\(action) on \(other)")
             }
         }
+    }
+
+    func testOnlyManuallyCompletedActivitiesCanBeTickedOff() {
+        func activity(_ badges: ItemBadges) -> FileProviderItem {
+            FileProviderItem(localItem: LocalItem(id: "page-a-1-3", parentID: "section-a-1-2", siteID: "a", courseID: 1, remoteID: 3,
+                                                  filename: "Reading.webarchive", badges: badges))
+        }
+        XCTAssertTrue(visibleActions(for: [activity(.manualCompletion)]).contains(.markDone))
+        XCTAssertFalse(visibleActions(for: [activity(.manualCompletion)]).contains(.markNotDone))
+        XCTAssertEqual(visibleActions(for: [activity([.manualCompletion, .completed])]).intersection([.markDone, .markNotDone]),
+                       [.markNotDone])
+        XCTAssertTrue(visibleActions(for: [activity(.completed)]).isDisjoint(with: [.markDone, .markNotDone]),
+                      "Moodle decides automatic completion")
+        XCTAssertTrue(visibleActions(for: [item("file-a-1")]).isDisjoint(with: [.markDone, .markNotDone]))
     }
 
     func testCollectionsExplainThatTheyUpdateThemselves() {

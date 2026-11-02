@@ -12,12 +12,14 @@ enum FinderBadges {
     static let dueSoon = NSFileProviderItemDecorationIdentifier("\(BundleIdentifiers.prefix).badge.due-soon")
     static let new = NSFileProviderItemDecorationIdentifier("\(BundleIdentifiers.prefix).badge.new")
     static let kept = NSFileProviderItemDecorationIdentifier("\(BundleIdentifiers.prefix).badge.kept")
+    static let completed = NSFileProviderItemDecorationIdentifier("\(BundleIdentifiers.prefix).badge.completed")
 
     static func identifier(for badge: ItemBadges) -> NSFileProviderItemDecorationIdentifier? {
         switch badge {
         case .dueSoon: dueSoon
         case .new: new
         case .kept: kept
+        case .completed: completed
         default: nil
         }
     }

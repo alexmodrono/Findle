@@ -398,6 +398,10 @@ targets:
               BadgeImageType: $(FINDLE_BUNDLE_PREFIX).badge-image.new
               Category: Badge
               Label: New
+            - Identifier: $(FINDLE_BUNDLE_PREFIX).badge.completed
+              BadgeImageType: com.apple.icon-decoration.badge.checkmark
+              Category: Badge
+              Label: Done
             - Identifier: $(FINDLE_BUNDLE_PREFIX).badge.kept
               BadgeImageType: com.apple.icon-decoration.badge.pinned
               Category: Badge
@@ -429,6 +433,13 @@ targets:
             - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.remove-download
               NSExtensionFileProviderActionName: Remove Download
               NSExtensionFileProviderActionActivationRule: 'SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.kept == YES).@count > 0'
+            # Only activities set to manual completion can be ticked off by the user.
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.mark-done
+              NSExtensionFileProviderActionName: Mark as Done
+              NSExtensionFileProviderActionActivationRule: 'SUBQUERY(fileproviderItems, $item, $item.userInfo.completion == "todo").@count > 0'
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.mark-not-done
+              NSExtensionFileProviderActionName: Mark as Not Done
+              NSExtensionFileProviderActionActivationRule: 'SUBQUERY(fileproviderItems, $item, $item.userInfo.completion == "done").@count > 0'
             - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.show-in-findle
               NSExtensionFileProviderActionName: Show in Findle
               NSExtensionFileProviderActionActivationRule: 'fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.moodle == YES).@count == 1'

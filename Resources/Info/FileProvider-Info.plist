@@ -90,6 +90,22 @@
 			</dict>
 			<dict>
 				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>SUBQUERY(fileproviderItems, $item, $item.userInfo.completion == "todo").@count &gt; 0</string>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).action.mark-done</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Mark as Done</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>SUBQUERY(fileproviderItems, $item, $item.userInfo.completion == "done").@count &gt; 0</string>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).action.mark-not-done</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Mark as Not Done</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionActivationRule</key>
 				<string>fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.moodle == YES).@count == 1</string>
 				<key>NSExtensionFileProviderActionIdentifier</key>
 				<string>$(FINDLE_BUNDLE_PREFIX).action.show-in-findle</string>
@@ -126,6 +142,16 @@
 				<string>$(FINDLE_BUNDLE_PREFIX).badge.new</string>
 				<key>Label</key>
 				<string>New</string>
+			</dict>
+			<dict>
+				<key>BadgeImageType</key>
+				<string>com.apple.icon-decoration.badge.checkmark</string>
+				<key>Category</key>
+				<string>Badge</string>
+				<key>Identifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).badge.completed</string>
+				<key>Label</key>
+				<string>Done</string>
 			</dict>
 			<dict>
 				<key>BadgeImageType</key>

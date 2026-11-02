@@ -7,6 +7,7 @@ import FileProvider
 import AppKit
 import SharedDomain
 import FindlePersistence
+import FindleNetworking
 import OSLog
 
 extension FileProviderExtension: NSFileProviderCustomAction {
@@ -17,6 +18,8 @@ extension FileProviderExtension: NSFileProviderCustomAction {
     private static let keepDownloadedIdentifier = BundleIdentifiers.actionKeepDownloaded
     private static let keepCourseOfflineIdentifier = BundleIdentifiers.actionKeepCourseOffline
     private static let showInFindleIdentifier = BundleIdentifiers.actionShowInFindle
+    private static let markDoneIdentifier = BundleIdentifiers.actionMarkDone
+    private static let markNotDoneIdentifier = BundleIdentifiers.actionMarkNotDone
     private static let removeDownloadIdentifier = BundleIdentifiers.actionRemoveDownload
     private static let syncNowIdentifier = BundleIdentifiers.actionSyncNow
 
@@ -158,6 +161,12 @@ extension FileProviderExtension: NSFileProviderCustomAction {
             NSWorkspace.shared.open(url)
             completionHandler(nil)
 
+        case Self.markDoneIdentifier, Self.markNotDoneIdentifier:
+            let done = actionIdentifier.rawValue == Self.markDoneIdentifier
+            markCompletion(itemIdentifiers, done: done, site: site, database: db, progress: progress,
+                           completionHandler: completionHandler)
+            return progress
+
         case Self.removeDownloadIdentifier:
             removeDownloads(
                 itemIdentifiers.filter { $0 != .rootContainer }.map(\.rawValue),
@@ -178,6 +187,49 @@ extension FileProviderExtension: NSFileProviderCustomAction {
 
         progress.completedUnitCount = 1
         return progress
+    }
+
+    /// Ticks activities off on Moodle, then records it, so Finder's checkmark
+    /// only changes once Moodle has.
+    private func markCompletion(
+        _ identifiers: [NSFileProviderItemIdentifier], done: Bool, site: MoodleSite, database: Database,
+        progress: Progress, completionHandler: @escaping (Error?) -> Void
+    ) {
+        let completion = ActionCompletion(progress: progress, handler: completionHandler)
+        let modules = Set(identifiers.compactMap { try? database.fetchItem(id: $0.rawValue) }
+            .filter { $0.badges.contains(.manualCompletion) && $0.badges.contains(.completed) != done }
+            .map(\.remoteID))
+        let token: String?
+        do {
+            let accountID = try database.fetchAccounts().first { $0.siteID == site.id }?.id ?? site.id
+            token = try KeychainManager.shared.retrieveToken(forAccount: accountID)
+        } catch {
+            completion.finish(NSFileProviderError(.serverUnreachable))
+            return
+        }
+        guard let token else {
+            completion.finish(NSFileProviderError(.notAuthenticated))
+            return
+        }
+        let log = logger
+        nonisolated(unsafe) let manager = NSFileProviderManager(for: domain)
+        Task {
+            let client = MoodleClient()
+            do {
+                for module in modules.sorted() {
+                    try await client.setActivityCompletion(site: site, token: AuthToken(token: token), moduleID: module, completed: done)
+                    try database.setActivityComplete(moduleID: module, siteID: site.id, complete: done)
+                }
+                log.info("Marked \(modules.count) activities as \(done ? "done" : "not done", privacy: .public)")
+                manager?.signalEnumerator(for: .workingSet) { _ in }
+                completion.finish(nil)
+            } catch {
+                log.error("Could not change completion: \(DiagnosticFailure(error).summary, privacy: .public)")
+                manager?.signalEnumerator(for: .workingSet) { _ in }
+                completion.finish((error as? FindleError)?.requiresReauthentication == true
+                                  ? NSFileProviderError(.notAuthenticated) : NSFileProviderError(.serverUnreachable))
+            }
+        }
     }
 
     private func signalChanges() {

@@ -143,3 +143,19 @@ public struct MoodleQuizAttempt: Sendable, Codable, Equatable, Identifiable {
         self.finishTime = finishTime
     }
 }
+
+/// Whether the user has completed a course activity, and whether they can
+/// tick it off themselves (manual completion) or Moodle decides.
+public struct ActivityCompletion: Sendable, Codable, Equatable {
+    public let moduleID: Int
+    public let courseID: Int
+    public let isManual: Bool
+    public let isComplete: Bool
+
+    public init(moduleID: Int, courseID: Int, isManual: Bool, isComplete: Bool) {
+        self.moduleID = moduleID
+        self.courseID = courseID
+        self.isManual = isManual
+        self.isComplete = isComplete
+    }
+}

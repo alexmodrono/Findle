@@ -51,7 +51,7 @@ public final class Database: @unchecked Sendable {
             .path
     }
 
-    public static let schemaVersion = 21
+    public static let schemaVersion = 22
 
     /// Every column Finder shows, so changing one reports the item to Finder.
     private static let itemsBumpAfterUpdateTrigger = """
@@ -517,6 +517,19 @@ public final class Database: @unchecked Sendable {
         // When a sync brought each item in (or replaced its content) and when the
         // user last opened it. Kept apart from items so syncs rewriting a row
         // don't lose it and Finder isn't told about changes it doesn't show.
+        // Activity completion on Moodle, by course module. Fetched again with
+        // the coursework, so recovery doesn't need to keep it.
+        try executeUnsafe("""
+            CREATE TABLE IF NOT EXISTS activity_completion (
+                site_id TEXT NOT NULL,
+                course_id INTEGER NOT NULL,
+                module_id INTEGER NOT NULL,
+                manual INTEGER NOT NULL,
+                complete INTEGER NOT NULL,
+                PRIMARY KEY (site_id, module_id)
+            )
+        """)
+
         try executeUnsafe("""
             CREATE TABLE IF NOT EXISTS item_activity (
                 item_id TEXT PRIMARY KEY,
@@ -874,6 +887,11 @@ public final class Database: @unchecked Sendable {
             try executeUnsafe("DROP TRIGGER IF EXISTS items_bump_after_update")
             try executeUnsafe(Self.itemsBumpAfterUpdateTrigger)
             logger.info("Migrated database schema to version 21 (current week kept downloaded)")
+        }
+
+        if currentVersion < 22 {
+            // v21 -> v22: activity_completion, created above. Filled by the next coursework refresh.
+            logger.info("Migrated database schema to version 22 (activity completion)")
         }
 
         // Databases created before the seed marker was introduced were already
@@ -1776,6 +1794,25 @@ extension Database {
         }
         guard status == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to read due assignments") }
 
+        // An activity's badge goes on its outermost item: a folder, not each file in it.
+        let completion = try prepareStatement("SELECT course_id, module_id, manual, complete FROM activity_completion WHERE site_id = ?")
+        defer { sqlite3_finalize(completion) }
+        sqlite3_bind_text(completion, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        var completionByModule: [[Int]: (manual: Bool, complete: Bool)] = [:]
+        status = sqlite3_step(completion)
+        while status == SQLITE_ROW {
+            completionByModule[[Int(sqlite3_column_int64(completion, 0)), Int(sqlite3_column_int64(completion, 1))]] =
+                (sqlite3_column_int(completion, 2) == 1, sqlite3_column_int(completion, 3) == 1)
+            status = sqlite3_step(completion)
+        }
+        guard status == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to read activity completion") }
+        let rowsByID = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        func isActivityItem(_ row: Row) -> Bool {
+            guard !row.id.hasPrefix("course-"), !row.id.hasPrefix("section-") else { return false }
+            guard let parent = row.parentID.flatMap({ rowsByID[$0] }) else { return true }
+            return parent.remoteID != row.remoteID || parent.id.hasPrefix("section-") || parent.id.hasPrefix("course-")
+        }
+
         let parents = Dictionary(rows.map { ($0.id, $0.parentID) }, uniquingKeysWith: { first, _ in first })
         var newIDs = Set<String>()
         for row in rows where row.isNew && !row.isLocal {
@@ -1794,6 +1831,10 @@ extension Database {
                 if newIDs.contains(row.id) { badges.insert(.new) }
                 if row.isPinned { badges.insert(.kept) }
                 if row.id.hasPrefix("assign-"), dueSoon.contains([row.courseID, row.remoteID]) { badges.insert(.dueSoon) }
+                if let state = completionByModule[[row.courseID, row.remoteID]], isActivityItem(row) {
+                    if state.complete { badges.insert(.completed) }
+                    if state.manual { badges.insert(.manualCompletion) }
+                }
             }
             guard badges.rawValue != row.badges else { continue }
             sqlite3_reset(update)
@@ -2509,6 +2550,49 @@ extension Database {
             let status = sqlite3_step(stmt)
             guard status == SQLITE_DONE else {
                 throw FindleError.databaseError(detail: "Failed to update item pinned state")
+            }
+        }
+    }
+
+    /// Replaces a course's activity completion with what Moodle reported, and
+    /// updates the checkmarks Finder shows.
+    public func saveActivityCompletion(_ statuses: [ActivityCompletion], courseID: Int, siteID: String) throws {
+        try queue.sync {
+            try transactionUnsafe {
+                let clear = try prepareStatement("DELETE FROM activity_completion WHERE site_id = ? AND course_id = ?")
+                defer { sqlite3_finalize(clear) }
+                sqlite3_bind_text(clear, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_int64(clear, 2, Int64(courseID))
+                guard sqlite3_step(clear) == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to clear activity completion") }
+                let insert = try prepareStatement("""
+                    INSERT OR REPLACE INTO activity_completion (site_id, course_id, module_id, manual, complete) VALUES (?, ?, ?, ?, ?)
+                    """)
+                defer { sqlite3_finalize(insert) }
+                for status in statuses where status.courseID == courseID {
+                    sqlite3_reset(insert)
+                    sqlite3_bind_text(insert, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_int64(insert, 2, Int64(courseID))
+                    sqlite3_bind_int64(insert, 3, Int64(status.moduleID))
+                    sqlite3_bind_int(insert, 4, status.isManual ? 1 : 0)
+                    sqlite3_bind_int(insert, 5, status.isComplete ? 1 : 0)
+                    guard sqlite3_step(insert) == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to save activity completion") }
+                }
+                _ = try refreshFinderStateUnsafe(siteID: siteID, now: Date())
+            }
+        }
+    }
+
+    /// Records a completion change the user made from Finder, once Moodle accepted it.
+    public func setActivityComplete(moduleID: Int, siteID: String, complete: Bool) throws {
+        try queue.sync {
+            try transactionUnsafe {
+                let update = try prepareStatement("UPDATE activity_completion SET complete = ? WHERE site_id = ? AND module_id = ?")
+                defer { sqlite3_finalize(update) }
+                sqlite3_bind_int(update, 1, complete ? 1 : 0)
+                sqlite3_bind_text(update, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_int64(update, 3, Int64(moduleID))
+                guard sqlite3_step(update) == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to record completion") }
+                _ = try refreshFinderStateUnsafe(siteID: siteID, now: Date())
             }
         }
     }

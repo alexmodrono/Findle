@@ -1759,6 +1759,18 @@ final class AppState: ObservableObject {
         }
         guard sessionWork.isCurrent(lease), database === db else { return }
 
+        // Activity completion, per course; a course whose fetch failed keeps what was stored.
+        let completions = await Self.boundedMap(courseIDs) { courseID -> (Int, [ActivityCompletion]?) in
+            (courseID, try? await client.fetchActivityCompletion(site: site, token: token, courseID: courseID, userID: userID))
+        }
+        guard sessionWork.isCurrent(lease), database === db else { return }
+        var completionChanged = false
+        for case let (courseID, statuses?) in completions {
+            try? db.saveActivityCompletion(statuses, courseID: courseID, siteID: site.id)
+            completionChanged = true
+        }
+        if completionChanged { signalFileProviderChanges(for: site) }
+
         // Grades, per course. Skip the save entirely if every course fetch failed.
         // Courses whose fetch failed keep their previously stored grade items.
         let gradeResults = await Self.boundedMap(courseIDs) { courseID -> [MoodleGradeItem]? in

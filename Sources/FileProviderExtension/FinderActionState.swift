@@ -20,6 +20,8 @@ enum FinderActionState {
     /// A file or folder the user made, which they can delete, rename and move.
     /// The alerts that explain why Moodle items can't be read it.
     static let personalKey = "personal"
+    /// "todo" or "done" for activities the user ticks off themselves; absent otherwise.
+    static let completionKey = "completion"
 
     enum Kind: String {
         case root, course, section, folder, file
@@ -29,7 +31,7 @@ enum FinderActionState {
 
     static func userInfo(for item: LocalItem) -> [AnyHashable: Any] {
         let isMoodleItem = !item.isLocal && !item.isInFinderCollection
-        return [
+        var info: [AnyHashable: Any] = [
             kindKey: kind(of: item).rawValue,
             moodleKey: isMoodleItem,
             // Keeping a folder also marks the personal files inside it, but only
@@ -37,6 +39,10 @@ enum FinderActionState {
             keptKey: isMoodleItem && item.isPinned,
             personalKey: isUserItem(item)
         ]
+        if isMoodleItem, item.badges.contains(.manualCompletion) {
+            info[completionKey] = item.badges.contains(.completed) ? "done" : "todo"
+        }
+        return info
     }
 
     static func rootUserInfo() -> [AnyHashable: Any] {

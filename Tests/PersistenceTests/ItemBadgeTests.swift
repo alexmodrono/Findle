@@ -135,8 +135,22 @@ final class ItemBadgeTests: XCTestCase {
         XCTAssertEqual(try database.fetchItem(id: "slides")?.isAutoKept, false, "Last week goes back to on demand")
     }
 
+        func testCompletedActivitiesGetACheckmarkOnTheirOutermostItem() throws {
+        // The assignment folder and the brief inside it are the same activity (module 77).
+        try database.saveActivityCompletion([ActivityCompletion(moduleID: 77, courseID: 1, isManual: true, isComplete: false)],
+                                            courseID: 1, siteID: site)
+        XCTAssertEqual(try badges(assignmentFolder), .manualCompletion)
+        XCTAssertEqual(try badges("brief"), [], "Only the activity's outermost item carries its state")
+
+        try database.setActivityComplete(moduleID: 77, siteID: site, complete: true)
+        XCTAssertEqual(try badges(assignmentFolder), [.manualCompletion, .completed])
+
+        try database.saveActivityCompletion([], courseID: 1, siteID: site)
+        XCTAssertEqual(try badges(assignmentFolder), [], "Completion changes made on Moodle are followed")
+    }
+
         func testDueSoonComesFirstBecauseFinderShowsOneBadge() {
-        XCTAssertEqual(ItemBadges([.kept, .new, .dueSoon]).ordered, [.dueSoon, .new, .kept])
+        XCTAssertEqual(ItemBadges([.kept, .new, .dueSoon, .completed, .manualCompletion]).ordered, [.dueSoon, .new, .completed, .kept])
     }
 
     func testPersonalFilesNeverGetBadges() throws {
