@@ -542,14 +542,21 @@ public final class MoodleClient: LMSProvider, Sendable {
         )
         return response.courses.flatMap { course in
             course.assignments.map { item in
-                MoodleAssignment(
-                    id: item.id,
-                    courseID: item.course,
-                    name: item.name,
-                    dueDate: Self.timestamp(item.duedate),
-                    cutoffDate: Self.timestamp(item.cutoffdate),
-                    moduleID: item.cmid
-                )
+                {
+                    var assignment = MoodleAssignment(
+                        id: item.id,
+                        courseID: item.course,
+                        name: item.name,
+                        dueDate: Self.timestamp(item.duedate),
+                        cutoffDate: Self.timestamp(item.cutoffdate),
+                        moduleID: item.cmid
+                    )
+                    assignment.takesFiles = item.configs?.contains {
+                        $0.plugin == "file" && $0.subtype == "assignsubmission" && $0.name == "enabled" && $0.value == "1"
+                    } ?? false
+                    assignment.requiresStatement = item.requiresubmissionstatement == 1
+                    return assignment
+                }()
             }
         }
     }
@@ -590,7 +597,8 @@ public final class MoodleClient: LMSProvider, Sendable {
 
     /// Submission/grading state for one assignment. Best-effort — sites may
     /// restrict this function, so callers should tolerate a thrown error.
-    public func fetchSubmissionStatus(site: MoodleSite, token: AuthToken, assignmentID: Int) async throws -> (submitted: Bool, graded: Bool, grade: String?) {
+    public func fetchSubmissionStatus(site: MoodleSite, token: AuthToken, assignmentID: Int) async throws
+        -> (submitted: Bool, graded: Bool, grade: String?, canEdit: Bool, canSubmit: Bool) {
         let response: SubmissionStatusResponse = try await callWebService(
             site: site,
             token: token,
@@ -599,7 +607,8 @@ public final class MoodleClient: LMSProvider, Sendable {
         )
         let submitted = response.lastattempt?.submission?.status == "submitted"
         let graded = response.lastattempt?.gradingstatus == "graded"
-        return (submitted, graded, response.feedback?.grade?.grade)
+        return (submitted, graded, response.feedback?.grade?.grade,
+                response.lastattempt?.canedit ?? false, response.lastattempt?.cansubmit ?? false)
     }
 
     public func fetchGrades(site: MoodleSite, token: AuthToken, courseID: Int, userID: Int) async throws -> [MoodleGradeItem] {

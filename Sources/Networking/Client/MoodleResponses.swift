@@ -150,6 +150,8 @@ struct AssignmentsResponse: Decodable {
         /// the teacher always shows the description.
         let intro: String?
         let introattachments: LossyArray<ContentResponse>?
+        let requiresubmissionstatement: Int?
+        let configs: [SubmissionAssignmentsResponse.Config]?
     }
 }
 
@@ -160,6 +162,8 @@ struct SubmissionStatusResponse: Decodable {
     struct LastAttempt: Decodable {
         let submission: Submission?
         let gradingstatus: String?
+        let canedit: Bool?
+        let cansubmit: Bool?
         struct Submission: Decodable { let status: String? }
     }
     struct Feedback: Decodable {

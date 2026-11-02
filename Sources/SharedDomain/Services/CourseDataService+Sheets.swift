@@ -28,6 +28,10 @@ extension CourseDataService {
         public let submitted: Bool
         public let graded: Bool
         public let grade: String?
+        /// The files in the assignment's Submit folder, which make up the draft.
+        public var draftFiles: [String] = []
+        public var canSubmit = false
+        public var requiresStatement = false
 
         public var status: String {
             if graded { return grade.map { "Graded: \($0)" } ?? "Graded" }
@@ -49,11 +53,15 @@ extension CourseDataService {
 
     /// `folder` is the assignment's folder (`assign-<site>-<course>-<module>`).
     public static func assignmentDetails(folder: LocalItem, assignment: MoodleAssignment?, courseName: String,
-                                         brief: String?) -> AssignmentDetails {
-        AssignmentDetails(name: assignment?.name ?? folder.filename, courseName: courseName, brief: brief,
-                          due: assignment?.dueDate, cutoff: assignment?.cutoffDate,
-                          submitted: assignment?.submitted ?? false, graded: assignment?.graded ?? false,
-                          grade: assignment?.grade)
+                                         brief: String?, draftFiles: [String] = []) -> AssignmentDetails {
+        var details = AssignmentDetails(name: assignment?.name ?? folder.filename, courseName: courseName, brief: brief,
+                                        due: assignment?.dueDate, cutoff: assignment?.cutoffDate,
+                                        submitted: assignment?.submitted ?? false, graded: assignment?.graded ?? false,
+                                        grade: assignment?.grade)
+        details.draftFiles = draftFiles
+        details.canSubmit = (assignment?.canSubmit ?? false) && !draftFiles.isEmpty
+        details.requiresStatement = assignment?.requiresStatement ?? false
+        return details
     }
 }
 
@@ -63,4 +71,6 @@ extension CourseDataService {
     func fetchCourseInfo(courseID: Int, reply: @escaping @Sendable (Data?, Error?) -> Void)
     func fetchAssignmentDetails(itemID: String, reply: @escaping @Sendable (Data?, Error?) -> Void)
     func setCourseKeptOffline(courseID: Int, kept: Bool, reply: @escaping @Sendable (Error?) -> Void)
+    /// Submits the draft for grading. Only called after the user confirmed in the sheet.
+    func submitAssignment(itemID: String, acceptStatement: Bool, reply: @escaping @Sendable (Error?) -> Void)
 }

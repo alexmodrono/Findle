@@ -8,6 +8,7 @@ import OSLog
 import Security
 import SharedDomain
 import FindlePersistence
+import FindleNetworking
 
 /// Vends `CourseDataService` from the File Provider extension, which is the only
 /// process that can open the database. Read-only: it never writes.
@@ -121,7 +122,35 @@ private final class CourseDataExport: NSObject, CourseDataSheetsProtocol, @unche
             let courseName = try database.fetchCourses(siteID: siteID).first { $0.id == folder.courseID }?.fullName ?? ""
             let brief = try database.fetchGeneratedContent(itemID: "brief-\(siteID)-\(folder.courseID)-\(folder.remoteID)")
                 .map { String(decoding: $0, as: UTF8.self) }
-            return CourseDataService.assignmentDetails(folder: folder, assignment: assignment, courseName: courseName, brief: brief)
+            let draft = try database.fetchItems(parentID: "submit-\(siteID)-\(folder.courseID)-\(folder.remoteID)", siteID: siteID)
+                .filter { $0.isLocal && !$0.isDirectory }.map(\.filename).sorted()
+            return CourseDataService.assignmentDetails(folder: folder, assignment: assignment, courseName: courseName,
+                                                       brief: brief, draftFiles: draft)
+        }
+    }
+
+    func submitAssignment(itemID: String, acceptStatement: Bool, reply: @escaping @Sendable (Error?) -> Void) {
+        guard let (database, siteID) = source(), itemID.hasPrefix("assign-"),
+              let folder = try? database.fetchItem(id: itemID), folder.siteID == siteID,
+              let site = try? database.fetchSite(id: siteID),
+              let assignment = (try? database.fetchAssignments(siteID: siteID))?
+                .first(where: { $0.courseID == folder.courseID && $0.moduleID == folder.remoteID }), assignment.canSubmit else {
+            reply(NSFileProviderError(.noSuchItem) as NSError)
+            return
+        }
+        let accountID = (try? database.fetchAccounts())?.first { $0.siteID == siteID }?.id ?? siteID
+        guard let token = try? KeychainManager.shared.retrieveToken(forAccount: accountID) else {
+            reply(NSFileProviderError(.notAuthenticated) as NSError)
+            return
+        }
+        Task {
+            do {
+                try await MoodleClient().submitForGrading(site: site, token: AuthToken(token: token), assignmentID: assignment.id,
+                                                          acceptStatement: acceptStatement)
+                reply(nil)
+            } catch {
+                reply(NSFileProviderError(.serverUnreachable) as NSError)
+            }
         }
     }
 

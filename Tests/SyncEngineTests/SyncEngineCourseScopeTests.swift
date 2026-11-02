@@ -482,6 +482,32 @@ final class SyncEngineCourseScopeTests: XCTestCase {
         XCTAssertNotEqual(try database.fetchItem(id: essayID)?.contentVersion, essay.contentVersion, "Finder fetches the new summary")
     }
 
+        func testOpenAssignmentsGetASubmitFolderWhoseFilesOutliveIt() async throws {
+        let site = MoodleSite(id: "site-1", displayName: "Example", baseURL: URL(string: "https://moodle.example.edu")!)
+        let course = MoodleCourse(id: 101, shortName: "C101", fullName: "Course 101", siteID: site.id)
+        try database.saveCourses([course])
+        var open = MoodleAssignment(id: 7, courseID: 101, name: "Essay", moduleID: 401)
+        open.takesFiles = true
+        open.canEdit = true
+        try database.saveAssignments([open], siteID: site.id)
+        let stored = try XCTUnwrap(database.fetchAssignments(siteID: site.id).first)
+        XCTAssertTrue(stored.acceptsFilesFromFinder, "The flags are stored")
+        let snapshot = #"[{"id":10,"section":1,"modules":[{"id":401,"name":"Essay","modname":"assign"}]}]"#
+        let assignments = #"{"courses":[{"id":101,"assignments":[{"id":7,"cmid":401,"course":101,"name":"Essay","intro":"","introattachments":[]}]}],"warnings":[]}"#
+        try await engine(snapshot: snapshot, assignments: assignments).syncCourse(site: site, token: AuthToken(token: "t"), course: course)
+        let submit = "submit-site-1-101-401"
+        XCTAssertEqual(try database.fetchItem(id: submit)?.parentID, "assign-site-1-101-401")
+
+        // The student dropped a file into Submit; then the assignment closed.
+        try database.saveItems([LocalItem(id: "local-essay", parentID: submit, siteID: site.id, courseID: 101, remoteID: 0,
+                                          filename: "essay.pdf", localPath: "/tmp/essay.pdf", isLocal: true)])
+        open.canEdit = false
+        try database.saveAssignments([open], siteID: site.id)
+        try await engine(snapshot: snapshot, assignments: assignments).syncCourse(site: site, token: AuthToken(token: "t"), course: course)
+        XCTAssertNotNil(try database.fetchItem(id: "local-essay"), "The student's file is never lost")
+        XCTAssertNotNil(try database.fetchItem(id: submit), "Its folder stays while it holds the student's files")
+    }
+
         func testSyncCourseOnlyDiffsItemsFromCurrentCourse() async throws {
         let site = MoodleSite(
             id: "site-1",

@@ -1742,16 +1742,23 @@ final class AppState: ObservableObject {
         // Assignments (+ submission status). Persist only if the list fetch worked.
         if let base = try? await client.fetchAssignments(site: site, token: token, courseIDs: courseIDs) {
             guard sessionWork.isCurrent(lease), database === db else { return }
+            // Submitting from Finder needs the site to allow uploads (FX-06).
+            let siteTakesFiles = (try? await client.siteAllowsSubmissions(site: site, token: token)) ?? false
             let enriched = await Self.boundedMap(base) { assignment in
                 var a = assignment
+                a.takesFiles = a.takesFiles && siteTakesFiles
                 if let status = try? await client.fetchSubmissionStatus(site: site, token: token, assignmentID: assignment.id) {
                     a.submitted = status.submitted
                     a.graded = status.graded
                     a.grade = status.grade
+                    a.canEdit = status.canEdit
+                    a.canSubmit = status.canSubmit
                 } else if let stored = storedAssignments[assignment.id] {
                     a.submitted = stored.submitted
                     a.graded = stored.graded
                     a.grade = stored.grade
+                    a.canEdit = stored.canEdit
+                    a.canSubmit = stored.canSubmit
                 }
                 return a
             }

@@ -529,6 +529,9 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         do {
             try db.saveItems([localItem])
             completionHandler(FileProviderItem(localItem: localItem), [], false, nil)
+            if SubmissionDrafts.isSubmitFolder(parentID) {
+                Task { await SubmissionDrafts.shared.folderChanged(parentID!, database: db) }
+            }
         } catch {
             // Without a row the item would be lost on the next scan, so take it back out.
             try? FileManager.default.removeItem(at: finalURL)
@@ -578,6 +581,10 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                     db: db
                 )
                 completionHandler(FileProviderItem(localItem: updated), [], false, nil)
+                // A file moved into or out of a Submit folder, or changed in it, changes the draft.
+                for folder in Set([localItem.parentID, updated.parentID].compactMap { $0 }) where SubmissionDrafts.isSubmitFolder(folder) {
+                    Task { await SubmissionDrafts.shared.folderChanged(folder, database: db) }
+                }
             } catch {
                 logger.error("modifyItem failed: \(DiagnosticFailure(error).summary, privacy: .public)")
                 completionHandler(nil, [], false, error)
@@ -883,6 +890,9 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             let deletedPaths = try db.deleteItemAndChildren(id: localItem.id)
             removeDeletedContent(ownPath: localItem.localPath, deletedPaths: deletedPaths)
             completionHandler(nil)
+            if let parentID = localItem.parentID, SubmissionDrafts.isSubmitFolder(parentID) {
+                Task { await SubmissionDrafts.shared.folderChanged(parentID, database: db) }
+            }
         } catch {
             logger.error("deleteItem failed: \(DiagnosticFailure(error).summary, privacy: .public)")
             completionHandler(error)

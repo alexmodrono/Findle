@@ -108,6 +108,9 @@ final class CourseDataServiceTests: XCTestCase {
         XCTAssertEqual(details.courseName, "Algebra")
         XCTAssertEqual(details.status, "Graded: 9")
 
+        XCTAssertEqual(details.draftFiles, [])
+        XCTAssertFalse(details.canSubmit, "Nothing to submit without a draft")
+
         let (_, missing) = call { service.fetchAssignmentDetails(itemID: "file-a-1-5-x.pdf", reply: $0) }
         XCTAssertNotNil(missing, "Only assignment folders have details")
 
@@ -118,11 +121,11 @@ final class CourseDataServiceTests: XCTestCase {
         XCTAssertEqual(kept.map(\.1), [true])
     }
 
-    func testTheSheetsAddOnlyTheKeptStateAsAWrite() {
+    func testTheSheetsAddOnlyTheKeptStateAndConfirmedSubmissionAsWrites() {
         let methods = protocolMethodNames(CourseDataSheetsProtocol.self)
         XCTAssertEqual(methods, ["fetchAssignmentDetailsWithItemID:reply:", "fetchCourseInfoWithCourseID:reply:",
-                                 "setCourseKeptOfflineWithCourseID:kept:reply:"],
-                       "Keep Course Offline from Course Info is the one write, as Finder's action")
+                                 "setCourseKeptOfflineWithCourseID:kept:reply:", "submitAssignmentWithItemID:acceptStatement:reply:"],
+                       "The writes are Keep Course Offline, as Finder's action, and submitting after the user confirmed")
     }
 
     func testServiceIsReadOnly() throws {

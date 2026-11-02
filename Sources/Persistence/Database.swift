@@ -52,7 +52,7 @@ public final class Database: @unchecked Sendable {
             .path
     }
 
-    public static let schemaVersion = 25
+    public static let schemaVersion = 26
 
     /// Every column Finder shows, so changing one reports the item to Finder.
     private static let itemsBumpAfterUpdateTrigger = """
@@ -906,6 +906,15 @@ public final class Database: @unchecked Sendable {
         if currentVersion < 22 {
             // v21 -> v22: activity_completion, created above. Filled by the next coursework refresh.
             logger.info("Migrated database schema to version 22 (activity completion)")
+        }
+
+        if currentVersion < 26 {
+            // Added at the end, so recovery's positional copy lines up in every database.
+            let columns = try existingColumns(table: "assignments")
+            for column in ["takes_files", "can_edit", "can_submit", "requires_statement"] where !columns.contains(column) {
+                try executeUnsafe("ALTER TABLE assignments ADD COLUMN \(column) INTEGER NOT NULL DEFAULT 0")
+            }
+            logger.info("Migrated database schema to version 26 (submitting from Finder)")
         }
 
         if currentVersion < 25 {
@@ -3688,8 +3697,9 @@ extension Database {
             do {
                 try deleteForSite("assignments", siteID: siteID)
                 let sql = """
-                    INSERT OR REPLACE INTO assignments (id, site_id, course_id, name, due_date, cutoff_date, submitted, graded, grade, module_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT OR REPLACE INTO assignments (id, site_id, course_id, name, due_date, cutoff_date, submitted, graded, grade, module_id,
+                        takes_files, can_edit, can_submit, requires_statement)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
                 for a in assignments {
                     let stmt = try prepareStatement(sql)
@@ -3704,6 +3714,10 @@ extension Database {
                     sqlite3_bind_int(stmt, 8, a.graded ? 1 : 0)
                     bindOptionalText(stmt, 9, a.grade)
                     if let moduleID = a.moduleID { sqlite3_bind_int64(stmt, 10, Int64(moduleID)) }
+                    sqlite3_bind_int(stmt, 11, a.takesFiles ? 1 : 0)
+                    sqlite3_bind_int(stmt, 12, a.canEdit ? 1 : 0)
+                    sqlite3_bind_int(stmt, 13, a.canSubmit ? 1 : 0)
+                    sqlite3_bind_int(stmt, 14, a.requiresStatement ? 1 : 0)
                     guard sqlite3_step(stmt) == SQLITE_DONE else {
                         throw FindleError.databaseError(detail: "saveAssignments: \(String(cString: sqlite3_errmsg(db)))")
                     }
@@ -3719,12 +3733,15 @@ extension Database {
 
     public func fetchAssignments(siteID: String) throws -> [MoodleAssignment] {
         try queue.sync {
-            let stmt = try prepareStatement("SELECT id, course_id, name, due_date, cutoff_date, submitted, graded, grade, module_id FROM assignments WHERE site_id = ?")
+            let stmt = try prepareStatement("""
+                SELECT id, course_id, name, due_date, cutoff_date, submitted, graded, grade, module_id,
+                    takes_files, can_edit, can_submit, requires_statement FROM assignments WHERE site_id = ?
+                """)
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
             var out: [MoodleAssignment] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
-                out.append(MoodleAssignment(
+                var assignment = MoodleAssignment(
                     id: Int(sqlite3_column_int64(stmt, 0)),
                     courseID: Int(sqlite3_column_int64(stmt, 1)),
                     name: String(cString: sqlite3_column_text(stmt, 2)),
@@ -3734,7 +3751,12 @@ extension Database {
                     submitted: sqlite3_column_int(stmt, 5) == 1,
                     graded: sqlite3_column_int(stmt, 6) == 1,
                     grade: sqlite3_column_text(stmt, 7).map { String(cString: $0) }
-                ))
+                )
+                assignment.takesFiles = sqlite3_column_int(stmt, 9) == 1
+                assignment.canEdit = sqlite3_column_int(stmt, 10) == 1
+                assignment.canSubmit = sqlite3_column_int(stmt, 11) == 1
+                assignment.requiresStatement = sqlite3_column_int(stmt, 12) == 1
+                out.append(assignment)
             }
             return out
         }

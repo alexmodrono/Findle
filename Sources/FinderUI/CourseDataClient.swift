@@ -57,6 +57,16 @@ struct CourseDataClient: Sendable {
         try await call(CourseDataService.AssignmentDetails.self) { $0.fetchAssignmentDetails(itemID: itemID, reply: $1) }
     }
 
+    func submit(itemID: String, acceptStatement: Bool) async throws {
+        let (service, connection) = try await proxy()
+        defer { connection.invalidate() }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            service.submitAssignment(itemID: itemID, acceptStatement: acceptStatement) { error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+            }
+        }
+    }
+
     func setKeptOffline(courseID: Int, kept: Bool) async throws {
         let (service, connection) = try await proxy()
         defer { connection.invalidate() }

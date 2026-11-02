@@ -843,6 +843,7 @@ targets:
       - path: Sources/FileProviderExtension/ThumbnailFetcher.swift
       - path: Sources/FileProviderExtension/FinderBadges.swift
       - path: Sources/FileProviderExtension/PageArchiver.swift
+      - path: Sources/FileProviderExtension/SubmissionDrafts.swift
     dependencies:
       - target: SharedDomain
       - target: FindleNetworking

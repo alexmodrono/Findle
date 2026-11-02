@@ -63,6 +63,13 @@ extension MoodleClient {
     static let submissionFunctions = ["mod_assign_save_submission", "mod_assign_submit_for_grading",
                                       "mod_assign_get_submission_status"]
 
+    /// Whether the site lets the app upload files and call the submission functions.
+    public func siteAllowsSubmissions(site: MoodleSite, token: AuthToken) async throws -> Bool {
+        let info: SubmissionSiteInfoResponse = try await callWebService(site: site, token: token, function: "core_webservice_get_site_info")
+        let available = Set(info.functions?.map(\.name) ?? [])
+        return info.uploadfiles == true && Self.submissionFunctions.allSatisfy(available.contains)
+    }
+
     /// What the site and the assignment allow. A site that disables uploads or
     /// keeps the submission functions from the app allows nothing.
     public func submissionSupport(site: MoodleSite, token: AuthToken, courseID: Int, assignmentID: Int) async throws -> SubmissionSupport {

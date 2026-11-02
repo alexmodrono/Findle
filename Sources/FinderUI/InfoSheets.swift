@@ -83,6 +83,7 @@ final class AssignmentDetailsModel {
     let itemID: String
     var details: CourseDataService.AssignmentDetails?
     var error: String?
+    var submitting = false
 
     init(client: CourseDataClient, itemID: String) {
         self.client = client
@@ -92,11 +93,25 @@ final class AssignmentDetailsModel {
     func load() async {
         do { details = try await client.assignmentDetails(itemID: itemID) } catch { self.error = error.localizedDescription }
     }
+
+    /// Only after the user confirmed: Finder never submits on its own.
+    func submit(acceptStatement: Bool) async {
+        submitting = true
+        defer { submitting = false }
+        do {
+            try await client.submit(itemID: itemID, acceptStatement: acceptStatement)
+            details = try await client.assignmentDetails(itemID: itemID)
+        } catch {
+            self.error = "Moodle didn't accept the submission. Check it on Moodle and try again."
+        }
+    }
 }
 
 struct AssignmentDetailsView: View {
     let model: AssignmentDetailsModel
     let done: () -> Void
+    @State private var confirming = false
+    @State private var acceptsStatement = false
 
     var body: some View {
         SheetFrame(title: model.details?.name ?? "Assignment Details", error: model.error, loading: model.details == nil,
@@ -110,6 +125,28 @@ struct AssignmentDetailsView: View {
                             LabeledContent("Last accepted", value: cutoff.formatted(date: .abbreviated, time: .shortened))
                         }
                         LabeledContent("Status", value: details.status)
+                    }
+                    if !details.draftFiles.isEmpty {
+                        Section {
+                            ForEach(details.draftFiles, id: \.self) { Label($0, systemImage: "doc") }
+                            if details.canSubmit {
+                                if details.requiresStatement {
+                                    Toggle("I accept this site's submission statement", isOn: $acceptsStatement)
+                                }
+                                Button("Submit for Grading…") { confirming = true }
+                                    .disabled(model.submitting || (details.requiresStatement && !acceptsStatement))
+                            }
+                        } header: {
+                            Text("Draft")
+                        } footer: {
+                            Text("The files in this assignment's Submit folder. They are a draft on Moodle until you submit them for grading.")
+                        }
+                        .confirmationDialog("Submit \(details.name) for grading?", isPresented: $confirming) {
+                            Button("Submit for Grading") { Task { await model.submit(acceptStatement: acceptsStatement) } }
+                            Button("Cancel", role: .cancel) {}
+                        } message: {
+                            Text("Your teacher sees the submission, and you may not be able to change it afterwards.")
+                        }
                     }
                     if let brief = details.brief, !brief.isEmpty {
                         Section("Brief") {

@@ -19,6 +19,16 @@ public struct MoodleAssignment: Sendable, Codable, Equatable, Identifiable {
     public var submitted: Bool
     public var graded: Bool
     public var grade: String?
+    /// What submitting through Finder needs (FX-06): the site and assignment
+    /// take uploaded files, the user can change the submission now, can submit
+    /// it for grading, and must accept the site's statement to do so.
+    public var takesFiles = false
+    public var canEdit = false
+    public var canSubmit = false
+    public var requiresStatement = false
+
+    /// An open assignment the user can hand files in for.
+    public var acceptsFilesFromFinder: Bool { takesFiles && canEdit }
 
     public init(
         id: Int,

@@ -312,6 +312,13 @@ public actor SyncEngine {
                     let file = Self.summaryFile(summary, moduleID: module.id, parentID: folderID, siteID: site.id, courseID: course.id)
                     sectionItems.append(file.item)
                     generatedContents[file.item.id] = file.data
+                    // Files dropped in Submit become the draft submission (FX-06).
+                    if coursework.assignments.first(where: { $0.courseID == course.id && $0.moduleID == module.id })?
+                        .acceptsFilesFromFinder == true {
+                        sectionItems.append(LocalItem(
+                            id: "submit-\(site.id)-\(course.id)-\(module.id)", parentID: folderID, siteID: site.id,
+                            courseID: course.id, remoteID: module.id, filename: "Submit", isDirectory: true, syncState: .materialized))
+                    }
                     continue
                 }
                 if module.resourceType == .quiz {
