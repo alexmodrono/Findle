@@ -439,6 +439,17 @@ final class DatabaseTests: XCTestCase {
 
     // MARK: - Course Tests
 
+    func testFetchCourseReturnsStoredCustomization() throws {
+        try database.saveCourses([
+            MoodleCourse(id: 101, shortName: "CS101", fullName: "Intro to CS", siteID: "site-1"),
+        ])
+        try database.updateCourseCustomFolderName(courseID: 101, siteID: "site-1", customName: "CS")
+
+        XCTAssertEqual(try database.fetchCourse(id: 101, siteID: "site-1")?.customFolderName, "CS")
+        XCTAssertNil(try database.fetchCourse(id: 101, siteID: "site-2"))
+        XCTAssertNil(try database.fetchCourse(id: 999, siteID: "site-1"))
+    }
+
     func testSaveFetchCourses() throws {
         let courses = [
             MoodleCourse(id: 101, shortName: "CS101", fullName: "Intro to CS", siteID: "site-1"),

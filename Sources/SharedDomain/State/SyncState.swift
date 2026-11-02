@@ -177,4 +177,12 @@ public struct LocalItem: Sendable, Codable, Equatable, Identifiable {
         self.tagData = tagData
         self.isLocal = isLocal
     }
+
+    /// Whether this is a synced course's root folder at the top of the domain.
+    /// Stand-ins that recreate a course folder are local rows and don't count.
+    public var isCourseRoot: Bool {
+        !isLocal
+            && parentID == nil
+            && id == MoodleCourse.rootItemID(siteID: siteID, courseID: courseID)
+    }
 }

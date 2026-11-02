@@ -42,6 +42,36 @@ public struct FinderTag: Sendable, Codable, Equatable, Hashable {
         }
     }
 
+    /// Whether two tags refer to the same Finder tag. Finder matches tag names
+    /// case-insensitively, so "Exams" and "exams" are one tag.
+    public func hasSameName(as other: FinderTag) -> Bool {
+        Self.namesMatch(name, other.name)
+    }
+
+    static func namesMatch(_ lhs: String, _ rhs: String) -> Bool {
+        lhs.caseInsensitiveCompare(rhs) == .orderedSame
+    }
+
+    /// Every distinct tag across `tagLists`, sorted by name. When the same
+    /// name appears with different colors, the first occurrence wins.
+    public static func distinct<S: Sequence>(in tagLists: S) -> [FinderTag] where S.Element == [FinderTag] {
+        var result: [FinderTag] = []
+        for tags in tagLists {
+            for tag in tags where !result.contains(where: { $0.hasSameName(as: tag) }) {
+                result.append(tag)
+            }
+        }
+        return result.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// The tag in `known` with the same name as `name`, if any. Used when the
+    /// user types a tag name so an existing tag is reused, keeping its
+    /// spelling and color consistent across courses.
+    public static func existing(named name: String, in known: [FinderTag]) -> FinderTag? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return known.first { namesMatch($0.name, trimmed) }
+    }
+
     /// Serialized tag string in macOS format: "name\ncolorIndex"
     public var serialized: String {
         "\(name)\n\(color.rawValue)"

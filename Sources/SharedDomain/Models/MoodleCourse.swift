@@ -63,9 +63,76 @@ public struct MoodleCourse: Sendable, Codable, Equatable, Hashable, Identifiable
 
     /// The folder name to use in Finder, preferring the custom name if set.
     public var effectiveFolderName: String {
-        if let custom = customFolderName, !custom.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if let custom = trimmedCustomName {
             return FileNameSanitizer.sanitize(custom)
         }
         return sanitizedFolderName
+    }
+
+    /// Whether the user has given this course a name of their own.
+    public var hasCustomName: Bool {
+        trimmedCustomName != nil
+    }
+
+    /// The name to show in the app: the user's custom name if set, otherwise
+    /// the Moodle full name. Unlike `effectiveFolderName` this is not
+    /// sanitized, so it reads exactly as the user typed it.
+    public var displayName: String {
+        trimmedCustomName ?? fullName
+    }
+
+    private var trimmedCustomName: String? {
+        guard let trimmed = customFolderName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else { return nil }
+        return trimmed
+    }
+}
+
+// MARK: - Renaming
+
+extension MoodleCourse {
+    /// Normalize a proposed custom name before persisting it.
+    ///
+    /// Returns `nil` (meaning "use the Moodle name") when the proposal is
+    /// empty or would produce the same Finder folder as the Moodle name, so
+    /// typing the original name back resets the course rather than pinning a
+    /// copy that would stop tracking renames on the Moodle side.
+    public func normalizedCustomName(_ proposed: String?) -> String? {
+        guard let trimmed = proposed?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else { return nil }
+        if FileNameSanitizer.sanitize(trimmed) == sanitizedFolderName {
+            return nil
+        }
+        return trimmed
+    }
+
+    /// The first course in `others` whose Finder folder would collide with
+    /// this course's folder if it were renamed to `proposed`.
+    ///
+    /// Course folders are siblings at the root of the File Provider domain,
+    /// and the default APFS volume is case-insensitive, so the comparison is
+    /// too.
+    public func folderNameConflict(
+        forProposedName proposed: String?,
+        among others: [MoodleCourse]
+    ) -> MoodleCourse? {
+        var renamed = self
+        renamed.customFolderName = normalizedCustomName(proposed)
+        let target = renamed.effectiveFolderName
+        return others.first { other in
+            !(other.id == id && other.siteID == siteID)
+                && other.siteID == siteID
+                && other.effectiveFolderName.caseInsensitiveCompare(target) == .orderedSame
+        }
+    }
+
+    /// The File Provider item identifier of this course's root folder.
+    public var rootItemID: String {
+        Self.rootItemID(siteID: siteID, courseID: id)
+    }
+
+    /// The File Provider item identifier of a course's root folder.
+    public static func rootItemID(siteID: String, courseID: Int) -> String {
+        "course-\(siteID)-\(courseID)"
     }
 }

@@ -1144,6 +1144,11 @@ extension Database {
         }
     }
 
+    /// A single stored course, or `nil` if it hasn't been saved for `siteID`.
+    public func fetchCourse(id: Int, siteID: String) throws -> MoodleCourse? {
+        try fetchCourses(siteID: siteID).first { $0.id == id }
+    }
+
     public func fetchCourses(siteID: String) throws -> [MoodleCourse] {
         let sql = "SELECT * FROM courses WHERE site_id = ? ORDER BY full_name"
         return try queue.sync {

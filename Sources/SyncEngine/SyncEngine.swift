@@ -267,15 +267,23 @@ public actor SyncEngine {
         let courseTags = try database.fetchCourseTags(courseID: course.id, siteID: site.id)
         let courseTagData = FinderTag.tagData(from: courseTags)
 
+        // The stored custom name wins over the caller's copy: the user may have
+        // renamed the course folder in Finder after the app loaded its course
+        // list, and re-syncing must not revert that rename.
+        var folderSource = course
+        if let stored = try database.fetchCourse(id: course.id, siteID: site.id) {
+            folderSource.customFolderName = stored.customFolderName
+        }
+
         // Create the course root folder item
-        let courseItemID = "course-\(site.id)-\(course.id)"
+        let courseItemID = MoodleCourse.rootItemID(siteID: site.id, courseID: course.id)
         let courseItem = LocalItem(
             id: courseItemID,
             parentID: nil,
             siteID: site.id,
             courseID: course.id,
             remoteID: course.id,
-            filename: course.effectiveFolderName,
+            filename: folderSource.effectiveFolderName,
             isDirectory: true,
             creationDate: course.startDate,
             modificationDate: Date(),
