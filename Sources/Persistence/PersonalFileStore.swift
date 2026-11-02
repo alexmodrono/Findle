@@ -238,6 +238,18 @@ public struct PersonalFileStore: Sendable {
     /// - A `local-` id resolves to that row's `localPath`, which must be an existing directory.
     /// - Any other id is a Moodle directory. Its anchor chain is built by walking database rows
     ///   up through `parentID`, and the chain is then passed to `anchorDirectory`.
+    /// The parent of personal files in Finder's Trash: File Provider's trash
+    /// container (`NSFileProviderItemIdentifier.trashContainer`).
+    public static let trashParentID = "NSFileProviderTrashContainerItemIdentifier"
+
+    /// Where trashed personal files wait until they're put back or the Trash is
+    /// emptied. Hidden, so a scan never imports them as files in the site.
+    public func trashDirectory(siteID: String, siteName: String) throws -> URL {
+        let url = try siteDirectory(siteID: siteID, siteName: siteName).appendingPathComponent(".Trash", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
     public func directory(
         forParentID parentID: String?,
         siteID: String,
@@ -246,6 +258,9 @@ public struct PersonalFileStore: Sendable {
     ) throws -> URL {
         guard let parentID else {
             return try siteDirectory(siteID: siteID, siteName: siteName)
+        }
+        if parentID == Self.trashParentID {
+            return try trashDirectory(siteID: siteID, siteName: siteName)
         }
 
         if parentID.hasPrefix("local-") {

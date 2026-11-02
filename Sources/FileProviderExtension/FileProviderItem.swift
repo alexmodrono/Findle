@@ -62,9 +62,10 @@ final class FileProviderItem: NSObject, NSFileProviderItem, NSFileProviderItemDe
             return localItem.isDirectory ? [.allowsReading, .allowsContentEnumerating] : [.allowsReading]
         }
         if isUserItem(localItem) {
+            // Trashing keeps personal files recoverable in Finder's Trash (FI-17).
             var caps: NSFileProviderItemCapabilities = [
                 .allowsReading, .allowsWriting, .allowsRenaming,
-                .allowsReparenting, .allowsDeleting
+                .allowsReparenting, .allowsDeleting, .allowsTrashing
             ]
             if localItem.isDirectory {
                 caps.insert(.allowsContentEnumerating)

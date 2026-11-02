@@ -1,6 +1,7 @@
 import XCTest
 import FileProvider
 import SharedDomain
+import FindlePersistence
 
 /// Evaluates the activation rules from the extension's Info.plist the way Finder
 /// does: against `fileproviderItems`, the selected items.
@@ -204,4 +205,23 @@ final class FinderActionRuleTests: XCTestCase {
 /// An item as Finder may have cached it before Findle published `userInfo`.
 private final class UnpublishedItem: NSObject {
     @objc var userInfo: [AnyHashable: Any]? { nil }
+}
+
+/// Personal files go to Finder's Trash instead of disappearing (FI-17).
+final class PersonalTrashTests: XCTestCase {
+    func testThePersonalStoreUsesFileProvidersTrashContainer() {
+        XCTAssertEqual(PersonalFileStore.trashParentID, NSFileProviderItemIdentifier.trashContainer.rawValue)
+    }
+
+    func testOnlyPersonalFilesCanBeTrashed() {
+        let personal = FileProviderItem(localItem: LocalItem(id: "local-notes", parentID: "course-a-1", siteID: "a", courseID: 1,
+                                                             remoteID: 0, filename: "notes.txt", isLocal: true))
+        let moodle = FileProviderItem(localItem: LocalItem(id: "file-a-1", parentID: "course-a-1", siteID: "a", courseID: 1,
+                                                           remoteID: 7, filename: "a.pdf"))
+        XCTAssertTrue(personal.capabilities.contains(.allowsTrashing))
+        XCTAssertFalse(moodle.capabilities.contains(.allowsTrashing))
+        let trashed = FileProviderItem(localItem: LocalItem(id: "local-notes", parentID: PersonalFileStore.trashParentID, siteID: "a",
+                                                            courseID: 1, remoteID: 0, filename: "notes.txt", isLocal: true))
+        XCTAssertEqual(trashed.parentItemIdentifier, .trashContainer, "A trashed file reports Finder's Trash as its parent")
+    }
 }

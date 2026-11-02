@@ -647,7 +647,10 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                     throw NSFileProviderError(.cannotSynchronize)
                 }
                 newParentID = candidateParentID
-                newCourseID = try newParentID.flatMap { try db.fetchItem(id: $0) }?.courseID ?? 0
+                // In the Trash it keeps its course, for when it's put back.
+                newCourseID = candidateParentID == PersonalFileStore.trashParentID
+                    ? localItem.courseID
+                    : try newParentID.flatMap { try db.fetchItem(id: $0) }?.courseID ?? 0
             }
 
             if changedFields.contains(.filename) || changedFields.contains(.parentItemIdentifier) {
@@ -777,6 +780,8 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     private func isReparentAllowed(itemID: String, newParentID: String?, db: Database) -> Bool {
         guard let newParentID else { return true }
         if newParentID == itemID { return false }
+        // Finder's Trash: the files stay in the personal store until it's emptied.
+        if newParentID == PersonalFileStore.trashParentID { return true }
 
         guard let newParent = try? db.fetchItem(id: newParentID), isContainer(newParent) else {
             return false
