@@ -2179,6 +2179,9 @@ final class AppState: ObservableObject {
             logger.warning("Could not write the widget snapshot: \(DiagnosticFailure(error).summary, privacy: .public)")
         }
         WidgetCenter.shared.reloadAllTimelines()
+        if #available(macOS 26.0, *) {
+            ControlCenter.shared.reloadControls(ofKind: WidgetSnapshot.controlKind)
+        }
     }
 
     /// Assignments and quizzes due in the next seven days across synced courses.

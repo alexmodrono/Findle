@@ -11,6 +11,9 @@ import SharedDomain
 struct FindleWidgets: WidgetBundle {
     var body: some Widget {
         CourseworkWidget()
+        if #available(macOS 26.0, *) {
+            SyncControl()
+        }
     }
 }
 
