@@ -130,6 +130,7 @@ def validate_app(app, version, build, revision, team, symbols):
     owned = [app, app / "Contents/PlugIns/FindleFileProvider.appex"]
     owned += [app / f"Contents/Frameworks/{name}.framework" for name in
               ("SharedDomain", "FindleNetworking", "FindlePersistence", "FindleSyncEngine")]
+    owned.append(app / "Contents/PlugIns/FindleWidgets.appex")
     infos = []
     for bundle in owned:
         path = bundle / "Contents/Info.plist"
@@ -141,6 +142,7 @@ def validate_app(app, version, build, revision, team, symbols):
         infos.append(info)
     require(infos[0]["CFBundleIdentifier"] == "es.amodrono.findle", "Wrong application channel")
     require(infos[1]["CFBundleIdentifier"] == "es.amodrono.findle.file-provider", "Wrong extension channel")
+    require(infos[-1]["CFBundleIdentifier"] == "es.amodrono.findle.widgets", "Wrong widget channel")
     require(infos[0]["LSMinimumSystemVersion"] == "15.0", "App minimum macOS differs from release metadata")
     require(infos[0]["FindleSourceRevision"] == revision, "App source revision mismatch")
     executables = []
@@ -167,6 +169,11 @@ def validate_app(app, version, build, revision, team, symbols):
         entitlements.append(ent)
     require(entitlements[1].get("com.apple.security.app-sandbox") is True, "Provider sandbox missing")
     require(entitlements[1].get("com.apple.security.network.client") is True, "Provider networking entitlement missing")
+    raw = subprocess.run(["codesign", "-d", "--entitlements", ":-", str(owned[-1])], check=True, capture_output=True).stdout
+    widgets = plistlib.loads(raw)
+    require(not widgets.get("com.apple.security.get-task-allow", False), "Debug entitlement in release")
+    require(widgets.get("com.apple.security.app-sandbox") is True, "Widget sandbox missing")
+    require(widgets.get("com.apple.security.application-groups") == ["group.es.amodrono.findle"], "Widget App Group mismatch")
 
 
 def main():

@@ -12,6 +12,9 @@ struct DueThisWeekEntry: Equatable {
     let courseName: String
     let due: Date
     let status: String
+    var needsAction = true
+    /// The assignment's folder in Finder, when it has one.
+    var itemID: String?
 
     var line: String {
         "\(name) (\(courseName)), \(due.formatted(.dateTime.weekday(.wide).hour().minute())). \(status)"
@@ -20,10 +23,17 @@ struct DueThisWeekEntry: Equatable {
     static func entries(courses: [MoodleCourse], assignments: [MoodleAssignment], quizzes: [MoodleQuiz],
                         attempts: [MoodleQuizAttempt], now: Date) -> [DueThisWeekEntry] {
         let end = now.addingTimeInterval(7 * 24 * 60 * 60)
+        let modules = Dictionary(assignments.map { ($0.id, $0.moduleID) }, uniquingKeysWith: { first, _ in first })
         return courses.filter(\.isSyncEnabled).flatMap { course in
             CompanionDeadline.upcoming(for: course, assignments: assignments, quizzes: quizzes, attempts: attempts, now: now)
                 .filter { $0.due <= end }
-                .map { DueThisWeekEntry(name: $0.name, courseName: course.fullName, due: $0.due, status: $0.status) }
+                .map { deadline in
+                    let assignmentID = deadline.kind == .assignment ? Int(deadline.id.dropFirst("assign:".count)) : nil
+                    let folder = assignmentID.flatMap { modules[$0] ?? nil }
+                        .map { "assign-\(course.siteID)-\(course.id)-\($0)" }
+                    return DueThisWeekEntry(name: deadline.name, courseName: course.fullName, due: deadline.due,
+                                            status: deadline.status, needsAction: deadline.needsAction, itemID: folder)
+                }
         }
         .sorted { ($0.due, $0.name) < ($1.due, $1.name) }
     }

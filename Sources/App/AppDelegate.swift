@@ -81,6 +81,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if let courseID = urls.lazy.compactMap(FindleLinks.shownCourse(in:)).last {
             showCourse(courseID)
         }
+        for itemID in urls.compactMap(FindleLinks.revealedItem(in:)) {
+            Task { await state.revealInFinder(itemID: itemID) }
+        }
         for url in urls where url.scheme == "findle" && url.host == "sync" {
             let courseID = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
                 .first { $0.name == "course" }?.value.flatMap(Int.init)

@@ -9,6 +9,7 @@ import AuthenticationServices
 import AppKit
 import CoreSpotlight
 import UserNotifications
+import WidgetKit
 import SharedDomain
 import FindleNetworking
 import FindlePersistence
@@ -34,7 +35,12 @@ final class AppState: ObservableObject {
     @Published var sites: [MoodleSite] = []
     @Published var courses: [MoodleCourse] = []
     @Published var courseTags: [Int: [FinderTag]] = [:]
-    @Published var syncStatus: SyncStatus = .idle
+    @Published var syncStatus: SyncStatus = .idle {
+        didSet {
+            // The control and widget show syncing, up to date or needs attention.
+            if WidgetSnapshot.Status(syncStatus) != WidgetSnapshot.Status(oldValue) { publishWidgetSnapshot() }
+        }
+    }
     @Published var lastSyncDate: Date?
     @Published private(set) var lastSyncReport: SyncRunReport?
     @Published var errorMessage: String?
@@ -1804,6 +1810,7 @@ final class AppState: ObservableObject {
         }
 
         logger.info("Tracking refresh complete")
+        publishWidgetSnapshot()
         // Assignments and quizzes are searchable with their due dates.
         indexForSpotlight()
         // The companion shows deadlines and their state from what was just stored.
@@ -2143,6 +2150,35 @@ final class AppState: ObservableObject {
             }
             await self?.objectWillChange.send()
         }
+    }
+
+    /// Writes what the desktop widget and the Control Center control show, and
+    /// asks them to reload. Without the App Group container there is nowhere to
+    /// write, and they show their signed-out state.
+    func publishWidgetSnapshot() {
+        let snapshot: WidgetSnapshot
+        if let database, let site = currentSite, currentScreen == .workspace, !sessionExpired {
+            let synced = courses.filter { $0.siteID == site.id && $0.isSyncEnabled }
+            let names = Dictionary(synced.map { ($0.id, $0.fullName) }, uniquingKeysWith: { first, _ in first })
+            let deadlines = dueThisWeek().prefix(6).map { entry in
+                WidgetSnapshot.Deadline(id: "\(entry.courseName)-\(entry.name)-\(entry.due.timeIntervalSince1970)",
+                                        name: entry.name, courseName: entry.courseName, due: entry.due,
+                                        status: entry.status, needsAction: entry.needsAction, itemID: entry.itemID)
+            }
+            let recent = synced.flatMap { course in
+                ((try? database.fetchNewItems(courseID: course.id, siteID: site.id)) ?? []).filter { !$0.isDirectory }
+            }.prefix(6).map { WidgetSnapshot.RecentFile(itemID: $0.id, name: $0.filename, courseName: names[$0.courseID] ?? "") }
+            snapshot = WidgetSnapshot(status: WidgetSnapshot.Status(syncStatus), lastSync: lastSyncDate,
+                                      deadlines: Array(deadlines), recentFiles: Array(recent))
+        } else {
+            snapshot = .signedOut
+        }
+        do {
+            try snapshot.write()
+        } catch {
+            logger.warning("Could not write the widget snapshot: \(DiagnosticFailure(error).summary, privacy: .public)")
+        }
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     /// Assignments and quizzes due in the next seven days across synced courses.
@@ -3015,5 +3051,15 @@ private final class ResumeOnce<T: Sendable>: @unchecked Sendable {
         continuation = nil
         lock.unlock()
         pending?.resume(returning: value)
+    }
+}
+
+private extension WidgetSnapshot.Status {
+    init(_ status: AppState.SyncStatus) {
+        switch status {
+        case .syncing: self = .syncing
+        case .error: self = .needsAttention
+        case .idle, .completed: self = .upToDate
+        }
     }
 }

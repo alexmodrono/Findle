@@ -228,6 +228,9 @@ targets:
       - target: FindleFileProvider
         embed: true
         codeSign: true
+      - target: FindleWidgets
+        embed: true
+        codeSign: true
       - target: FindleMCP
         copy:
           destination: executables
@@ -482,6 +485,45 @@ targets:
                   Cancel: OK
                 RecoveryOptions:
                   Continue: false
+
+  # The desktop widget (deadlines, new files) and the Sync Findle control. It
+  # reads only the snapshot the app writes to the App Group container.
+  FindleWidgets:
+    type: app-extension
+    platform: macOS
+    configFiles:
+      Debug: Config/Debug-Widgets.xcconfig
+      Nightly: Config/Nightly-Widgets.xcconfig
+      Release: Config/Release-Widgets.xcconfig
+    attributes:
+      SystemCapabilities:
+        com.apple.ApplicationGroups.Mac:
+          enabled: 1
+    sources:
+      - path: Sources/Widgets
+    dependencies:
+      - target: SharedDomain
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.widgets
+        INFOPLIST_FILE: Resources/Info/Widgets-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/Widgets.entitlements
+        ENABLE_APP_SANDBOX: YES
+        LD_RUNPATH_SEARCH_PATHS:
+          - "@executable_path/../Frameworks"
+          - "@executable_path/../../../../Frameworks"
+      configs:
+        Nightly:
+          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly.widgets
+    info:
+      path: Resources/Info/Widgets-Info.plist
+      properties:
+        CFBundleDisplayName: Findle
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
 
   FindleMCP:
     type: tool
