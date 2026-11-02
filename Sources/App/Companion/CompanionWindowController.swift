@@ -182,7 +182,7 @@ final class CompanionWindowController: NSWindowController {
             course = nil
         } else {
             course = parts.first.flatMap { name in
-                state.courses.first { $0.siteID == siteID && $0.effectiveFolderName == name }
+                FinderFolderResolver.course(folderName: name, siteID: siteID, in: state.courses)
             }
         }
         // Unknown subfolders must not inherit context from the previously visited course.
