@@ -459,7 +459,8 @@ public final class MoodleClient: LMSProvider, Sendable {
                 lastAccessed: course.lastaccess.flatMap { $0 > 0 ? Date(timeIntervalSince1970: TimeInterval($0)) : nil },
                 visible: (course.visible ?? 1) == 1,
                 siteID: site.id,
-                imageURL: imageURL
+                imageURL: imageURL,
+                format: course.format
             )
         }
     }

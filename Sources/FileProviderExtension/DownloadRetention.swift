@@ -11,13 +11,14 @@ import FindlePersistence
 /// policy. The system owns materialization in the replicated model, so Findle
 /// only says which items must stay on disk and asks the system to evict.
 enum DownloadRetention {
+    /// Kept by the user, or by Findle for the current week (FI-16).
     static func contentPolicy(for item: LocalItem) -> NSFileProviderContentPolicy {
-        item.isPinned ? .downloadEagerlyAndKeepDownloaded : .inherited
+        item.isPinned || item.isAutoKept ? .downloadEagerlyAndKeepDownloaded : .inherited
     }
 
     /// Part of the metadata version, so a pin change reaches the system as new metadata.
     static func metadataVersionSuffix(for item: LocalItem) -> String {
-        item.isPinned ? "|kept" : ""
+        item.isPinned ? "|kept" : item.isAutoKept ? "|week" : ""
     }
 
     static func keep(_ ids: [String], database: Database) throws {

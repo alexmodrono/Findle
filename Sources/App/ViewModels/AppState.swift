@@ -1610,6 +1610,7 @@ final class AppState: ObservableObject {
             signalFileProviderChanges()
             indexForSpotlight()
             announceArrivals(since: syncStarted)
+            refreshCurrentWeek()
         }
         guard !report.wasCancelled, !report.requiresReauthentication else { return false }
         await reconcilePersonalFiles()
@@ -1700,6 +1701,7 @@ final class AppState: ObservableObject {
         if report.succeededCount > 0 || report.incompleteCount > 0 {
             signalFileProviderChanges()
             announceArrivals(since: syncStarted)
+            refreshCurrentWeek()
             // Moodle files can clash with personal files; reconciliation preserves both.
             await reconcilePersonalFiles()
         }
@@ -2101,10 +2103,38 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Keeps the current week of each weekly course downloaded and lets the
+    /// previous week go, unless turned off in Settings (FI-16). Runs after
+    /// syncs and on the schedule, since the week changes with the date.
+    func refreshCurrentWeek() {
+        guard let database, let site = currentSite, !isDatabaseTransitioning else { return }
+        let enabled = userDefaults.object(forKey: CurrentWeek.defaultsKey) as? Bool ?? true
+        let courses = self.courses.filter { $0.siteID == site.id }
+        let logger = self.logger
+        Task.detached(priority: .utility) { [weak self] in
+            do {
+                var wanted = Set<String>()
+                if enabled {
+                    let now = Date()
+                    for course in courses where course.weekSectionNumber(on: now) != nil {
+                        wanted.formUnion(CurrentWeek.itemIDs(
+                            course: course, outline: try database.fetchCourseOutline(courseID: course.id, siteID: site.id),
+                            items: try database.fetchItems(courseID: course.id, siteID: site.id), now: now))
+                    }
+                }
+                guard try database.setAutoKept(wanted, siteID: site.id) else { return }
+                await self?.signalFileProviderChanges(for: site)
+            } catch {
+                logger.warning("Could not update the current week: \(DiagnosticFailure(error).summary, privacy: .public)")
+            }
+        }
+    }
+
     /// Due-soon badges depend on the time, not only on syncs, so they are worked
     /// out again on the sync schedule and when the app becomes active.
     func refreshBadges() {
         guard let database, let site = currentSite, !isDatabaseTransitioning else { return }
+        refreshCurrentWeek()
         // An assignment becomes due soon with time, not with a sync.
         if let assignments = try? database.fetchAssignments(siteID: site.id) {
             announceDueSoon(assignments, site: site)

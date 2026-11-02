@@ -51,12 +51,12 @@ public final class Database: @unchecked Sendable {
             .path
     }
 
-    public static let schemaVersion = 20
+    public static let schemaVersion = 21
 
     /// Every column Finder shows, so changing one reports the item to Finder.
     private static let itemsBumpAfterUpdateTrigger = """
         CREATE TRIGGER IF NOT EXISTS items_bump_after_update
-        AFTER UPDATE OF parent_id, filename, file_size, sync_state, is_pinned, local_path, remote_url, content_version, tag_data, is_local, modification_date, badges, link_target
+        AFTER UPDATE OF parent_id, filename, file_size, sync_state, is_pinned, local_path, remote_url, content_version, tag_data, is_local, modification_date, badges, link_target, auto_kept
         ON items
         BEGIN
             UPDATE system_metadata SET value = value + 1 WHERE key = 'change_counter';
@@ -863,6 +863,19 @@ public final class Database: @unchecked Sendable {
             logger.info("Migrated database schema to version 20 (Finder collections)")
         }
 
+        if currentVersion < 21 {
+            // Added at the end, so recovery's positional copy lines up in every database.
+            if !(try existingColumns(table: "items")).contains("auto_kept") {
+                try executeUnsafe("ALTER TABLE items ADD COLUMN auto_kept INTEGER NOT NULL DEFAULT 0")
+            }
+            if !(try existingColumns(table: "courses")).contains("format") {
+                try executeUnsafe("ALTER TABLE courses ADD COLUMN format TEXT")
+            }
+            try executeUnsafe("DROP TRIGGER IF EXISTS items_bump_after_update")
+            try executeUnsafe(Self.itemsBumpAfterUpdateTrigger)
+            logger.info("Migrated database schema to version 21 (current week kept downloaded)")
+        }
+
         // Databases created before the seed marker was introduced were already
         // authoritative app databases. Promote only those legacy databases
         // that contain a session; a partial v14+ snapshot must remain false.
@@ -1170,8 +1183,8 @@ extension Database {
         let sql = """
             INSERT INTO courses (id, site_id, short_name, full_name, summary,
                 category_id, start_date, end_date, last_accessed, visible, subscription_state,
-                custom_folder_name, custom_icon_name, image_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                custom_folder_name, custom_icon_name, image_url, format)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id, site_id) DO UPDATE SET
                 short_name = excluded.short_name,
                 full_name = excluded.full_name,
@@ -1184,7 +1197,8 @@ extension Database {
                 subscription_state = courses.subscription_state,
                 custom_folder_name = COALESCE(courses.custom_folder_name, excluded.custom_folder_name),
                 custom_icon_name = COALESCE(courses.custom_icon_name, excluded.custom_icon_name),
-                image_url = excluded.image_url
+                image_url = excluded.image_url,
+                format = excluded.format
         """
         try queue.sync {
             try executeUnsafe("BEGIN IMMEDIATE TRANSACTION")
@@ -1222,6 +1236,7 @@ extension Database {
                     } else {
                         sqlite3_bind_null(stmt, 14)
                     }
+                    if let format = course.format { sqlite3_bind_text(stmt, 15, (format as NSString).utf8String, -1, SQLITE_TRANSIENT) }
 
                     guard sqlite3_step(stmt) == SQLITE_DONE else {
                         throw FindleError.databaseError(detail: "saveCourses step failed: \(String(cString: sqlite3_errmsg(db)))")
@@ -1281,7 +1296,8 @@ extension Database {
                     customFolderName: customFolderName,
                     customIconName: customIconName,
                     isSyncEnabled: subscriptionState != CourseSubscriptionState.unsubscribed.rawValue,
-                    imageURL: imageURL
+                    imageURL: imageURL,
+                    format: columnIndex(stmt, named: "format").flatMap { sqlite3_column_text(stmt, $0) }.map { String(cString: $0) }
                 ))
             }
             return courses
@@ -2218,8 +2234,8 @@ extension Database {
             INSERT OR REPLACE INTO items (id, parent_id, site_id, course_id, remote_id,
                 filename, is_directory, content_type, file_size, creation_date,
                 modification_date, sync_state, is_pinned, local_path, remote_url, content_version, tag_data, is_local, author, badges,
-                link_target)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                link_target, auto_kept)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         let clearTombstoneStmt = try prepareStatement("DELETE FROM pending_deletions WHERE item_id = ?")
         defer { sqlite3_finalize(clearTombstoneStmt) }
@@ -2262,6 +2278,7 @@ extension Database {
             if let author = item.author { sqlite3_bind_text(stmt, 19, (author as NSString).utf8String, -1, SQLITE_TRANSIENT) }
             sqlite3_bind_int64(stmt, 20, Int64(item.badges.rawValue))
             if let target = item.linkTarget { sqlite3_bind_text(stmt, 21, (target as NSString).utf8String, -1, SQLITE_TRANSIENT) }
+            sqlite3_bind_int(stmt, 22, item.isAutoKept ? 1 : 0)
 
             guard sqlite3_step(stmt) == SQLITE_DONE else {
                 throw FindleError.databaseError(detail: "saveItems step failed: \(String(cString: sqlite3_errmsg(db)))")
@@ -2493,6 +2510,35 @@ extension Database {
             guard status == SQLITE_DONE else {
                 throw FindleError.databaseError(detail: "Failed to update item pinned state")
             }
+        }
+    }
+
+    /// Marks exactly `itemIDs` as kept downloaded for the current week, and
+    /// releases what an earlier week kept. Returns whether anything changed.
+    @discardableResult
+    public func setAutoKept(_ itemIDs: Set<String>, siteID: String) throws -> Bool {
+        try queue.sync {
+            var changed = false
+            try transactionUnsafe {
+                let read = try prepareStatement("SELECT id FROM items WHERE site_id = ? AND auto_kept = 1")
+                defer { sqlite3_finalize(read) }
+                sqlite3_bind_text(read, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                var current = Set<String>()
+                while sqlite3_step(read) == SQLITE_ROW { current.insert(String(cString: sqlite3_column_text(read, 0))) }
+                let update = try prepareStatement("UPDATE items SET auto_kept = ? WHERE id = ? AND site_id = ? AND is_local = 0")
+                defer { sqlite3_finalize(update) }
+                for (id, value) in current.subtracting(itemIDs).map({ ($0, 0) }) + itemIDs.subtracting(current).map({ ($0, 1) }) {
+                    sqlite3_reset(update)
+                    sqlite3_bind_int(update, 1, Int32(value))
+                    sqlite3_bind_text(update, 2, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(update, 3, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    guard sqlite3_step(update) == SQLITE_DONE else {
+                        throw FindleError.databaseError(detail: "Failed to update the current week")
+                    }
+                    if sqlite3_changes(db) > 0 { changed = true }
+                }
+            }
+            return changed
         }
     }
 
@@ -3227,6 +3273,7 @@ extension Database {
         let author = columnIndex(stmt, named: "author").flatMap { sqlite3_column_text(stmt, $0) }.map { String(cString: $0) }
         let badges = columnIndex(stmt, named: "badges").map { ItemBadges(rawValue: Int(sqlite3_column_int64(stmt, $0))) } ?? []
         let linkTarget = columnIndex(stmt, named: "link_target").flatMap { sqlite3_column_text(stmt, $0) }.map { String(cString: $0) }
+        let isAutoKept = columnIndex(stmt, named: "auto_kept").map { sqlite3_column_int(stmt, $0) == 1 } ?? false
 
         return LocalItem(
             id: String(cString: sqlite3_column_text(stmt, 0)),
@@ -3249,7 +3296,8 @@ extension Database {
             isLocal: isLocal,
             author: author,
             badges: badges,
-            linkTarget: linkTarget
+            linkTarget: linkTarget,
+            isAutoKept: isAutoKept
         )
     }
 

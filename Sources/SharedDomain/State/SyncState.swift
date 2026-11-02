@@ -145,6 +145,9 @@ public struct LocalItem: Sendable, Codable, Equatable, Identifiable {
     /// For an entry of a Finder collection, the path of the item it links to,
     /// relative to the entry's folder.
     public var linkTarget: String?
+    /// Kept downloaded by Findle because it belongs to the current week of a
+    /// weekly course (FI-16), as opposed to `isPinned`, which the user sets.
+    public var isAutoKept: Bool
 
     public init(
         id: String = UUID().uuidString,
@@ -167,7 +170,8 @@ public struct LocalItem: Sendable, Codable, Equatable, Identifiable {
         isLocal: Bool = false,
         author: String? = nil,
         badges: ItemBadges = [],
-        linkTarget: String? = nil
+        linkTarget: String? = nil,
+        isAutoKept: Bool = false
     ) {
         self.id = id
         self.parentID = parentID
@@ -190,5 +194,6 @@ public struct LocalItem: Sendable, Codable, Equatable, Identifiable {
         self.author = author
         self.badges = badges
         self.linkTarget = linkTarget
+        self.isAutoKept = isAutoKept
     }
 }

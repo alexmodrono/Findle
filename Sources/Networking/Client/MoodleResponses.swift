@@ -77,6 +77,7 @@ struct CourseResponse: Decodable {
     let enddate: Int?
     let lastaccess: Int?
     let visible: Int?
+    let format: String?
     /// Course card/banner images. The first image-type entry is used as the
     /// gallery cover. Absent on many older sites, so it's optional.
     let overviewfiles: [OverviewFileResponse]?

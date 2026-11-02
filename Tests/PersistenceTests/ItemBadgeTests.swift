@@ -123,7 +123,19 @@ final class ItemBadgeTests: XCTestCase {
         XCTAssertEqual(try badges(assignmentFolder), [], "An assignment Findle can't place has no folder to badge")
     }
 
-    func testDueSoonComesFirstBecauseFinderShowsOneBadge() {
+    func testTheCurrentWeekIsKeptWithoutCountingAsTheUsersChoice() throws {
+        let before = try database.currentChangeCounter()
+        XCTAssertTrue(try database.setAutoKept(["week-1", "slides"], siteID: site))
+        XCTAssertGreaterThan(try database.currentChangeCounter(), before, "Finder hears about the new content policy")
+        XCTAssertEqual(try database.fetchItem(id: "slides")?.isAutoKept, true)
+        XCTAssertEqual(try badges("slides"), [], "Only what the user keeps gets the kept badge")
+        XCTAssertFalse(try database.setAutoKept(["week-1", "slides"], siteID: site), "Nothing to do the second time")
+
+        XCTAssertTrue(try database.setAutoKept([], siteID: site))
+        XCTAssertEqual(try database.fetchItem(id: "slides")?.isAutoKept, false, "Last week goes back to on demand")
+    }
+
+        func testDueSoonComesFirstBecauseFinderShowsOneBadge() {
         XCTAssertEqual(ItemBadges([.kept, .new, .dueSoon]).ordered, [.dueSoon, .new, .kept])
     }
 

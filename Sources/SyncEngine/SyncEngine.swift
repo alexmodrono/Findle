@@ -737,6 +737,7 @@ public actor SyncEngine {
                 item.isPinned = existing.isPinned
                 item.tagData = existing.tagData
                 item.badges = existing.badges
+                item.isAutoKept = existing.isAutoKept
 
                 if existing.contentVersion != item.contentVersion ||
                    existing.fileSize != item.fileSize {
