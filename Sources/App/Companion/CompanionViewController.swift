@@ -12,6 +12,9 @@ final class CompanionViewController: NSViewController {
     private let state: AppState
     private let openSettings: @MainActor () -> Void
     private var course: MoodleCourse?
+    /// The folder last revealed, so the outline follows Finder without undoing
+    /// what the user selects while Finder stays put.
+    private var revealedFolder: String?
     private var subscription: AnyCancellable?
     private var refreshTask: Task<Void, Never>?
 
@@ -57,12 +60,18 @@ final class CompanionViewController: NSViewController {
         }
     }
 
-    func show(course: MoodleCourse?) {
+    /// `folderIDs` are the folder Finder shows and the folders holding it,
+    /// innermost first; the outline reveals the first one it has.
+    func show(course: MoodleCourse?, folderIDs: [String] = []) {
         let changed = self.course?.id != course?.id || self.course?.siteID != course?.siteID
         self.course = course
         let wasLoaded = isViewLoaded
         _ = view
         if changed || !wasLoaded || !presentation.hasSnapshot { refresh() }
+        if folderIDs.first != revealedFolder || changed {
+            revealedFolder = folderIDs.first
+            if !folderIDs.isEmpty { presentation.reveal(folderIDs.map { "item:\($0)" }) }
+        }
     }
 
     private func refresh() {

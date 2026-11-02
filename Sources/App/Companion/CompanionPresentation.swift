@@ -30,6 +30,8 @@ final class CompanionPresentation {
     private(set) var hasSnapshot = false
     var selectedID: String?
     private var contextID: String?
+    /// Rows to reveal once the outline has them, most specific first.
+    private var pendingReveal: [String] = []
 
     var toggleTitle: String { mode == .compact ? "Expand panel" : "Collapse panel" }
     var toggleSymbol: String { (mode == .compact) == attachedOnRight ? "sidebar.right" : "sidebar.left" }
@@ -60,6 +62,35 @@ final class CompanionPresentation {
             expandedIDs = expandedIDs.filter { node(for: $0) != nil }
             if let selectedID, !visibleRows.contains(where: { $0.id == selectedID }) { self.selectedID = nil }
         }
+        applyReveal()
+    }
+
+    /// Follow the folder Finder shows: expand down to the first of `ids` the
+    /// outline has, open it and select it. Ids the outline doesn't have yet are
+    /// tried again when its rows arrive.
+    func reveal(_ ids: [String]) {
+        pendingReveal = ids
+        applyReveal()
+    }
+
+    private func applyReveal() {
+        guard !pendingReveal.isEmpty, !nodes.isEmpty else { return }
+        defer { pendingReveal = [] }
+        for id in pendingReveal {
+            guard let path = path(to: id, in: nodes) else { continue }
+            expandedIDs.formUnion(path)
+            selectedID = id
+            return
+        }
+    }
+
+    /// The ids from a top-level row down to `id`, inclusive.
+    private func path(to id: String, in nodes: [CompanionNode]) -> [String]? {
+        for node in nodes {
+            if node.persistentID == id { return [id] }
+            if let rest = path(to: id, in: node.children) { return [node.persistentID] + rest }
+        }
+        return nil
     }
 
     func node(for id: String) -> CompanionNode? {

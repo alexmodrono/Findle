@@ -2038,6 +2038,29 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Record that the user is looking at the folder with File Provider identity `id`.
+    func recordItemOpened(id: String, siteID: String) {
+        guard let database, let site = currentSite, site.id == siteID else { return }
+        let logger = self.logger
+        Task.detached(priority: .utility) { [weak self] in
+            do {
+                if try database.markItemOpened(id: id, at: Date()) {
+                    await self?.signalFileProviderChanges(for: site)
+                }
+            } catch {
+                logger.warning("Could not record the opened folder: \(DiagnosticFailure(error).summary, privacy: .public)")
+            }
+        }
+    }
+
+    /// The course and folders of the item Finder shows, for the companion.
+    func companionLocation(itemID: String, siteID: String) -> CompanionLocation? {
+        guard let database, currentSite?.id == siteID else { return nil }
+        return CompanionLocation.resolve(itemID: itemID, siteID: siteID, courses: courses) { id in
+            try? database.fetchItem(id: id)
+        }
+    }
+
     /// Due-soon badges depend on the time, not only on syncs, so they are worked
     /// out again on the sync schedule and when the app becomes active.
     func refreshBadges() {

@@ -181,6 +181,7 @@ targets:
       - path: Sources/App/Companion/FinderFolderResolver.swift
       - path: Sources/App/Companion/CompanionNode.swift
       - path: Sources/App/Companion/CompanionPresentation.swift
+      - path: Sources/App/Companion/CompanionLocation.swift
       - path: Sources/App/Companion/FinderWindowObserver.swift
       - path: Sources/App/Companion/CompanionFrameAnimator.swift
       - path: Sources/App/Companion/CompanionMotion.swift
