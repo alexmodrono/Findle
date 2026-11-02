@@ -49,9 +49,21 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         self.domain = domain
         super.init()
         nonisolated(unsafe) weak let owner = self
+        nonisolated(unsafe) let domain = self.domain
         courseDataService = CourseDataServiceSource(source: {
             guard let owner, let database = owner.database, let siteID = owner.siteID else { return nil }
             return (database, siteID)
+        }, keep: { courseID, kept in
+            guard let owner, let database = owner.database, let siteID = owner.siteID else { throw NSFileProviderError(.serverUnreachable) }
+            let id = "course-\(siteID)-\(courseID)"
+            if kept {
+                try DownloadRetention.keep([id], database: database)
+            } else {
+                // Letting the course go only changes the policy; the system
+                // evicts files when it needs the space, as for any item.
+                try database.pinItemsRecursively(id: id, isPinned: false)
+            }
+            NSFileProviderManager(for: domain)?.signalEnumerator(for: .workingSet) { _ in }
         })
 
         logger.info("File Provider extension initialized for domain: \(domain.identifier.rawValue, privacy: .private)")

@@ -567,7 +567,15 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.fileprovider-actionsui
-          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).ReconnectViewController"
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).FinderSheetController"
+          # Actions that open a sheet live here; FinderActionRuleTests reads them too.
+          NSExtensionFileProviderActions:
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.course-info
+              NSExtensionFileProviderActionName: Course Info
+              NSExtensionFileProviderActionActivationRule: 'fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == "course" AND $item.userInfo.moodle == YES).@count == 1'
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.assignment-details
+              NSExtensionFileProviderActionName: Assignment Details
+              NSExtensionFileProviderActionActivationRule: 'fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.assignment == YES).@count == 1'
 
   # The Findle button for Finder's toolbar. It reads only the snapshot the app
   # writes to the App Group container and opens findle:// links.

@@ -150,7 +150,28 @@ final class FinderActionRuleTests: XCTestCase {
         XCTAssertTrue(visibleActions(for: [item("file-a-1")]).isDisjoint(with: [.markDone, .markNotDone]))
     }
 
-    func testCollectionsExplainThatTheyUpdateThemselves() {
+    func testSheetsOpenOnlyOnTheirCourseOrAssignment() throws {
+        let plistURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources/Info/FinderUI-Info.plist")
+        let plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: Data(contentsOf: plistURL), format: nil) as? [String: Any])
+        let actions = try XCTUnwrap((plist["NSExtension"] as? [String: Any])?["NSExtensionFileProviderActions"] as? [[String: String]])
+        var rules: [String: NSPredicate] = [:]
+        for action in actions {
+            let name = try XCTUnwrap(action["NSExtensionFileProviderActionIdentifier"]?.split(separator: ".").last.map(String.init))
+            rules[name] = NSPredicate(format: try XCTUnwrap(action["NSExtensionFileProviderActionActivationRule"]))
+        }
+        func shown(_ items: [NSObject]) -> Set<String> {
+            Set(rules.filter { $0.value.evaluate(with: ["fileproviderItems": items]) }.keys)
+        }
+        XCTAssertEqual(shown([item("course-a-1", directory: true)]), ["course-info"])
+        XCTAssertEqual(shown([item("assign-a-1-40", directory: true)]), ["assignment-details"])
+        XCTAssertEqual(shown([item("file-a-1")]), [])
+        XCTAssertEqual(shown([item("course-a-1", directory: true), item("course-a-2", directory: true)]), [], "One at a time")
+        XCTAssertEqual(shown([item("course-a-2", directory: true, personal: true)]), [], "Not for a stand-in")
+    }
+
+        func testCollectionsExplainThatTheyUpdateThemselves() {
         let folder = FileProviderItem(localItem: LocalItem(
             id: FinderCollection.keptOffline.folderID(siteID: "a"), siteID: "a", courseID: 0, remoteID: 0,
             filename: "Kept Offline", isDirectory: true))

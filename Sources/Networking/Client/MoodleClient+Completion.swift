@@ -34,6 +34,29 @@ extension MoodleClient {
     }
 }
 
+extension MoodleClient {
+    /// The teachers Moodle lists as each course's contacts.
+    public func fetchCourseTeachers(site: MoodleSite, token: AuthToken, courseIDs: [Int]) async throws -> [Int: [String]] {
+        guard !courseIDs.isEmpty else { return [:] }
+        let response: CourseContactsResponse = try await callWebService(
+            site: site, token: token, function: "core_course_get_courses_by_field",
+            params: ["field": "ids", "value": courseIDs.map(String.init).joined(separator: ",")])
+        return Dictionary(response.courses.map { course in
+            (course.id, (course.contacts ?? []).compactMap { $0.fullname?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty })
+        }, uniquingKeysWith: { first, _ in first })
+    }
+}
+
+struct CourseContactsResponse: Decodable {
+    let courses: [Course]
+    struct Course: Decodable {
+        let id: Int
+        let contacts: [Contact]?
+    }
+    struct Contact: Decodable { let fullname: String? }
+}
+
 struct CompletionStatusResponse: Decodable {
     let statuses: [Status]
     struct Status: Decodable {

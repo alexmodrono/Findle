@@ -1765,6 +1765,12 @@ final class AppState: ObservableObject {
         }
         guard sessionWork.isCurrent(lease), database === db else { return }
 
+        // Teachers, for Course Info in Finder. A failed fetch keeps what was stored.
+        if let teachers = try? await client.fetchCourseTeachers(site: site, token: token, courseIDs: courseIDs) {
+            guard sessionWork.isCurrent(lease), database === db else { return }
+            try? db.saveCourseTeachers(teachers, siteID: site.id)
+        }
+
         // Activity completion, per course; a course whose fetch failed keeps what was stored.
         let completions = await Self.boundedMap(courseIDs) { courseID -> (Int, [ActivityCompletion]?) in
             (courseID, try? await client.fetchActivityCompletion(site: site, token: token, courseID: courseID, userID: userID))

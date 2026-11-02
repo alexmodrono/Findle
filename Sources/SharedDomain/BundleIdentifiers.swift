@@ -66,6 +66,8 @@ public enum BundleIdentifiers {
     public static let actionShowInFindle = "\(prefix).action.show-in-findle"
     public static let actionMarkDone = "\(prefix).action.mark-done"
     public static let actionMarkNotDone = "\(prefix).action.mark-not-done"
+    public static let actionCourseInfo = "\(prefix).action.course-info"
+    public static let actionAssignmentDetails = "\(prefix).action.assignment-details"
     public static let actionRemoveDownload = "\(prefix).action.remove-download"
     public static let actionSyncNow = "\(prefix).action.sync-now"
 

@@ -51,7 +51,7 @@ public final class Database: @unchecked Sendable {
             .path
     }
 
-    public static let schemaVersion = 22
+    public static let schemaVersion = 23
 
     /// Every column Finder shows, so changing one reports the item to Finder.
     private static let itemsBumpAfterUpdateTrigger = """
@@ -892,6 +892,14 @@ public final class Database: @unchecked Sendable {
         if currentVersion < 22 {
             // v21 -> v22: activity_completion, created above. Filled by the next coursework refresh.
             logger.info("Migrated database schema to version 22 (activity completion)")
+        }
+
+        if currentVersion < 23 {
+            // Added at the end, so recovery's positional copy lines up in every database.
+            if !(try existingColumns(table: "courses")).contains("teachers") {
+                try executeUnsafe("ALTER TABLE courses ADD COLUMN teachers TEXT")
+            }
+            logger.info("Migrated database schema to version 23 (course teachers)")
         }
 
         // Databases created before the seed marker was introduced were already
@@ -2551,6 +2559,35 @@ extension Database {
             guard status == SQLITE_DONE else {
                 throw FindleError.databaseError(detail: "Failed to update item pinned state")
             }
+        }
+    }
+
+    /// Stores the teachers Moodle lists for each course, for Course Info in Finder.
+    public func saveCourseTeachers(_ teachers: [Int: [String]], siteID: String) throws {
+        try queue.sync {
+            try transactionUnsafe {
+                let update = try prepareStatement("UPDATE courses SET teachers = ? WHERE id = ? AND site_id = ?")
+                defer { sqlite3_finalize(update) }
+                for (courseID, names) in teachers {
+                    sqlite3_reset(update)
+                    let json = String(decoding: try JSONEncoder().encode(names), as: UTF8.self)
+                    sqlite3_bind_text(update, 1, (json as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_int64(update, 2, Int64(courseID))
+                    sqlite3_bind_text(update, 3, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    guard sqlite3_step(update) == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to save teachers") }
+                }
+            }
+        }
+    }
+
+    public func fetchCourseTeachers(courseID: Int, siteID: String) throws -> [String] {
+        try queue.sync {
+            let stmt = try prepareStatement("SELECT teachers FROM courses WHERE id = ? AND site_id = ?")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int64(stmt, 1, Int64(courseID))
+            sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            guard sqlite3_step(stmt) == SQLITE_ROW, let text = sqlite3_column_text(stmt, 0) else { return [] }
+            return (try? JSONDecoder().decode([String].self, from: Data(String(cString: text).utf8))) ?? []
         }
     }
 

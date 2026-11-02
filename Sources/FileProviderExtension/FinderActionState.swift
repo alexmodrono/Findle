@@ -22,6 +22,8 @@ enum FinderActionState {
     static let personalKey = "personal"
     /// "todo" or "done" for activities the user ticks off themselves; absent otherwise.
     static let completionKey = "completion"
+    /// An assignment's folder, which has Assignment Details.
+    static let assignmentKey = "assignment"
 
     enum Kind: String {
         case root, course, section, folder, file
@@ -37,7 +39,8 @@ enum FinderActionState {
             // Keeping a folder also marks the personal files inside it, but only
             // Moodle files can be downloaded again, so only they count as kept.
             keptKey: isMoodleItem && item.isPinned,
-            personalKey: isUserItem(item)
+            personalKey: isUserItem(item),
+            assignmentKey: isMoodleItem && item.id.hasPrefix("assign-")
         ]
         if isMoodleItem, item.badges.contains(.manualCompletion) {
             info[completionKey] = item.badges.contains(.completed) ? "done" : "todo"

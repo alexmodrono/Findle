@@ -66,6 +66,65 @@ final class CourseDataServiceTests: XCTestCase {
         XCTAssertEqual(work.first?.due.timeIntervalSince1970 ?? 0, now.addingTimeInterval(3_600).timeIntervalSince1970, accuracy: 1)
     }
 
+    private func sheetsProxy(for source: CourseDataServiceSource) throws -> CourseDataSheetsProtocol {
+        let connection = NSXPCConnection(listenerEndpoint: try source.makeListenerEndpoint())
+        connection.remoteObjectInterface = NSXPCInterface(with: CourseDataSheetsProtocol.self)
+        connection.resume()
+        nonisolated(unsafe) let finished = connection
+        addTeardownBlock { finished.invalidate(); source.invalidate() }
+        let proxy = connection.synchronousRemoteObjectProxyWithErrorHandler { XCTFail("XPC failed: \($0)") }
+        return try XCTUnwrap(proxy as? CourseDataSheetsProtocol)
+    }
+
+    func testFindersSheetsReadCourseInfoAndAssignmentDetails() throws {
+        let f = try fixture()
+        let database = f.database
+        try database.saveCourseTeachers([1: ["Dr. Ruiz", "Prof. Lee"]], siteID: "a")
+        try database.saveItems([
+            LocalItem(id: "course-a-1", siteID: "a", courseID: 1, remoteID: 1, filename: "Algebra", isDirectory: true),
+            LocalItem(id: "assign-a-1-40", parentID: "course-a-1", siteID: "a", courseID: 1, remoteID: 40, filename: "Essay",
+                      isDirectory: true),
+            LocalItem(id: "file-a-1-5-x.pdf", parentID: "course-a-1", siteID: "a", courseID: 1, remoteID: 5, filename: "x.pdf",
+                      fileSize: 1_000, syncState: .materialized),
+            LocalItem(id: "file-a-1-5-y.pdf", parentID: "course-a-1", siteID: "a", courseID: 1, remoteID: 5, filename: "y.pdf",
+                      fileSize: 5_000),
+        ])
+        try database.saveAssignments([MoodleAssignment(id: 10, courseID: 1, name: "Essay", dueDate: now.addingTimeInterval(7_200),
+                                                       moduleID: 40, submitted: true, graded: true, grade: "9")], siteID: "a")
+        nonisolated(unsafe) var kept: [(Int, Bool)] = []
+        let source = CourseDataServiceSource(source: { (database, "a") }, keep: { kept.append(($0, $1)) },
+                                             admission: { _ in true })
+        let service = try sheetsProxy(for: source)
+
+        let (infoData, infoError) = call { service.fetchCourseInfo(courseID: 1, reply: $0) }
+        XCTAssertNil(infoError)
+        let info = try CourseDataService.decode(CourseDataService.CourseInfo.self, from: XCTUnwrap(infoData))
+        XCTAssertEqual(info.teachers, ["Dr. Ruiz", "Prof. Lee"])
+        XCTAssertEqual(info.storageBytes, 1_000, "Only what is on this Mac counts")
+        XCTAssertFalse(info.keptOffline)
+
+        let (detailData, _) = call { service.fetchAssignmentDetails(itemID: "assign-a-1-40", reply: $0) }
+        let details = try CourseDataService.decode(CourseDataService.AssignmentDetails.self, from: XCTUnwrap(detailData))
+        XCTAssertEqual(details.courseName, "Algebra")
+        XCTAssertEqual(details.status, "Graded: 9")
+
+        let (_, missing) = call { service.fetchAssignmentDetails(itemID: "file-a-1-5-x.pdf", reply: $0) }
+        XCTAssertNotNil(missing, "Only assignment folders have details")
+
+        let box = ReplyBox()
+        service.setCourseKeptOffline(courseID: 1, kept: true) { box.set(nil, $0) }
+        XCTAssertNil(box.value.1)
+        XCTAssertEqual(kept.map(\.0), [1])
+        XCTAssertEqual(kept.map(\.1), [true])
+    }
+
+    func testTheSheetsAddOnlyTheKeptStateAsAWrite() {
+        let methods = protocolMethodNames(CourseDataSheetsProtocol.self)
+        XCTAssertEqual(methods, ["fetchAssignmentDetailsWithItemID:reply:", "fetchCourseInfoWithCourseID:reply:",
+                                 "setCourseKeptOfflineWithCourseID:kept:reply:"],
+                       "Keep Course Offline from Course Info is the one write, as Finder's action")
+    }
+
     func testServiceIsReadOnly() throws {
         let f = try fixture()
         let database = f.database

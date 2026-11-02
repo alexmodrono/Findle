@@ -9,23 +9,61 @@ import FileProviderUI
 import SharedDomain
 import SwiftUI
 
-/// Findle's sheet in Finder. When the Moodle session expires, Finder shows it
-/// instead of only reporting the location as signed out. Reconnecting opens
-/// Findle's sign-in; once the app restores the session the sheet closes and
-/// Finder retries. Cancelling leaves the error in place.
-final class ReconnectViewController: FPUIActionExtensionViewController {
+/// Findle's sheets in Finder.
+///
+/// Reconnect: when the Moodle session expires, Finder shows it instead of only
+/// reporting the location as signed out. Reconnecting opens Findle's sign-in;
+/// once the app restores the session the sheet closes and Finder retries.
+/// Cancelling leaves the error in place.
+///
+/// Course Info and Assignment Details: actions on a course or assignment
+/// folder, with data from the File Provider extension's course data service.
+final class FinderSheetController: FPUIActionExtensionViewController {
     private var sessionObserver: DarwinNotification.Token?
     private let model = ReconnectModel()
+    private var hosting: NSHostingView<AnyView>?
 
     override func loadView() {
-        let hosting = NSHostingView(rootView: ReconnectView(model: model,
-                                                            reconnect: { [weak self] in self?.reconnect() },
-                                                            cancel: { [weak self] in self?.cancel() }))
-        hosting.frame = NSRect(x: 0, y: 0, width: 420, height: 220)
+        let hosting = NSHostingView(rootView: AnyView(EmptyView()))
+        hosting.frame = NSRect(x: 0, y: 0, width: 440, height: 240)
+        self.hosting = hosting
         view = hosting
     }
 
+    private func show<Content: View>(_ content: Content) {
+        _ = view
+        hosting?.rootView = AnyView(content)
+    }
+
+    override func prepare(forAction actionIdentifier: String, itemIdentifiers: [NSFileProviderItemIdentifier]) {
+        let close: () -> Void = { [weak self] in self?.extensionContext.completeRequest() }
+        guard let item = itemIdentifiers.first, let domain = extensionContext.domainIdentifier else {
+            cancel()
+            return
+        }
+        let client = CourseDataClient(domain: domain, item: item)
+        switch actionIdentifier {
+        case BundleIdentifiers.actionCourseInfo:
+            let sheet = CourseInfoModel(client: client, courseID: Self.courseID(of: item.rawValue))
+            show(CourseInfoView(model: sheet, done: close))
+            Task { await sheet.load() }
+        case BundleIdentifiers.actionAssignmentDetails:
+            let sheet = AssignmentDetailsModel(client: client, itemID: item.rawValue)
+            show(AssignmentDetailsView(model: sheet, done: close))
+            Task { await sheet.load() }
+        default:
+            cancel()
+        }
+    }
+
+    /// `course-<site>-<course>`: the course id is the last part.
+    private static func courseID(of itemID: String) -> Int? {
+        itemID.split(separator: "-").last.flatMap { Int($0) }
+    }
+
     override func prepare(forError error: Error) {
+        show(ReconnectView(model: model, reconnect: { [weak self] in self?.reconnect() },
+                           cancel: { [weak self] in self?.cancel() }))
         let nsError = error as NSError
         guard nsError.domain == NSFileProviderErrorDomain, nsError.code == NSFileProviderError.notAuthenticated.rawValue else {
             cancel()
