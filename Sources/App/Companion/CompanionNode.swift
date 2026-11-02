@@ -13,6 +13,8 @@ final class CompanionNode: NSObject {
     let children: [CompanionNode]
     /// Added since the user last looked (FI-04), or holds something that was.
     let isNew: Bool
+    /// Kept downloaded by the user, so the menu offers Remove Download.
+    let isKept: Bool
     /// Tells apart rows for the same item in different groups, such as a file
     /// listed both in Added Recently and in its section.
     let scope: String?
@@ -53,12 +55,19 @@ final class CompanionNode: NSObject {
         return scope.map { "\($0)/\(base)" } ?? base
     }
 
+    /// The Findle item the row stands for, which can be dragged, previewed and kept.
+    var itemID: String? {
+        if case .item(let id) = destination { return id }
+        return nil
+    }
+
     init(_ name: String, destination: Destination = .none, children: [CompanionNode] = [],
-         isNew: Bool = false, scope: String? = nil, symbol: String? = nil) {
+         isNew: Bool = false, isKept: Bool = false, scope: String? = nil, symbol: String? = nil) {
         self.name = name
         self.destination = destination
         self.children = children
         self.isNew = isNew
+        self.isKept = isKept
         self.scope = scope
         self.symbol = symbol
     }

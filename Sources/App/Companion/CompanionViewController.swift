@@ -36,7 +36,17 @@ final class CompanionViewController: NSViewController {
             openNode: { [weak self] in self?.open($0) },
             openSelectionInMoodle: { selection in selection.moodleURL.map { _ = NSWorkspace.shared.open($0) } },
             keepSelection: { [weak self] in self?.state.keepDownloaded(itemID: $0.itemID) },
-            removeSelectionDownload: { [weak self] in self?.state.removeDownload(itemID: $0.itemID) }
+            removeSelectionDownload: { [weak self] in self?.state.removeDownload(itemID: $0.itemID) },
+            item: CompanionItemActions(
+                url: { [state] id in await state.companionItemURL(id) },
+                quickLook: { [state] id in
+                    Task { if let url = await state.companionItemURL(id) { CompanionQuickLook.shared.show(url) } }
+                },
+                reveal: { [state] id in Task { await state.revealInFinder(itemID: id) } },
+                moodleURL: { [state] id in state.moodleURL(forItem: id) },
+                keep: { [state] id in state.keepDownloaded(itemID: id) },
+                removeDownload: { [state] id in state.removeDownload(itemID: id) }
+            )
         )
         let hosting = CompanionHostingView(rootView: CompanionView(presentation: presentation, actions: actions))
         // Finder placement is the only source of window dimensions and behavior.

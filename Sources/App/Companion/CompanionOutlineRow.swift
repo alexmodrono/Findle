@@ -3,6 +3,7 @@ import SwiftUI
 struct CompanionOutlineRow: View {
     let row: CompanionPresentation.Row
     let presentation: CompanionPresentation
+    let itemURL: @Sendable (String) async -> URL?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -40,7 +41,26 @@ struct CompanionOutlineRow: View {
         }
         .padding(.leading, CGFloat(row.depth) * 12)
         .contentShape(.rect)
+        .onDrag(dragProvider)
         .accessibilityElement(children: .contain)
+    }
+
+    /// Drags the item itself into Mail, a document or the Desktop. Its Finder
+    /// location is looked up when the drop asks for it; a file in the cloud
+    /// downloads as the receiver reads it.
+    private func dragProvider() -> NSItemProvider {
+        let provider = NSItemProvider()
+        guard let itemID = row.node.itemID else { return provider }
+        provider.suggestedName = row.node.name
+        let resolve = itemURL
+        provider.registerObject(ofClass: NSURL.self, visibility: .all) { completion in
+            Task {
+                let url = await resolve(itemID)
+                completion(url as NSURL?, url == nil ? CocoaError(.fileNoSuchFile) : nil)
+            }
+            return nil
+        }
+        return provider
     }
 
     private func toggle() {

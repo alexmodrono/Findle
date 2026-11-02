@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @MainActor
@@ -35,7 +36,15 @@ struct CompanionPresentationTests {
         #expect(model.selectedID == "item:lab", "Following Finder selects the file where it lives")
     }
 
-    @Test func changingCoursesClearsStaleNavigation() {
+    @Test func onlyItemRowsCanBeDraggedPreviewedAndKept() {
+        let file = CompanionNode("Notes.pdf", destination: .item("file-1"), isKept: true)
+        #expect(file.itemID == "file-1")
+        #expect(file.isKept)
+        #expect(CompanionNode("Quiz", destination: .web(URL(string: "https://moodle.example.edu")!)).itemID == nil)
+        #expect(CompanionNode("Added Recently").itemID == nil)
+    }
+
+        @Test func changingCoursesClearsStaleNavigation() {
         let model = CompanionPresentation()
         let group = section("week-1", children: [CompanionNode("Notes", destination: .item("notes"))])
         model.replaceNodes([group], contextID: "site/course-1")

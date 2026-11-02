@@ -2846,13 +2846,15 @@ final class AppState: ObservableObject {
 
     private func courseNodes(for course: MoodleCourse, site: MoodleSite, items: [LocalItem], database: Database) -> [CompanionNode] {
         let newIDs = Set(items.filter { $0.badges.contains(.new) }.map(\.id))
+        let keptIDs = Set(items.filter(\.isPinned).map(\.id))
         if let outline = try? database.fetchCourseOutline(courseID: course.id, siteID: site.id) {
             return outline.sections.filter(\.visible).sorted { $0.sectionNumber < $1.sectionNumber }.map { section in
                 let sectionID = "section-\(site.id)-\(course.id)-\(section.id)"
                 let modules = section.modules.filter(\.visible).map { module in
                     let matches = items.filter { $0.remoteID == module.id && !$0.isLocal }
                     let files = matches.filter { !$0.isDirectory }.sorted { $0.filename.localizedStandardCompare($1.filename) == .orderedAscending }
-                    let children = files.map { CompanionNode($0.filename, destination: .item($0.id), isNew: newIDs.contains($0.id)) }
+                    let children = files.map { CompanionNode($0.filename, destination: .item($0.id), isNew: newIDs.contains($0.id),
+                                                             isKept: keptIDs.contains($0.id)) }
                     if children.count == 1, module.type == "resource" { return children[0] }
                     var components = URLComponents(url: site.baseURL.appendingPathComponent("mod/\(module.type)/view.php"), resolvingAgainstBaseURL: false)
                     components?.queryItems = [URLQueryItem(name: "id", value: String(module.id))]
@@ -2872,10 +2874,26 @@ final class AppState: ObservableObject {
             let visited = visited.union([id])
             return (byParent[id] ?? []).sorted { $0.filename.localizedStandardCompare($1.filename) == .orderedAscending }.map {
                 CompanionNode($0.filename, destination: .item($0.id), children: $0.isDirectory ? nodes(under: $0.id, visited: visited) : [],
-                              isNew: newIDs.contains($0.id))
+                              isNew: newIDs.contains($0.id), isKept: keptIDs.contains($0.id))
             }
         }
         return nodes(under: root, visited: [])
+    }
+
+    /// Where an item is in Finder, for dragging and previewing it from the companion.
+    func companionItemURL(_ id: String) async -> URL? {
+        guard let site = currentSite, let item = try? database?.fetchItem(id: id), item.siteID == site.id else { return nil }
+        let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: site.id)), displayName: site.displayName)
+        guard let manager = NSFileProviderManager(for: domain) else { return nil }
+        return await Self.userVisibleFileProviderURL(using: manager, for: NSFileProviderItemIdentifier(id)).url
+    }
+
+    /// The Moodle page of an item, for Open in Moodle and Copy Moodle Link.
+    func moodleURL(forItem id: String) -> URL? {
+        guard let site = currentSite, let item = try? database?.fetchItem(id: id), item.siteID == site.id,
+              !item.isLocal, !item.isInFinderCollection else { return nil }
+        return MoodleURLBuilder.webURL(baseURL: site.baseURL, itemID: item.id, courseID: item.courseID, remoteID: item.remoteID,
+                                       isDirectory: item.isDirectory, parentID: item.parentID)
     }
 
     func openCompanionItem(_ id: String) async {

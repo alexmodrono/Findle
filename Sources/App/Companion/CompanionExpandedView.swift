@@ -34,7 +34,7 @@ struct CompanionExpandedView: View {
                 ContentUnavailableView("No files yet", systemImage: "folder", description: Text(presentation.emptyMessage))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                CompanionOutlineView(presentation: presentation, openNode: actions.openNode)
+                CompanionOutlineView(presentation: presentation, openNode: actions.openNode, itemActions: actions.item)
             }
             Divider().padding(.horizontal, 14)
             VStack(alignment: .leading, spacing: 8) {
