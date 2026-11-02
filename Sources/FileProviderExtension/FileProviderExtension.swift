@@ -584,6 +584,9 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                 database: db
             )
             completionHandler(result.item, result.stillPendingFields, false, nil)
+            if result.badgesChanged {
+                NSFileProviderManager(for: domain)?.signalEnumerator(for: .workingSet) { _ in }
+            }
         } catch let error as NSFileProviderError where error.code == .cannotSynchronize {
             completionHandler(nil, changedFields, false, error)
         } catch {

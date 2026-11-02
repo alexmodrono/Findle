@@ -51,7 +51,18 @@ public final class Database: @unchecked Sendable {
             .path
     }
 
-    public static let schemaVersion = 18
+    public static let schemaVersion = 19
+
+    /// Every column Finder shows, so changing one reports the item to Finder.
+    private static let itemsBumpAfterUpdateTrigger = """
+        CREATE TRIGGER IF NOT EXISTS items_bump_after_update
+        AFTER UPDATE OF parent_id, filename, file_size, sync_state, is_pinned, local_path, remote_url, content_version, tag_data, is_local, modification_date, badges
+        ON items
+        BEGIN
+            UPDATE system_metadata SET value = value + 1 WHERE key = 'change_counter';
+            UPDATE items SET updated_at = (SELECT value FROM system_metadata WHERE key = 'change_counter') WHERE id = NEW.id;
+        END
+        """
 
     /// Opens the database.
     ///
@@ -828,6 +839,20 @@ public final class Database: @unchecked Sendable {
             logger.info("Migrated database schema to version 18 (item authors)")
         }
 
+        if currentVersion < 19 {
+            // Added at the end, so recovery's positional copy lines up in every database.
+            if !(try existingColumns(table: "items")).contains("badges") {
+                try executeUnsafe("ALTER TABLE items ADD COLUMN badges INTEGER NOT NULL DEFAULT 0")
+            }
+            if !(try existingColumns(table: "assignments")).contains("module_id") {
+                try executeUnsafe("ALTER TABLE assignments ADD COLUMN module_id INTEGER")
+            }
+            // A badge change is a change Finder must hear about.
+            try executeUnsafe("DROP TRIGGER IF EXISTS items_bump_after_update")
+            try executeUnsafe(Self.itemsBumpAfterUpdateTrigger)
+            logger.info("Migrated database schema to version 19 (Finder badges)")
+        }
+
         // Databases created before the seed marker was introduced were already
         // authoritative app databases. Promote only those legacy databases
         // that contain a session; a partial v14+ snapshot must remain false.
@@ -1518,6 +1543,7 @@ extension Database {
                 try saveItemsUnsafe(items)
                 try deleteItemsWithTombstoneUnsafe(ids: deletingItemIDs)
                 try recordArrivalsUnsafe(ids: arrivedItemIDs, siteID: cursor.siteID, at: cursor.lastSyncDate)
+                _ = try refreshBadgesUnsafe(siteID: cursor.siteID, now: Date())
                 try saveGeneratedContentsUnsafe(generatedContents, siteID: cursor.siteID)
                 try saveSyncCursorUnsafe(cursor)
                 try saveCourseOutlineUnsafe(courseID: outline.courseID, siteID: cursor.siteID, payload: payload)
@@ -1611,21 +1637,140 @@ extension Database {
     }
 
     /// Record that the user opened an item (a file, or a folder whose contents
-    /// they then saw). Earlier dates never replace a later one.
-    public func markItemOpened(id: String, at date: Date) throws {
+    /// they then saw). Earlier dates never replace a later one. Returns whether
+    /// any item's badges changed, which the caller reports to Finder.
+    @discardableResult
+    public func markItemOpened(id: String, at date: Date) throws -> Bool {
         try queue.sync {
-            let stmt = try prepareStatement("""
-                INSERT INTO item_activity (item_id, site_id, opened_at)
-                SELECT id, site_id, ? FROM items WHERE id = ?
-                ON CONFLICT(item_id) DO UPDATE SET opened_at = MAX(COALESCE(item_activity.opened_at, 0), excluded.opened_at)
-                """)
-            defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_double(stmt, 1, date.timeIntervalSince1970)
-            sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
-            guard sqlite3_step(stmt) == SQLITE_DONE else {
-                throw FindleError.databaseError(detail: "Failed to record opened item")
+            var badgesChanged = false
+            try transactionUnsafe {
+                let stmt = try prepareStatement("""
+                    INSERT INTO item_activity (item_id, site_id, opened_at)
+                    SELECT id, site_id, ? FROM items WHERE id = ?
+                    ON CONFLICT(item_id) DO UPDATE SET opened_at = MAX(COALESCE(item_activity.opened_at, 0), excluded.opened_at)
+                    """)
+                defer { sqlite3_finalize(stmt) }
+                sqlite3_bind_double(stmt, 1, date.timeIntervalSince1970)
+                sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                guard sqlite3_step(stmt) == SQLITE_DONE else {
+                    throw FindleError.databaseError(detail: "Failed to record opened item")
+                }
+                if let siteID = try siteIDUnsafe(itemID: id) {
+                    badgesChanged = try refreshBadgesUnsafe(siteID: siteID, now: Date())
+                }
+            }
+            return badgesChanged
+        }
+    }
+
+    /// Works out the badges of every item of a site and stores those that
+    /// changed, which reports them to Finder. Due-soon badges depend on the
+    /// time, so this also runs on a schedule. Returns whether any changed.
+    @discardableResult
+    public func refreshBadges(siteID: String, now: Date = Date()) throws -> Bool {
+        try queue.sync {
+            var changed = false
+            try transactionUnsafe { changed = try refreshBadgesUnsafe(siteID: siteID, now: now) }
+            return changed
+        }
+    }
+
+    /// The caller must hold `queue`.
+    private func siteIDUnsafe(itemID: String) throws -> String? {
+        let stmt = try prepareStatement("SELECT site_id FROM items WHERE id = ?")
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return sqlite3_column_text(stmt, 0).map { String(cString: $0) }
+    }
+
+    /// The caller must hold `queue`. A folder is new while anything inside it
+    /// is, so the user can follow the badges down to what arrived. Personal
+    /// files never get badges.
+    private func refreshBadgesUnsafe(siteID: String, now: Date) throws -> Bool {
+        struct Row {
+            let id: String
+            let parentID: String?
+            let courseID: Int
+            let remoteID: Int
+            let isLocal: Bool
+            let isPinned: Bool
+            let badges: Int
+            let isNew: Bool
+        }
+        let read = try prepareStatement("""
+            SELECT items.id, items.parent_id, items.course_id, items.remote_id, items.is_local, items.is_pinned, items.badges,
+                activity.arrived_at IS NOT NULL
+                    AND activity.arrived_at > COALESCE(activity.opened_at, 0)
+                    AND activity.arrived_at > COALESCE(parent.opened_at, 0)
+            FROM items
+            LEFT JOIN item_activity activity ON activity.item_id = items.id
+            LEFT JOIN item_activity parent ON parent.item_id = items.parent_id
+            WHERE items.site_id = ?
+            """)
+        defer { sqlite3_finalize(read) }
+        sqlite3_bind_text(read, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        var rows: [Row] = []
+        var status = sqlite3_step(read)
+        while status == SQLITE_ROW {
+            rows.append(Row(
+                id: String(cString: sqlite3_column_text(read, 0)),
+                parentID: sqlite3_column_text(read, 1).map { String(cString: $0) },
+                courseID: Int(sqlite3_column_int64(read, 2)),
+                remoteID: Int(sqlite3_column_int64(read, 3)),
+                isLocal: sqlite3_column_int(read, 4) == 1,
+                isPinned: sqlite3_column_int(read, 5) == 1,
+                badges: Int(sqlite3_column_int64(read, 6)),
+                isNew: sqlite3_column_int(read, 7) == 1))
+            status = sqlite3_step(read)
+        }
+        guard status == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to read item badges") }
+
+        let due = try prepareStatement("""
+            SELECT course_id, module_id FROM assignments
+            WHERE site_id = ? AND module_id IS NOT NULL AND submitted = 0 AND due_date > ? AND due_date <= ?
+            """)
+        defer { sqlite3_finalize(due) }
+        sqlite3_bind_text(due, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_double(due, 2, now.timeIntervalSince1970)
+        sqlite3_bind_double(due, 3, now.addingTimeInterval(ItemBadges.dueSoonWindow).timeIntervalSince1970)
+        var dueSoon = Set<[Int]>()
+        status = sqlite3_step(due)
+        while status == SQLITE_ROW {
+            dueSoon.insert([Int(sqlite3_column_int64(due, 0)), Int(sqlite3_column_int64(due, 1))])
+            status = sqlite3_step(due)
+        }
+        guard status == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to read due assignments") }
+
+        let parents = Dictionary(rows.map { ($0.id, $0.parentID) }, uniquingKeysWith: { first, _ in first })
+        var newIDs = Set<String>()
+        for row in rows where row.isNew && !row.isLocal {
+            var next: String? = row.id
+            while let id = next, newIDs.insert(id).inserted {
+                next = parents[id] ?? nil
             }
         }
+
+        let update = try prepareStatement("UPDATE items SET badges = ? WHERE id = ?")
+        defer { sqlite3_finalize(update) }
+        var changed = false
+        for row in rows {
+            var badges: ItemBadges = []
+            if !row.isLocal {
+                if newIDs.contains(row.id) { badges.insert(.new) }
+                if row.isPinned { badges.insert(.kept) }
+                if row.id.hasPrefix("assign-"), dueSoon.contains([row.courseID, row.remoteID]) { badges.insert(.dueSoon) }
+            }
+            guard badges.rawValue != row.badges else { continue }
+            sqlite3_reset(update)
+            sqlite3_bind_int64(update, 1, Int64(badges.rawValue))
+            sqlite3_bind_text(update, 2, (row.id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            guard sqlite3_step(update) == SQLITE_DONE else {
+                throw FindleError.databaseError(detail: "Failed to update item badges")
+            }
+            changed = true
+        }
+        return changed
     }
 
     /// An item is new from when a sync brings it in until the user opens it or
@@ -1878,8 +2023,8 @@ extension Database {
         let sql = """
             INSERT OR REPLACE INTO items (id, parent_id, site_id, course_id, remote_id,
                 filename, is_directory, content_type, file_size, creation_date,
-                modification_date, sync_state, is_pinned, local_path, remote_url, content_version, tag_data, is_local, author)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                modification_date, sync_state, is_pinned, local_path, remote_url, content_version, tag_data, is_local, author, badges)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         let clearTombstoneStmt = try prepareStatement("DELETE FROM pending_deletions WHERE item_id = ?")
         defer { sqlite3_finalize(clearTombstoneStmt) }
@@ -1920,6 +2065,7 @@ extension Database {
             }
             sqlite3_bind_int(stmt, 18, item.isLocal ? 1 : 0)
             if let author = item.author { sqlite3_bind_text(stmt, 19, (author as NSString).utf8String, -1, SQLITE_TRANSIENT) }
+            sqlite3_bind_int64(stmt, 20, Int64(item.badges.rawValue))
 
             guard sqlite3_step(stmt) == SQLITE_DONE else {
                 throw FindleError.databaseError(detail: "saveItems step failed: \(String(cString: sqlite3_errmsg(db)))")
@@ -2155,10 +2301,17 @@ extension Database {
     }
 
     public func pinItemsRecursively(id: String, isPinned: Bool) throws {
+        try pinItemAndChildren(id: id, isPinned: isPinned)
+        if let siteID = try queue.sync(execute: { try siteIDUnsafe(itemID: id) }) {
+            try refreshBadges(siteID: siteID)
+        }
+    }
+
+    private func pinItemAndChildren(id: String, isPinned: Bool) throws {
         try updateItemPinned(id: id, isPinned: isPinned)
         let children = try fetchItems(parentID: id)
         for child in children {
-            try pinItemsRecursively(id: child.id, isPinned: isPinned)
+            try pinItemAndChildren(id: child.id, isPinned: isPinned)
         }
     }
 
@@ -2874,6 +3027,7 @@ extension Database {
         let isLocalIndex = columnIndex(stmt, named: "is_local")
         let isLocal = isLocalIndex.map { sqlite3_column_int(stmt, $0) == 1 } ?? false
         let author = columnIndex(stmt, named: "author").flatMap { sqlite3_column_text(stmt, $0) }.map { String(cString: $0) }
+        let badges = columnIndex(stmt, named: "badges").map { ItemBadges(rawValue: Int(sqlite3_column_int64(stmt, $0))) } ?? []
 
         return LocalItem(
             id: String(cString: sqlite3_column_text(stmt, 0)),
@@ -2894,7 +3048,8 @@ extension Database {
             contentVersion: sqlite3_column_text(stmt, 15).map { String(cString: $0) },
             tagData: tagData,
             isLocal: isLocal,
-            author: author
+            author: author,
+            badges: badges
         )
     }
 
@@ -2989,8 +3144,8 @@ extension Database {
             do {
                 try deleteForSite("assignments", siteID: siteID)
                 let sql = """
-                    INSERT OR REPLACE INTO assignments (id, site_id, course_id, name, due_date, cutoff_date, submitted, graded, grade)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT OR REPLACE INTO assignments (id, site_id, course_id, name, due_date, cutoff_date, submitted, graded, grade, module_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
                 for a in assignments {
                     let stmt = try prepareStatement(sql)
@@ -3004,10 +3159,12 @@ extension Database {
                     sqlite3_bind_int(stmt, 7, a.submitted ? 1 : 0)
                     sqlite3_bind_int(stmt, 8, a.graded ? 1 : 0)
                     bindOptionalText(stmt, 9, a.grade)
+                    if let moduleID = a.moduleID { sqlite3_bind_int64(stmt, 10, Int64(moduleID)) }
                     guard sqlite3_step(stmt) == SQLITE_DONE else {
                         throw FindleError.databaseError(detail: "saveAssignments: \(String(cString: sqlite3_errmsg(db)))")
                     }
                 }
+                _ = try refreshBadgesUnsafe(siteID: siteID, now: Date())
                 try executeUnsafe("COMMIT")
             } catch {
                 try? executeUnsafe("ROLLBACK")
@@ -3018,7 +3175,7 @@ extension Database {
 
     public func fetchAssignments(siteID: String) throws -> [MoodleAssignment] {
         try queue.sync {
-            let stmt = try prepareStatement("SELECT id, course_id, name, due_date, cutoff_date, submitted, graded, grade FROM assignments WHERE site_id = ?")
+            let stmt = try prepareStatement("SELECT id, course_id, name, due_date, cutoff_date, submitted, graded, grade, module_id FROM assignments WHERE site_id = ?")
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
             var out: [MoodleAssignment] = []
@@ -3029,6 +3186,7 @@ extension Database {
                     name: String(cString: sqlite3_column_text(stmt, 2)),
                     dueDate: Self.columnDate(stmt, 3),
                     cutoffDate: Self.columnDate(stmt, 4),
+                    moduleID: sqlite3_column_type(stmt, 8) == SQLITE_NULL ? nil : Int(sqlite3_column_int64(stmt, 8)),
                     submitted: sqlite3_column_int(stmt, 5) == 1,
                     graded: sqlite3_column_int(stmt, 6) == 1,
                     grade: sqlite3_column_text(stmt, 7).map { String(cString: $0) }

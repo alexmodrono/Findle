@@ -709,6 +709,7 @@ public actor SyncEngine {
                 // Preserve user-set metadata across syncs
                 item.isPinned = existing.isPinned
                 item.tagData = existing.tagData
+                item.badges = existing.badges
 
                 if existing.contentVersion != item.contentVersion ||
                    existing.fileSize != item.fileSize {

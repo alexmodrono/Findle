@@ -89,6 +89,39 @@
 		<string>com.apple.fileprovider-nonui</string>
 		<key>NSExtensionPrincipalClass</key>
 		<string>$(PRODUCT_MODULE_NAME).FileProviderExtension</string>
+		<key>NSFileProviderDecorations</key>
+		<array>
+			<dict>
+				<key>BadgeImageType</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).badge-image.due-soon</string>
+				<key>Category</key>
+				<string>Badge</string>
+				<key>Identifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).badge.due-soon</string>
+				<key>Label</key>
+				<string>Due soon</string>
+			</dict>
+			<dict>
+				<key>BadgeImageType</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).badge-image.new</string>
+				<key>Category</key>
+				<string>Badge</string>
+				<key>Identifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).badge.new</string>
+				<key>Label</key>
+				<string>New</string>
+			</dict>
+			<dict>
+				<key>BadgeImageType</key>
+				<string>com.apple.icon-decoration.badge.pinned</string>
+				<key>Category</key>
+				<string>Badge</string>
+				<key>Identifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).badge.kept</string>
+				<key>Label</key>
+				<string>Kept downloaded</string>
+			</dict>
+		</array>
 		<key>NSFileProviderUserInteractions</key>
 		<array>
 			<dict>
@@ -156,5 +189,34 @@
 			</dict>
 		</array>
 	</dict>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.icon-decoration.badge</string>
+				<string>com.apple.icon-decoration-position.trailing-bottom</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Findle New Badge</string>
+			<key>UTTypeIconFile</key>
+			<string>NewBadge</string>
+			<key>UTTypeIdentifier</key>
+			<string>$(FINDLE_BUNDLE_PREFIX).badge-image.new</string>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.icon-decoration.badge</string>
+				<string>com.apple.icon-decoration-position.trailing-bottom</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Findle Due Soon Badge</string>
+			<key>UTTypeIconFile</key>
+			<string>DueSoonBadge</string>
+			<key>UTTypeIdentifier</key>
+			<string>$(FINDLE_BUNDLE_PREFIX).badge-image.due-soon</string>
+		</dict>
+	</array>
 </dict>
 </plist>

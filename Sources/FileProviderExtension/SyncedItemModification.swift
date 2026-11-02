@@ -8,6 +8,9 @@ enum SyncedItemModification {
     struct Result {
         let item: FileProviderItem
         let stillPendingFields: NSFileProviderItemFields
+        /// Opening changed the badges of other items (its folder, its contents),
+        /// so Finder needs to hear about them.
+        var badgesChanged = false
     }
 
     static func apply(
@@ -27,9 +30,14 @@ enum SyncedItemModification {
         // The system reports when the user opens an item. Opening a folder
         // shows its contents, so both end what counts as new (FI-04).
         var openedAt: Date?
+        var localItem = localItem
+        var badgesChanged = false
         if changedFields.contains(.lastUsedDate), let lastUsedDate {
-            try database.markItemOpened(id: localItem.id, at: lastUsedDate)
+            badgesChanged = try database.markItemOpened(id: localItem.id, at: lastUsedDate)
             openedAt = lastUsedDate
+            if badgesChanged, let reread = try database.fetchItem(id: localItem.id) {
+                localItem = reread
+            }
         }
 
         // macOS 12+ treats unchanged stillPendingFields as unsupported, rather
@@ -39,7 +47,8 @@ enum SyncedItemModification {
         // author), so edits to them settle like timestamp uploads: no write, no error.
         let pending = changedFields.intersection([.contentModificationDate, .extendedAttributes])
         guard changedFields.contains(.tagData) else {
-            return Result(item: FileProviderItem(localItem: localItem, lastUsedDate: openedAt), stillPendingFields: pending)
+            return Result(item: FileProviderItem(localItem: localItem, lastUsedDate: openedAt), stillPendingFields: pending,
+                          badgesChanged: badgesChanged)
         }
 
         let parts = localItem.id.split(separator: "-")
@@ -53,6 +62,7 @@ enum SyncedItemModification {
         guard let updated = try database.fetchItem(id: localItem.id) else {
             throw NSFileProviderError(.noSuchItem)
         }
-        return Result(item: FileProviderItem(localItem: updated, lastUsedDate: openedAt), stillPendingFields: pending)
+        return Result(item: FileProviderItem(localItem: updated, lastUsedDate: openedAt), stillPendingFields: pending,
+                      badgesChanged: badgesChanged)
     }
 }

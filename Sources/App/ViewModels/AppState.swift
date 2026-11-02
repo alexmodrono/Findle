@@ -1747,6 +1747,8 @@ final class AppState: ObservableObject {
             }
             guard sessionWork.isCurrent(lease), database === db else { return }
             try? db.saveAssignments(enriched, siteID: site.id)
+            // Saving them works out which assignments are due soon.
+            signalFileProviderChanges(for: site)
         }
         guard sessionWork.isCurrent(lease), database === db else { return }
 
@@ -2016,7 +2018,8 @@ final class AppState: ObservableObject {
     func recordFolderOpened(course: MoodleCourse, subpath: [String]) {
         guard let database else { return }
         let logger = self.logger
-        Task.detached(priority: .utility) {
+        let site = currentSite?.id == course.siteID ? currentSite : nil
+        Task.detached(priority: .utility) { [weak self] in
             var id = "course-\(course.siteID)-\(course.id)"
             do {
                 for name in subpath {
@@ -2025,9 +2028,27 @@ final class AppState: ObservableObject {
                     guard matches.count == 1 else { return }
                     id = matches[0].id
                 }
-                try database.markItemOpened(id: id, at: Date())
+                // Its contents lose their new badges in Finder too.
+                if try database.markItemOpened(id: id, at: Date()), let site {
+                    await self?.signalFileProviderChanges(for: site)
+                }
             } catch {
                 logger.warning("Could not record the opened folder: \(DiagnosticFailure(error).summary, privacy: .public)")
+            }
+        }
+    }
+
+    /// Due-soon badges depend on the time, not only on syncs, so they are worked
+    /// out again on the sync schedule and when the app becomes active.
+    func refreshBadges() {
+        guard let database, let site = currentSite, !isDatabaseTransitioning else { return }
+        let logger = self.logger
+        Task.detached(priority: .utility) { [weak self] in
+            do {
+                guard try database.refreshBadges(siteID: site.id) else { return }
+                await self?.signalFileProviderChanges(for: site)
+            } catch {
+                logger.warning("Could not refresh Finder badges: \(DiagnosticFailure(error).summary, privacy: .public)")
             }
         }
     }
@@ -2035,6 +2056,7 @@ final class AppState: ObservableObject {
     /// Called when the app becomes active (e.g. when the user clicks "Sign In" in Finder).
     /// If already authenticated, re-signals auth resolution to the File Provider.
     func resolveFileProviderAuthIfNeeded() {
+        refreshBadges()
         guard currentScreen == .workspace,
               let site = currentSite,
               currentToken != nil else { return }
@@ -2558,6 +2580,7 @@ final class AppState: ObservableObject {
                 }
 
                 guard let self, self.sessionWork.isCurrent(lease) else { return }
+                self.refreshBadges()
                 await self.syncAll()
             }
         }

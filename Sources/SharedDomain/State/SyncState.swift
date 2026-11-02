@@ -139,6 +139,9 @@ public struct LocalItem: Sendable, Codable, Equatable, Identifiable {
     public var isLocal: Bool
     /// Who uploaded the file to Moodle, when Moodle says.
     public var author: String?
+    /// The badges Finder shows on the item. The database works them out; a
+    /// sync never sets them.
+    public var badges: ItemBadges
 
     public init(
         id: String = UUID().uuidString,
@@ -159,7 +162,8 @@ public struct LocalItem: Sendable, Codable, Equatable, Identifiable {
         contentVersion: String? = nil,
         tagData: Data? = nil,
         isLocal: Bool = false,
-        author: String? = nil
+        author: String? = nil,
+        badges: ItemBadges = []
     ) {
         self.id = id
         self.parentID = parentID
@@ -180,5 +184,6 @@ public struct LocalItem: Sendable, Codable, Equatable, Identifiable {
         self.tagData = tagData
         self.isLocal = isLocal
         self.author = author
+        self.badges = badges
     }
 }

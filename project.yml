@@ -338,6 +338,8 @@ targets:
           enabled: 1
     sources:
       - path: Sources/FileProviderExtension
+      - path: Resources/Badges
+        buildPhase: resources
     dependencies:
       - target: SharedDomain
       - target: FindleNetworking
@@ -363,11 +365,36 @@ targets:
           CFBundlePrimaryIcon:
             CFBundleSymbolName: graduationcap
         FindlePersonalFilesFolderName: $(FINDLE_PERSONAL_FILES_FOLDER)
+        # Badge images for NSFileProviderDecorations that macOS has no image for.
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: $(FINDLE_BUNDLE_PREFIX).badge-image.new
+            UTTypeDescription: Findle New Badge
+            UTTypeConformsTo: [com.apple.icon-decoration.badge, com.apple.icon-decoration-position.trailing-bottom]
+            UTTypeIconFile: NewBadge
+          - UTTypeIdentifier: $(FINDLE_BUNDLE_PREFIX).badge-image.due-soon
+            UTTypeDescription: Findle Due Soon Badge
+            UTTypeConformsTo: [com.apple.icon-decoration.badge, com.apple.icon-decoration-position.trailing-bottom]
+            UTTypeIconFile: DueSoonBadge
         NSExtension:
           NSExtensionPointIdentifier: com.apple.fileprovider-nonui
           NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).FileProviderExtension"
           NSExtensionFileProviderDocumentGroup: "$(APP_GROUP_IDENTIFIER)"
           NSExtensionFileProviderSupportsEnumeration: true
+          # Items list them most pressing first (FinderBadges), and Finder draws
+          # the first. The labels show in Get Info, list view and VoiceOver.
+          NSFileProviderDecorations:
+            - Identifier: $(FINDLE_BUNDLE_PREFIX).badge.due-soon
+              BadgeImageType: $(FINDLE_BUNDLE_PREFIX).badge-image.due-soon
+              Category: Badge
+              Label: Due soon
+            - Identifier: $(FINDLE_BUNDLE_PREFIX).badge.new
+              BadgeImageType: $(FINDLE_BUNDLE_PREFIX).badge-image.new
+              Category: Badge
+              Label: New
+            - Identifier: $(FINDLE_BUNDLE_PREFIX).badge.kept
+              BadgeImageType: com.apple.icon-decoration.badge.pinned
+              Category: Badge
+              Label: Kept downloaded
           # Each rule reads the state items publish in userInfo (FinderActionState) and
           # hides the action where it does nothing; FinderActionRuleTests evaluates them.
           # Items Finder cached before they published any state (kind == nil) keep
@@ -504,6 +531,7 @@ targets:
       - path: Sources/FileProviderExtension/FinderActionState.swift
       - path: Sources/FileProviderExtension/CourseDataServiceSource.swift
       - path: Sources/FileProviderExtension/ThumbnailFetcher.swift
+      - path: Sources/FileProviderExtension/FinderBadges.swift
     dependencies:
       - target: SharedDomain
       - target: FindleNetworking

@@ -35,7 +35,7 @@ enum MoodleSiteLinks {
 }
 
 /// Adapts a LocalItem to NSFileProviderItem for the File Provider framework.
-final class FileProviderItem: NSObject, NSFileProviderItem {
+final class FileProviderItem: NSObject, NSFileProviderItem, NSFileProviderItemDecorating {
     private let localItem: LocalItem
     private let openedAt: Date?
 
@@ -111,6 +111,7 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
         let metadataVersion = (localItem.modificationDate.map { String($0.timeIntervalSince1970) } ?? contentVersion)
             + "|" + Self.digest(Data(described.utf8) + Data([0]) + (localItem.tagData ?? Data()))
             + DownloadRetention.metadataVersionSuffix(for: localItem)
+            + FinderBadges.metadataVersionSuffix(for: localItem)
             + "|" + FinderActionState.revision
         return NSFileProviderItemVersion(
             contentVersion: Data(contentVersion.utf8),
@@ -152,6 +153,10 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
 
     var userInfo: [AnyHashable: Any]? {
         FinderActionState.userInfo(for: localItem)
+    }
+
+    var decorations: [NSFileProviderItemDecorationIdentifier]? {
+        FinderBadges.decorations(for: localItem)
     }
 
     /// Where the item lives on Moodle, for Get Info's "Where from".

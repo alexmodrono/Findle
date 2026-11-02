@@ -13,6 +13,8 @@ public struct MoodleAssignment: Sendable, Codable, Equatable, Identifiable {
     public let name: String
     public let dueDate: Date?
     public let cutoffDate: Date?
+    /// The course module, which names the assignment's folder in Finder.
+    public let moduleID: Int?
     /// Submission lifecycle, filled from `mod_assign_get_submission_status`.
     public var submitted: Bool
     public var graded: Bool
@@ -24,6 +26,7 @@ public struct MoodleAssignment: Sendable, Codable, Equatable, Identifiable {
         name: String,
         dueDate: Date? = nil,
         cutoffDate: Date? = nil,
+        moduleID: Int? = nil,
         submitted: Bool = false,
         graded: Bool = false,
         grade: String? = nil
@@ -33,6 +36,7 @@ public struct MoodleAssignment: Sendable, Codable, Equatable, Identifiable {
         self.name = name
         self.dueDate = dueDate
         self.cutoffDate = cutoffDate
+        self.moduleID = moduleID
         self.submitted = submitted
         self.graded = graded
         self.grade = grade

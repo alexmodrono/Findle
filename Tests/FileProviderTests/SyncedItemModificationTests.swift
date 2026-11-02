@@ -161,7 +161,16 @@ final class SyncedItemModificationTests: XCTestCase {
         XCTAssertEqual(result.stillPendingFields, .contentModificationDate, "Only the unsupported timestamp stays pending")
         XCTAssertEqual(result.item.lastUsedDate ?? nil, opened, "The system's replica keeps the date it reported")
         XCTAssertEqual(try f.database.fetchNewItems(courseID: 1, siteID: "a"), [])
-        XCTAssertEqual(try f.database.currentChangeCounter(), anchor, "A visit is not a change Finder needs to hear about")
+        XCTAssertTrue(result.badgesChanged, "The visit clears the new badge, which Finder needs to hear about")
+        XCTAssertNil(result.item.decorations ?? nil)
+        XCTAssertGreaterThan(try f.database.currentChangeCounter(), anchor)
+
+        let settled = try f.database.currentChangeCounter()
+        let again = try SyncedItemModification.apply(
+            to: item, changedFields: .lastUsedDate,
+            tagData: nil, lastUsedDate: opened.addingTimeInterval(60), hasNewContents: false, siteID: "a", database: f.database)
+        XCTAssertFalse(again.badgesChanged)
+        XCTAssertEqual(try f.database.currentChangeCounter(), settled, "Visiting something already seen changes nothing")
     }
 
     func testTagStorageFailureDoesNotReturnSuccessfulMetadataResult() throws {

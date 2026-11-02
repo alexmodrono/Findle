@@ -546,7 +546,8 @@ public final class MoodleClient: LMSProvider, Sendable {
                     courseID: item.course,
                     name: item.name,
                     dueDate: Self.timestamp(item.duedate),
-                    cutoffDate: Self.timestamp(item.cutoffdate)
+                    cutoffDate: Self.timestamp(item.cutoffdate),
+                    moduleID: item.cmid
                 )
             }
         }
