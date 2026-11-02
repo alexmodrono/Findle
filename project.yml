@@ -190,6 +190,7 @@ targets:
       - path: Sources/App/Services/LegacySettingsMigration.swift
       - path: Sources/App/Services/DiagnosticsReportBuilder.swift
       - path: Sources/App/Services/SyncReportPresentation.swift
+      - path: Sources/App/Services/SpotlightIndexer.swift
       - path: Sources/App/Services/SessionWorkCoordinator.swift
       - path: Sources/App/Services/ProviderResetCoordinator.swift
     dependencies:

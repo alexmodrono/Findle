@@ -1786,6 +1786,8 @@ final class AppState: ObservableObject {
         }
 
         logger.info("Tracking refresh complete")
+        // Assignments and quizzes are searchable with their due dates.
+        indexForSpotlight()
         // The companion shows deadlines and their state from what was just stored.
         objectWillChange.send()
     }
@@ -2787,30 +2789,48 @@ final class AppState: ObservableObject {
     // MARK: - Spotlight
 
     func handleSpotlightActivity(_ activity: NSUserActivity) {
-        guard let identifier = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String else { return }
-        let prefix = BundleIdentifiers.spotlightPrefix + "."
-
-        if identifier.hasPrefix("\(prefix)course.") {
-            let components = identifier.dropFirst("\(prefix)course.".count).split(separator: ".")
-            if let courseIDStr = components.last,
-               let courseID = Int(courseIDStr),
-               let course = courses.first(where: { $0.id == courseID }) {
+        guard let identifier = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String,
+              let result = SpotlightIndexer.result(for: identifier) else { return }
+        switch result {
+        case .course(let courseID):
+            if let course = courses.first(where: { $0.id == courseID }) {
                 Task { await openFileProviderInFinder(selecting: course) }
             }
-        } else if identifier.hasPrefix("\(prefix)item.") {
-            let itemID = String(identifier.dropFirst("\(prefix)item.".count))
-            if let db = database, let item = try? db.fetchItem(id: itemID),
-               let course = courses.first(where: { $0.id == item.courseID }) {
-                Task { await openFileProviderInFinder(selecting: course) }
-            }
+        case .item(let itemID):
+            Task { await revealInFinder(itemID: itemID) }
+        case .quiz(let quizID):
+            // Quizzes have no item in Finder; Moodle finds one by its id.
+            guard let site = currentSite,
+                  var components = URLComponents(url: site.baseURL.appendingPathComponent("mod/quiz/view.php"),
+                                                 resolvingAgainstBaseURL: false) else { return }
+            components.queryItems = [URLQueryItem(name: "q", value: String(quizID))]
+            if let url = components.url { NSWorkspace.shared.open(url) }
         }
+    }
+
+    /// Select an item in its Finder window, falling back to its course.
+    func revealInFinder(itemID: String) async {
+        guard let site = currentSite, let item = try? database?.fetchItem(id: itemID), item.siteID == site.id else { return }
+        let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: site.id)),
+                                          displayName: site.displayName)
+        if let manager = NSFileProviderManager(for: domain),
+           let url = await Self.userVisibleFileProviderURL(using: manager, for: NSFileProviderItemIdentifier(itemID)).url {
+            let didAccess = url.startAccessingSecurityScopedResource()
+            defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            return
+        }
+        await openFileProviderInFinder(selecting: courses.first { $0.id == item.courseID })
     }
 
     private func indexForSpotlight() {
         guard let db = database, let site = currentSite else { return }
         let allItems = (try? db.fetchAllItems(siteID: site.id)) ?? []
         let siteName = site.capabilities.siteName ?? site.displayName
-        SpotlightIndexer.shared.indexCourses(courses, items: allItems, siteName: siteName)
+        SpotlightIndexer.shared.indexCourses(courses, items: allItems,
+                                             assignments: (try? db.fetchAssignments(siteID: site.id)) ?? [],
+                                             quizzes: (try? db.fetchQuizzes(siteID: site.id)) ?? [],
+                                             siteName: siteName)
     }
 
     // MARK: - Finder Sidebar Favorites
