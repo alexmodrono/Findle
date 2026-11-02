@@ -74,4 +74,8 @@ public enum BundleIdentifiers {
     /// sandbox boundaries without any shared-container or entitlement setup,
     /// which the extension's XPC-hosted process needs.
     public static let syncNowRequestNotification = "\(prefix).sync-now-requested"
+
+    /// Posted by the extension when opening an item in Finder changed what
+    /// counts as new, so the app's views catch up.
+    public static let itemsSeenNotification = "\(prefix).items-seen"
 }

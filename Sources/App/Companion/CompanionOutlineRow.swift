@@ -30,6 +30,13 @@ struct CompanionOutlineRow: View {
                 .lineLimit(1)
                 .help(row.node.name)
             Spacer(minLength: 0)
+            if row.node.isNew {
+                Circle()
+                    .fill(.tint)
+                    .frame(width: 7, height: 7)
+                    .help("New since your last visit")
+                    .accessibilityLabel("New")
+            }
         }
         .padding(.leading, CGFloat(row.depth) * 12)
         .contentShape(.rect)

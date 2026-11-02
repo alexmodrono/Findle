@@ -100,6 +100,7 @@ final class AppState: ObservableObject {
     }
     private var syncSettingsObserver: NSObjectProtocol?
     private var syncNowObserver: DarwinNotification.Token?
+    private var itemsSeenObserver: DarwinNotification.Token?
     /// Guards against a burst of "Sync Now" requests (the extension posts twice
     /// when it has to cold-launch the app) turning into overlapping syncs.
     private var lastSyncNowRequest: Date?
@@ -2031,6 +2032,7 @@ final class AppState: ObservableObject {
                 // Its contents lose their new badges in Finder too.
                 if try database.markItemOpened(id: id, at: Date()), let site {
                     await self?.signalFileProviderChanges(for: site)
+                    await self?.objectWillChange.send()
                 }
             } catch {
                 logger.warning("Could not record the opened folder: \(DiagnosticFailure(error).summary, privacy: .public)")
@@ -2046,6 +2048,7 @@ final class AppState: ObservableObject {
             do {
                 if try database.markItemOpened(id: id, at: Date()) {
                     await self?.signalFileProviderChanges(for: site)
+                    await self?.objectWillChange.send()
                 }
             } catch {
                 logger.warning("Could not record the opened folder: \(DiagnosticFailure(error).summary, privacy: .public)")
@@ -2502,6 +2505,10 @@ final class AppState: ObservableObject {
     /// Finder. The extension can't sync by itself, so it posts a Darwin
     /// notification and we do the work here.
     private func observeSyncNowRequests() {
+        // Opening items in Finder changes what the companion marks as new.
+        itemsSeenObserver = DarwinNotification.addObserver(for: BundleIdentifiers.itemsSeenNotification) { [weak self] in
+            Task { @MainActor in self?.objectWillChange.send() }
+        }
         syncNowObserver = DarwinNotification.addObserver(
             for: BundleIdentifiers.syncNowRequestNotification
         ) { [weak self] in
@@ -2648,21 +2655,34 @@ final class AppState: ObservableObject {
     func companionNodes(for course: MoodleCourse) -> [CompanionNode] {
         guard let database, let site = currentSite, site.id == course.siteID,
               let items = try? database.fetchItems(courseID: course.id, siteID: site.id) else { return [] }
+        // What arrived since the user last looked comes first, and is marked
+        // where it sits too, until the user opens it or its folder (FN-08).
+        let recent = ((try? database.fetchNewItems(courseID: course.id, siteID: site.id)) ?? []).prefix(50).map {
+            CompanionNode($0.filename, destination: .item($0.id), isNew: true, scope: "recent")
+        }
+        let added = recent.isEmpty ? [] : [CompanionNode("Added Recently", children: Array(recent), symbol: "sparkles")]
+        return added + courseNodes(for: course, site: site, items: items, database: database)
+    }
+
+    private func courseNodes(for course: MoodleCourse, site: MoodleSite, items: [LocalItem], database: Database) -> [CompanionNode] {
+        let newIDs = Set(items.filter { $0.badges.contains(.new) }.map(\.id))
         if let outline = try? database.fetchCourseOutline(courseID: course.id, siteID: site.id) {
             return outline.sections.filter(\.visible).sorted { $0.sectionNumber < $1.sectionNumber }.map { section in
                 let sectionID = "section-\(site.id)-\(course.id)-\(section.id)"
                 let modules = section.modules.filter(\.visible).map { module in
                     let matches = items.filter { $0.remoteID == module.id && !$0.isLocal }
                     let files = matches.filter { !$0.isDirectory }.sorted { $0.filename.localizedStandardCompare($1.filename) == .orderedAscending }
-                    let children = files.map { CompanionNode($0.filename, destination: .item($0.id)) }
+                    let children = files.map { CompanionNode($0.filename, destination: .item($0.id), isNew: newIDs.contains($0.id)) }
                     if children.count == 1, module.type == "resource" { return children[0] }
                     var components = URLComponents(url: site.baseURL.appendingPathComponent("mod/\(module.type)/view.php"), resolvingAgainstBaseURL: false)
                     components?.queryItems = [URLQueryItem(name: "id", value: String(module.id))]
                     let destination: CompanionNode.Destination = matches.first(where: \.isDirectory)
                         .map { .item($0.id) } ?? components?.url.map { .web($0) } ?? .none
-                    return CompanionNode(module.name, destination: destination, children: children)
+                    return CompanionNode(module.name, destination: destination, children: children,
+                                         isNew: matches.contains { newIDs.contains($0.id) })
                 }
-                return CompanionNode(section.name, destination: .item(sectionID), children: modules)
+                return CompanionNode(section.name, destination: .item(sectionID), children: modules,
+                                     isNew: newIDs.contains(sectionID))
             }
         }
         let root = "course-\(course.siteID)-\(course.id)"
@@ -2671,7 +2691,8 @@ final class AppState: ObservableObject {
             guard !visited.contains(id) else { return [] }
             let visited = visited.union([id])
             return (byParent[id] ?? []).sorted { $0.filename.localizedStandardCompare($1.filename) == .orderedAscending }.map {
-                CompanionNode($0.filename, destination: .item($0.id), children: $0.isDirectory ? nodes(under: $0.id, visited: visited) : [])
+                CompanionNode($0.filename, destination: .item($0.id), children: $0.isDirectory ? nodes(under: $0.id, visited: visited) : [],
+                              isNew: newIDs.contains($0.id))
             }
         }
         return nodes(under: root, visited: [])
