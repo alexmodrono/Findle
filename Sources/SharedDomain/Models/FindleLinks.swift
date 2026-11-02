@@ -36,6 +36,9 @@ public enum FindleLinks {
     /// Start a sync in the background (the Control Center control).
     public static let sync = URL(string: "\(scheme)://sync")!
 
+    /// Sign in again after the session expired (Finder's Reconnect sheet).
+    public static let reconnect = URL(string: "\(scheme)://reconnect")!
+
     /// Open Findle's settings (the Finder toolbar button).
     public static let settings = URL(string: "\(scheme)://settings")!
 

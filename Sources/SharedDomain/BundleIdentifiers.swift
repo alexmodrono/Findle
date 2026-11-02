@@ -80,4 +80,8 @@ public enum BundleIdentifiers {
     /// Posted by the extension when opening an item in Finder changed what
     /// counts as new, so the app's views catch up.
     public static let itemsSeenNotification = "\(prefix).items-seen"
+
+    /// Posted by the app once a new session clears the File Provider's sign-in
+    /// error, so Finder's Reconnect sheet can close.
+    public static let sessionRestoredNotification = "\(prefix).session-restored"
 }

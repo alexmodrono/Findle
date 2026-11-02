@@ -237,6 +237,9 @@ targets:
       - target: FindleFinderSync
         embed: true
         codeSign: true
+      - target: FindleFinderUI
+        embed: true
+        codeSign: true
       - target: FindleMCP
         copy:
           destination: executables
@@ -530,6 +533,41 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
+  # Findle's sheets in Finder: Reconnect when the session expires. It needs no
+  # App Group or keychain; the app signs in and tells it when it's done.
+  FindleFinderUI:
+    type: app-extension
+    platform: macOS
+    configFiles:
+      Debug: Config/Debug-FinderUI.xcconfig
+      Nightly: Config/Nightly-FinderUI.xcconfig
+      Release: Config/Release-FinderUI.xcconfig
+    sources:
+      - path: Sources/FinderUI
+    dependencies:
+      - target: SharedDomain
+      - sdk: FileProviderUI.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.file-provider-ui
+        INFOPLIST_FILE: Resources/Info/FinderUI-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/FinderUI.entitlements
+        ENABLE_APP_SANDBOX: YES
+        LD_RUNPATH_SEARCH_PATHS:
+          - "@executable_path/../Frameworks"
+          - "@executable_path/../../../../Frameworks"
+      configs:
+        Nightly:
+          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly.file-provider-ui
+    info:
+      path: Resources/Info/FinderUI-Info.plist
+      properties:
+        CFBundleDisplayName: Findle
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.fileprovider-actionsui
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).ReconnectViewController"
 
   # The Findle button for Finder's toolbar. It reads only the snapshot the app
   # writes to the App Group container and opens findle:// links.

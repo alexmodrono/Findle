@@ -9,4 +9,9 @@ final class SyncControlLinkTests: XCTestCase {
         XCTAssertEqual(FindleLinks.sync.host, "sync")
         XCTAssertNotEqual(WidgetSnapshot.controlKind, WidgetSnapshot.widgetKind)
     }
+
+    func testFindersReconnectSheetOpensTheSignInFlow() {
+        XCTAssertEqual(FindleLinks.reconnect.absoluteString, "findle://reconnect")
+        XCTAssertNotEqual(BundleIdentifiers.sessionRestoredNotification, BundleIdentifiers.syncNowRequestNotification)
+    }
 }

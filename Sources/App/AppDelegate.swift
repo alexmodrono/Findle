@@ -91,6 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
         }
         if urls.contains(FindleLinks.settings) { showSettings() }
+        if urls.contains(FindleLinks.reconnect) { showSetup() }
         for url in urls where url.scheme == "findle" && url.host == "sync" {
             let courseID = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
                 .first { $0.name == "course" }?.value.flatMap(Int.init)

@@ -2305,6 +2305,7 @@ final class AppState: ObservableObject {
                 }
             } else {
                 logger.info("Resolved File Provider authentication state for \(site.displayName, privacy: .private)")
+                DarwinNotification.post(BundleIdentifiers.sessionRestoredNotification)
                 break
             }
         }

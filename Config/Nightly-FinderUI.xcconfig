@@ -1,0 +1,10 @@
+// Configuration for the File Provider UI extension (Finder sheets). It has its own file so release
+// signing can give it its own provisioning profile.
+#include "Release-Base.xcconfig"
+#include? "Signing.local.xcconfig"
+
+ENABLE_TESTABILITY = YES
+COPY_PHASE_STRIP = NO
+STRIP_INSTALLED_PRODUCT = NO
+APPLICATION_EXTENSION_API_ONLY = YES
+VALIDATE_PRODUCT = YES
