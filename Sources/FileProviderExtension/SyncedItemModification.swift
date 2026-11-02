@@ -4,6 +4,9 @@ import FindlePersistence
 
 /// Applies the metadata Findle owns without making unsupported timestamp
 /// uploads a permanent sync failure for otherwise read-only Moodle items.
+///
+/// Findle owns tags on every synced item, and the name of course root
+/// folders (stored as the course's custom name).
 enum SyncedItemModification {
     struct Result {
         let item: FileProviderItem
@@ -14,11 +17,15 @@ enum SyncedItemModification {
         to localItem: LocalItem,
         changedFields: NSFileProviderItemFields,
         tagData: Data?,
+        filename: String? = nil,
         hasNewContents: Bool,
         siteID: String?,
         database: Database
     ) throws -> Result {
-        let supportedRequestFields: NSFileProviderItemFields = [.tagData, .contentModificationDate]
+        var supportedRequestFields: NSFileProviderItemFields = [.tagData, .contentModificationDate]
+        if localItem.isCourseRoot {
+            supportedRequestFields.insert(.filename)
+        }
         guard !hasNewContents, changedFields.subtracting(supportedRequestFields).isEmpty else {
             throw NSFileProviderError(.cannotSynchronize)
         }
@@ -27,8 +34,16 @@ enum SyncedItemModification {
         // than parking the item with cannotSynchronize. Return a real item:
         // a nil successful result asks the system to delete it from disk.
         let pending = changedFields.intersection(.contentModificationDate)
-        guard changedFields.contains(.tagData) else {
+        guard !changedFields.isDisjoint(with: [.tagData, .filename]) else {
             return Result(item: FileProviderItem(localItem: localItem), stillPendingFields: pending)
+        }
+
+        if changedFields.contains(.filename) {
+            guard let filename else { throw NSFileProviderError(.cannotSynchronize) }
+            try renameCourseRoot(localItem, to: filename, database: database)
+        }
+        guard changedFields.contains(.tagData) else {
+            return try updatedResult(for: localItem, pending: pending, database: database)
         }
 
         let parts = localItem.id.split(separator: "-")
@@ -39,9 +54,35 @@ enum SyncedItemModification {
         } else {
             try database.updateItemTagData(id: localItem.id, tagData: tagData)
         }
+        return try updatedResult(for: localItem, pending: pending, database: database)
+    }
+
+    private static func updatedResult(
+        for localItem: LocalItem,
+        pending: NSFileProviderItemFields,
+        database: Database
+    ) throws -> Result {
         guard let updated = try database.fetchItem(id: localItem.id) else {
             throw NSFileProviderError(.noSuchItem)
         }
         return Result(item: FileProviderItem(localItem: updated), stillPendingFields: pending)
+    }
+
+    /// Store a Finder rename of a course folder as the course's custom name.
+    ///
+    /// The root keeps the sanitized form, which is what the system gets back,
+    /// so Finder shows exactly the name later syncs will keep. Renaming the
+    /// folder back to the Moodle name clears the custom name.
+    private static func renameCourseRoot(_ courseRoot: LocalItem, to proposedName: String, database: Database) throws {
+        guard var course = try database.fetchCourse(id: courseRoot.courseID, siteID: courseRoot.siteID) else {
+            throw NSFileProviderError(.noSuchItem)
+        }
+        course.customFolderName = course.normalizedCustomName(proposedName)
+        try database.updateCourseCustomFolderName(
+            courseID: course.id,
+            siteID: course.siteID,
+            customName: course.customFolderName
+        )
+        try database.updateItemFilename(id: courseRoot.id, filename: course.effectiveFolderName)
     }
 }

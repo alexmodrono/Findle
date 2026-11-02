@@ -569,11 +569,16 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                 to: localItem,
                 changedFields: changedFields,
                 tagData: item.tagData ?? nil,
+                filename: item.filename,
                 hasNewContents: newContents != nil,
                 siteID: siteID,
                 database: db
             )
             completionHandler(result.item, result.stillPendingFields, false, nil)
+            if localItem.isCourseRoot, !changedFields.isDisjoint(with: [.filename, .tagData]) {
+                // Let the app show the new course name/tags without a resync.
+                DarwinNotification.post(BundleIdentifiers.courseCustomizationChangedNotification)
+            }
         } catch let error as NSFileProviderError where error.code == .cannotSynchronize {
             completionHandler(nil, changedFields, false, error)
         } catch {

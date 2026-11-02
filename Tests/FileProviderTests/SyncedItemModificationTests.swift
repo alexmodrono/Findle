@@ -112,6 +112,77 @@ final class SyncedItemModificationTests: XCTestCase {
         XCTAssertEqual(try f.database.currentChangeCounter(), anchor)
     }
 
+    // MARK: - Course folder renames
+
+    private func courseRoot(in f: ProviderFixture, fullName: String = "Operating Systems") throws -> LocalItem {
+        let course = MoodleCourse(id: 7, shortName: "OS", fullName: fullName, siteID: "a")
+        try f.database.saveCourses([course])
+        let root = LocalItem(id: course.rootItemID, siteID: "a", courseID: course.id, remoteID: course.id,
+                             filename: course.effectiveFolderName, isDirectory: true)
+        try f.database.saveItems([root])
+        return root
+    }
+
+    func testCourseRootRenameStoresCustomNameAndSanitizedFilename() throws {
+        let f = try fixture()
+        let root = try courseRoot(in: f)
+        let result = try SyncedItemModification.apply(
+            to: root, changedFields: .filename, tagData: nil, filename: "OS: Kernels",
+            hasNewContents: false, siteID: "a", database: f.database)
+        XCTAssertEqual(try f.database.fetchCourse(id: 7, siteID: "a")?.customFolderName, "OS: Kernels")
+        XCTAssertEqual(result.item.filename, FileNameSanitizer.sanitize("OS: Kernels"))
+        XCTAssertEqual(try f.database.fetchItem(id: root.id)?.filename, result.item.filename)
+        XCTAssertTrue(result.stillPendingFields.isEmpty)
+    }
+
+    func testCourseRootRenameBackToMoodleNameClearsCustomName() throws {
+        let f = try fixture()
+        let root = try courseRoot(in: f)
+        try f.database.updateCourseCustomFolderName(courseID: 7, siteID: "a", customName: "Kernels")
+        let result = try SyncedItemModification.apply(
+            to: root, changedFields: .filename, tagData: nil, filename: "Operating Systems",
+            hasNewContents: false, siteID: "a", database: f.database)
+        XCTAssertNil(try f.database.fetchCourse(id: 7, siteID: "a")?.customFolderName)
+        XCTAssertEqual(result.item.filename, "Operating Systems")
+    }
+
+    func testCourseRootRenameAndTagsApplyTogether() throws {
+        let f = try fixture()
+        let root = try courseRoot(in: f)
+        let tags = [FinderTag(name: "Exams", color: .red)]
+        let result = try SyncedItemModification.apply(
+            to: root, changedFields: [.filename, .tagData, .contentModificationDate],
+            tagData: FinderTag.tagData(from: tags), filename: "Kernels",
+            hasNewContents: false, siteID: "a", database: f.database)
+        XCTAssertEqual(result.item.filename, "Kernels")
+        XCTAssertEqual(result.item.tagData, FinderTag.tagData(from: tags))
+        XCTAssertEqual(try f.database.fetchCourseTags(courseID: 7, siteID: "a"), tags)
+        XCTAssertEqual(result.stillPendingFields, .contentModificationDate)
+    }
+
+    func testCourseRootMoveIsStillRejected() throws {
+        let f = try fixture()
+        let root = try courseRoot(in: f)
+        assertProviderError(.cannotSynchronize) {
+            _ = try SyncedItemModification.apply(
+                to: root, changedFields: [.filename, .parentItemIdentifier], tagData: nil, filename: "Kernels",
+                hasNewContents: false, siteID: "a", database: f.database)
+        }
+        XCTAssertNil(try f.database.fetchCourse(id: 7, siteID: "a")?.customFolderName)
+    }
+
+    func testOnlyCourseRootsAdvertiseRenaming() throws {
+        let f = try fixture()
+        let root = try courseRoot(in: f)
+        let section = LocalItem(id: "section-a-7-1", parentID: root.id, siteID: "a", courseID: 7, remoteID: 1,
+                                filename: "Week 1", isDirectory: true)
+        let file = try XCTUnwrap(f.database.fetchItem(id: "file-a"))
+        XCTAssertTrue(FileProviderItem(localItem: root).capabilities.contains(.allowsRenaming))
+        XCTAssertFalse(FileProviderItem(localItem: root).capabilities.contains(.allowsReparenting))
+        XCTAssertFalse(FileProviderItem(localItem: section).capabilities.contains(.allowsRenaming))
+        XCTAssertFalse(FileProviderItem(localItem: file).capabilities.contains(.allowsRenaming))
+    }
+
     func testTagStorageFailureDoesNotReturnSuccessfulMetadataResult() throws {
         let f = try fixture()
         let item = try XCTUnwrap(f.database.fetchItem(id: "file-a"))
