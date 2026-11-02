@@ -4,6 +4,7 @@
 // You may obtain a copy of the License in the LICENSE file at the root of this repository.
 
 import Foundation
+import CryptoKit
 import SQLite3
 import Darwin
 import OSLog
@@ -51,7 +52,7 @@ public final class Database: @unchecked Sendable {
             .path
     }
 
-    public static let schemaVersion = 24
+    public static let schemaVersion = 25
 
     /// Every column Finder shows, so changing one reports the item to Finder.
     private static let itemsBumpAfterUpdateTrigger = """
@@ -907,6 +908,14 @@ public final class Database: @unchecked Sendable {
             logger.info("Migrated database schema to version 22 (activity completion)")
         }
 
+        if currentVersion < 25 {
+            // Added at the end, so recovery's positional copy lines up in every database.
+            if !(try existingColumns(table: "quizzes")).contains("module_id") {
+                try executeUnsafe("ALTER TABLE quizzes ADD COLUMN module_id INTEGER")
+            }
+            logger.info("Migrated database schema to version 25 (quiz modules)")
+        }
+
         if currentVersion < 24 {
             // v23 -> v24: previous_versions, created above.
             logger.info("Migrated database schema to version 24 (previous versions)")
@@ -1637,6 +1646,72 @@ extension Database {
 // MARK: - Generated Contents
 
 extension Database {
+    /// Rewrites the coursework summaries (FX-04) whose status, dates or grade
+    /// changed since the sync wrote them, after a coursework refresh. Their
+    /// brief and Moodle link stay as the sync wrote them. Returns whether any changed.
+    @discardableResult
+    public func refreshCourseworkSummaries(siteID: String) throws -> Bool {
+        let assignments = try fetchAssignments(siteID: siteID)
+        let quizzes = try fetchQuizzes(siteID: siteID)
+        let attempts = try fetchQuizAttempts(siteID: siteID)
+        let courseNames = Dictionary(try fetchCourses(siteID: siteID).map { ($0.id, $0.fullName) }, uniquingKeysWith: { first, _ in first })
+        return try queue.sync {
+            var changed = false
+            try transactionUnsafe {
+                let read = try prepareStatement("""
+                    SELECT items.id, items.course_id, items.remote_id, generated_contents.data FROM items
+                    JOIN generated_contents ON generated_contents.item_id = items.id
+                    WHERE items.site_id = ? AND (items.id LIKE 'assignsum-%' OR items.id LIKE 'quizsum-%')
+                    """)
+                defer { sqlite3_finalize(read) }
+                sqlite3_bind_text(read, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                var updates: [(id: String, data: Data)] = []
+                while sqlite3_step(read) == SQLITE_ROW {
+                    let id = String(cString: sqlite3_column_text(read, 0))
+                    let courseID = Int(sqlite3_column_int64(read, 1))
+                    let moduleID = Int(sqlite3_column_int64(read, 2))
+                    let bytes = sqlite3_column_blob(read, 3)
+                    let stored = bytes.map { Data(bytes: $0, count: Int(sqlite3_column_bytes(read, 3))) } ?? Data()
+                    guard let old = CourseworkSummary.decode(stored) else { continue }
+                    let courseName = courseNames[courseID] ?? old.courseName
+                    let fresh: CourseworkSummary
+                    if old.kind == .assignment {
+                        fresh = .assignment(name: old.name, courseName: courseName,
+                                            assignment: assignments.first { $0.courseID == courseID && $0.moduleID == moduleID },
+                                            brief: old.brief, moodleURL: old.moodleURL)
+                    } else {
+                        let quiz = quizzes.first { $0.courseID == courseID && $0.moduleID == moduleID }
+                        fresh = .quiz(name: old.name, courseName: courseName, quiz: quiz,
+                                      attempts: quiz.map { quiz in attempts.filter { $0.quizID == quiz.id } } ?? [],
+                                      moodleURL: old.moodleURL)
+                    }
+                    let data = fresh.encoded()
+                    if data != stored { updates.append((id, data)) }
+                }
+                let save = try prepareStatement("UPDATE generated_contents SET data = ? WHERE item_id = ?")
+                defer { sqlite3_finalize(save) }
+                // A new content version makes Finder fetch the new summary.
+                let version = try prepareStatement(
+                    "UPDATE items SET content_version = ?, file_size = ?, sync_state = 'placeholder', local_path = NULL WHERE id = ?")
+                defer { sqlite3_finalize(version) }
+                for update in updates {
+                    sqlite3_reset(save)
+                    _ = update.data.withUnsafeBytes { sqlite3_bind_blob(save, 1, $0.baseAddress, Int32($0.count), SQLITE_TRANSIENT) }
+                    sqlite3_bind_text(save, 2, (update.id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    guard sqlite3_step(save) == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to update a summary") }
+                    sqlite3_reset(version)
+                    let digest = SHA256.hash(data: update.data).prefix(8).map { String(format: "%02x", $0) }.joined()
+                    sqlite3_bind_text(version, 1, (digest as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_int64(version, 2, Int64(update.data.count))
+                    sqlite3_bind_text(version, 3, (update.id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    guard sqlite3_step(version) == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to version a summary") }
+                    changed = true
+                }
+            }
+            return changed
+        }
+    }
+
     /// The caller must hold `queue`. Also drops content of items that are gone.
     private func saveGeneratedContentsUnsafe(_ contents: [String: Data], siteID: String) throws {
         let stmt = try prepareStatement("INSERT OR REPLACE INTO generated_contents (item_id, site_id, data) VALUES (?, ?, ?)")
@@ -3722,8 +3797,8 @@ extension Database {
             do {
                 try deleteForSite("quizzes", siteID: siteID)
                 let sql = """
-                    INSERT OR REPLACE INTO quizzes (id, site_id, course_id, name, open_date, close_date, time_limit)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT OR REPLACE INTO quizzes (id, site_id, course_id, name, open_date, close_date, time_limit, module_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """
                 for q in quizzes {
                     let stmt = try prepareStatement(sql)
@@ -3735,6 +3810,7 @@ extension Database {
                     bindOptionalDate(stmt, 5, q.openDate)
                     bindOptionalDate(stmt, 6, q.closeDate)
                     if let t = q.timeLimit { sqlite3_bind_int64(stmt, 7, Int64(t)) } else { sqlite3_bind_null(stmt, 7) }
+                    if let m = q.moduleID { sqlite3_bind_int64(stmt, 8, Int64(m)) } else { sqlite3_bind_null(stmt, 8) }
                     guard sqlite3_step(stmt) == SQLITE_DONE else {
                         throw FindleError.databaseError(detail: "saveQuizzes: \(String(cString: sqlite3_errmsg(db)))")
                     }
@@ -3749,7 +3825,7 @@ extension Database {
 
     public func fetchQuizzes(siteID: String) throws -> [MoodleQuiz] {
         try queue.sync {
-            let stmt = try prepareStatement("SELECT id, course_id, name, open_date, close_date, time_limit FROM quizzes WHERE site_id = ?")
+            let stmt = try prepareStatement("SELECT id, course_id, name, open_date, close_date, time_limit, module_id FROM quizzes WHERE site_id = ?")
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
             var out: [MoodleQuiz] = []
@@ -3760,7 +3836,8 @@ extension Database {
                     name: String(cString: sqlite3_column_text(stmt, 2)),
                     openDate: Self.columnDate(stmt, 3),
                     closeDate: Self.columnDate(stmt, 4),
-                    timeLimit: sqlite3_column_type(stmt, 5) != SQLITE_NULL ? Int(sqlite3_column_int64(stmt, 5)) : nil
+                    timeLimit: sqlite3_column_type(stmt, 5) != SQLITE_NULL ? Int(sqlite3_column_int64(stmt, 5)) : nil,
+                    moduleID: sqlite3_column_type(stmt, 6) != SQLITE_NULL ? Int(sqlite3_column_int64(stmt, 6)) : nil
                 ))
             }
             return out

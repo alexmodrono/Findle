@@ -240,6 +240,12 @@ targets:
       - target: FindleFinderUI
         embed: true
         codeSign: true
+      - target: FindleThumbnails
+        embed: true
+        codeSign: true
+      - target: FindleSpotlightImporter
+        embed: true
+        codeSign: true
       - target: FindleMCP
         copy:
           destination: executables
@@ -632,6 +638,83 @@ targets:
           NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).FinderSync"
           NSExtensionAttributes: {}
 
+  # Thumbnails and Spotlight for assignment and quiz summaries (FX-04). Read-only
+  # and sandboxed, with no App Group or keychain, so no provisioning profile.
+  FindleThumbnails:
+    type: app-extension
+    platform: macOS
+    configFiles:
+      Debug: Config/Debug-Thumbnails.xcconfig
+      Nightly: Config/Nightly-Thumbnails.xcconfig
+      Release: Config/Release-Thumbnails.xcconfig
+    sources:
+      - path: Sources/Thumbnails
+    dependencies:
+      - target: SharedDomain
+      - sdk: QuickLookThumbnailing.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.thumbnails
+        INFOPLIST_FILE: Resources/Info/Thumbnails-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/Thumbnails.entitlements
+        ENABLE_APP_SANDBOX: YES
+        LD_RUNPATH_SEARCH_PATHS:
+          - "@executable_path/../Frameworks"
+          - "@executable_path/../../../../Frameworks"
+      configs:
+        Nightly:
+          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly.thumbnails
+    info:
+      path: Resources/Info/Thumbnails-Info.plist
+      properties:
+        CFBundleDisplayName: Findle
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.quicklook.thumbnail
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).ThumbnailProvider"
+          NSExtensionAttributes:
+            QLSupportedContentTypes:
+              - es.amodrono.findle.assignment-summary
+              - es.amodrono.findle.quiz-summary
+            QLThumbnailMinimumDimension: 16
+
+  FindleSpotlightImporter:
+    type: app-extension
+    platform: macOS
+    configFiles:
+      Debug: Config/Debug-SpotlightImporter.xcconfig
+      Nightly: Config/Nightly-SpotlightImporter.xcconfig
+      Release: Config/Release-SpotlightImporter.xcconfig
+    sources:
+      - path: Sources/SpotlightImporter
+    dependencies:
+      - target: SharedDomain
+      - sdk: CoreSpotlight.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.spotlight-importer
+        INFOPLIST_FILE: Resources/Info/SpotlightImporter-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/SpotlightImporter.entitlements
+        ENABLE_APP_SANDBOX: YES
+        LD_RUNPATH_SEARCH_PATHS:
+          - "@executable_path/../Frameworks"
+          - "@executable_path/../../../../Frameworks"
+      configs:
+        Nightly:
+          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly.spotlight-importer
+    info:
+      path: Resources/Info/SpotlightImporter-Info.plist
+      properties:
+        CFBundleDisplayName: Findle
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.spotlight.import
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).ImportExtension"
+          NSExtensionAttributes:
+            CSSupportedContentTypes:
+              - es.amodrono.findle.assignment-summary
+              - es.amodrono.findle.quiz-summary
+
   # Quick Look for H5P and SCORM packages. Read-only and sandboxed; it needs no
   # App Group or keychain, so release signing needs no provisioning profile.
   FindlePackagePreview:
@@ -672,6 +755,8 @@ targets:
             QLSupportedContentTypes:
               - org.h5p.h5p
               - es.amodrono.findle.scorm-package
+              - es.amodrono.findle.assignment-summary
+              - es.amodrono.findle.quiz-summary
 
   FindleMCP:
     type: tool

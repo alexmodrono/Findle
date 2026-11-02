@@ -1815,6 +1815,8 @@ final class AppState: ObservableObject {
             }
         }
 
+        // Summaries in Finder say what was just fetched (FX-04).
+        if (try? db.refreshCourseworkSummaries(siteID: site.id)) == true { signalFileProviderChanges(for: site) }
         logger.info("Tracking refresh complete")
         publishWidgetSnapshot()
         // Assignments and quizzes are searchable with their due dates.

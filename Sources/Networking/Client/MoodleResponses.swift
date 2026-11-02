@@ -194,6 +194,7 @@ struct QuizzesResponse: Decodable {
         let timeopen: Int?
         let timeclose: Int?
         let timelimit: Int?
+        let coursemodule: Int?
     }
 }
 

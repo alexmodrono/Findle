@@ -271,6 +271,10 @@ public actor SyncEngine {
 
         var allItems: [LocalItem] = [courseItem]
         var generatedContents: [String: Data] = [:]
+        // What the coursework summaries say; stored by the last tracking refresh.
+        let coursework = (assignments: (try? database.fetchAssignments(siteID: site.id)) ?? [],
+                          quizzes: (try? database.fetchQuizzes(siteID: site.id)) ?? [],
+                          attempts: (try? database.fetchQuizAttempts(siteID: site.id)) ?? [])
 
         // Build items from sections and modules
         for section in sections {
@@ -297,6 +301,30 @@ public actor SyncEngine {
                                                      siteID: site.id, courseID: course.id)
                     sectionItems.append(contentsOf: assignment.items)
                     generatedContents.merge(assignment.generated) { _, new in new }
+                    // A summary for Quick Look, thumbnails and Spotlight (FX-04).
+                    let folderID = "assign-\(site.id)-\(course.id)-\(module.id)"
+                    let summary = CourseworkSummary.assignment(
+                        name: module.name, courseName: course.fullName,
+                        assignment: coursework.assignments.first { $0.courseID == course.id && $0.moduleID == module.id },
+                        brief: briefs[module.id]?.intro.map(MoodleText.plainText(fromHTML:)),
+                        moodleURL: MoodleURLBuilder.webURL(baseURL: site.baseURL, itemID: folderID, courseID: course.id,
+                                                           remoteID: module.id, isDirectory: true, parentID: sectionItemID))
+                    let file = Self.summaryFile(summary, moduleID: module.id, parentID: folderID, siteID: site.id, courseID: course.id)
+                    sectionItems.append(file.item)
+                    generatedContents[file.item.id] = file.data
+                    continue
+                }
+                if module.resourceType == .quiz {
+                    let quiz = coursework.quizzes.first { $0.courseID == course.id && $0.moduleID == module.id }
+                    var link = URLComponents(url: site.baseURL.appendingPathComponent("mod/quiz/view.php"), resolvingAgainstBaseURL: false)
+                    link?.queryItems = [URLQueryItem(name: "id", value: String(module.id))]
+                    let summary = CourseworkSummary.quiz(
+                        name: module.name, courseName: course.fullName, quiz: quiz,
+                        attempts: quiz.map { quiz in coursework.attempts.filter { $0.quizID == quiz.id } } ?? [],
+                        moodleURL: link?.url)
+                    let file = Self.summaryFile(summary, moduleID: module.id, parentID: sectionItemID, siteID: site.id, courseID: course.id)
+                    sectionItems.append(file.item)
+                    generatedContents[file.item.id] = file.data
                     continue
                 }
                 let moduleItems = buildItems(
@@ -586,6 +614,22 @@ public actor SyncEngine {
 
     /// A Markdown file whose bytes the sync stores. Its version is a digest of
     /// the text, so it only reads as changed when the text changes.
+    /// A coursework summary file. Its name says what it is, and its type is
+    /// Findle's own, so Quick Look, thumbnails and Spotlight read it.
+    static func summaryFile(_ summary: CourseworkSummary, moduleID: Int, parentID: String, siteID: String,
+                            courseID: Int) -> (item: LocalItem, data: Data) {
+        let data = summary.encoded()
+        let digest = SHA256.hash(data: data).prefix(8).map { String(format: "%02x", $0) }.joined()
+        let ext = summary.kind == .assignment ? CourseworkSummary.assignmentExtension : CourseworkSummary.quizExtension
+        let item = LocalItem(
+            id: CourseworkSummary.summaryID(for: summary.kind, siteID: siteID, courseID: courseID, moduleID: moduleID),
+            parentID: parentID, siteID: siteID, courseID: courseID, remoteID: moduleID,
+            filename: FileNameSanitizer.sanitize(summary.name) + "." + ext,
+            contentType: summary.kind == .assignment ? CourseworkSummary.assignmentType : CourseworkSummary.quizType,
+            fileSize: Int64(data.count), syncState: .placeholder, contentVersion: digest)
+        return (item, data)
+    }
+
     private static func generatedFile(
         id: String, filename: String, text: String, parentID: String, siteID: String, courseID: Int, remoteID: Int
     ) -> (item: LocalItem, data: Data) {

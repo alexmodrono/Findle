@@ -97,6 +97,8 @@ public struct MoodleQuiz: Sendable, Codable, Equatable, Identifiable {
     public let openDate: Date?
     public let closeDate: Date?
     public let timeLimit: Int?
+    /// The course module, which names its summary file in Finder.
+    public let moduleID: Int?
 
     public init(
         id: Int,
@@ -104,7 +106,8 @@ public struct MoodleQuiz: Sendable, Codable, Equatable, Identifiable {
         name: String,
         openDate: Date? = nil,
         closeDate: Date? = nil,
-        timeLimit: Int? = nil
+        timeLimit: Int? = nil,
+        moduleID: Int? = nil
     ) {
         self.id = id
         self.courseID = courseID
@@ -112,6 +115,7 @@ public struct MoodleQuiz: Sendable, Codable, Equatable, Identifiable {
         self.openDate = openDate
         self.closeDate = closeDate
         self.timeLimit = timeLimit
+        self.moduleID = moduleID
     }
 }
 

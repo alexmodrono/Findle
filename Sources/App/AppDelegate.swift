@@ -78,6 +78,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
+        // Double-clicking a coursework summary in Finder opens it on Moodle (FX-04).
+        for url in urls where url.isFileURL {
+            let access = url.startAccessingSecurityScopedResource()
+            defer { if access { url.stopAccessingSecurityScopedResource() } }
+            if let link = (try? Data(contentsOf: url)).flatMap(CourseworkSummary.decode)?.moodleURL { NSWorkspace.shared.open(link) }
+        }
         if let courseID = urls.lazy.compactMap(FindleLinks.shownCourse(in:)).last {
             showCourse(courseID)
         }

@@ -638,7 +638,8 @@ public final class MoodleClient: LMSProvider, Sendable {
                 name: quiz.name,
                 openDate: Self.timestamp(quiz.timeopen),
                 closeDate: Self.timestamp(quiz.timeclose),
-                timeLimit: (quiz.timelimit ?? 0) > 0 ? quiz.timelimit : nil
+                timeLimit: (quiz.timelimit ?? 0) > 0 ? quiz.timelimit : nil,
+                moduleID: quiz.coursemodule
             )
         }
     }

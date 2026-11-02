@@ -154,6 +154,20 @@ jobs:
           OTHER_CODE_SIGN_FLAGS = --keychain $KEYCHAIN_PATH
           XCCONFIG
 
+          cat >> Config/Release-Thumbnails.xcconfig <<XCCONFIG
+          CODE_SIGN_STYLE = Manual
+          CODE_SIGN_IDENTITY = Developer ID Application
+          DEVELOPMENT_TEAM = ${{ secrets.TEAM_ID }}
+          OTHER_CODE_SIGN_FLAGS = --keychain $KEYCHAIN_PATH
+          XCCONFIG
+
+          cat >> Config/Release-SpotlightImporter.xcconfig <<XCCONFIG
+          CODE_SIGN_STYLE = Manual
+          CODE_SIGN_IDENTITY = Developer ID Application
+          DEVELOPMENT_TEAM = ${{ secrets.TEAM_ID }}
+          OTHER_CODE_SIGN_FLAGS = --keychain $KEYCHAIN_PATH
+          XCCONFIG
+
           cat >> Config/Release-PackagePreview.xcconfig <<XCCONFIG
           CODE_SIGN_STYLE = Manual
           CODE_SIGN_IDENTITY = Developer ID Application
@@ -186,7 +200,7 @@ jobs:
 
       - name: Set version in Info.plist
         run: |
-          for plist in Resources/Info/App-Info.plist Resources/Info/FileProvider-Info.plist Resources/Info/Widgets-Info.plist Resources/Info/PackagePreview-Info.plist Resources/Info/FinderSync-Info.plist Resources/Info/FinderUI-Info.plist Resources/Info/Framework-Info.plist; do
+          for plist in Resources/Info/App-Info.plist Resources/Info/FileProvider-Info.plist Resources/Info/Widgets-Info.plist Resources/Info/PackagePreview-Info.plist Resources/Info/FinderSync-Info.plist Resources/Info/FinderUI-Info.plist Resources/Info/Thumbnails-Info.plist Resources/Info/SpotlightImporter-Info.plist Resources/Info/Framework-Info.plist; do
             /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.version.outputs.version }}" "$plist"
             /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" "$plist"
           done

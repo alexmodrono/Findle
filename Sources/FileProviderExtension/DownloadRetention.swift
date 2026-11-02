@@ -12,8 +12,9 @@ import FindlePersistence
 /// only says which items must stay on disk and asks the system to evict.
 enum DownloadRetention {
     /// Kept by the user, or by Findle for the current week (FI-16).
+    /// Coursework summaries are tiny and stay downloaded, so Spotlight can read them (FX-04).
     static func contentPolicy(for item: LocalItem) -> NSFileProviderContentPolicy {
-        item.isPinned || item.isAutoKept ? .downloadEagerlyAndKeepDownloaded : .inherited
+        item.isPinned || item.isAutoKept || CourseworkSummary.isSummary(item.id) ? .downloadEagerlyAndKeepDownloaded : .inherited
     }
 
     /// Part of the metadata version, so a pin change reaches the system as new metadata.

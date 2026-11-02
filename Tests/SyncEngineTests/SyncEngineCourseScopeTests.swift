@@ -228,7 +228,8 @@ final class SyncEngineCourseScopeTests: XCTestCase {
         XCTAssertTrue(assignment.isDirectory)
         XCTAssertEqual(assignment.parentID, section)
         let contents = try database.fetchItems(parentID: folder, siteID: site.id)
-        XCTAssertEqual(Set(contents.map(\.filename)), ["rubric.pdf", "README.md"])
+        XCTAssertEqual(Set(contents.map(\.filename)), ["rubric.pdf", "README.md", "Essay 1.findleassignment"],
+                       "The brief, its attachment and the summary Quick Look shows")
         XCTAssertNotNil(contents.first { $0.filename == "rubric.pdf" }?.remoteURL)
         XCTAssertEqual(try text("brief-site-1-101-401"), "# Essay 1\n\nWrite 500 words.\n")
         let readme = try XCTUnwrap(database.fetchItem(id: "readme-site-1-101-10"))
@@ -240,7 +241,8 @@ final class SyncEngineCourseScopeTests: XCTestCase {
 
         // Moodle refuses the assignment request: keep what the folder had.
         try await engine(snapshot: withLabel).syncCourse(site: site, token: token, course: course)
-        XCTAssertEqual(Set(try database.fetchItems(parentID: folder, siteID: site.id).map(\.filename)), ["rubric.pdf", "README.md"])
+        XCTAssertEqual(Set(try database.fetchItems(parentID: folder, siteID: site.id).map(\.filename)),
+                       ["rubric.pdf", "README.md", "Essay 1.findleassignment"])
         XCTAssertEqual(try text("brief-site-1-101-401"), "# Essay 1\n\nWrite 500 words.\n")
         XCTAssertTrue(try database.fetchPendingDeletions().isEmpty)
 
@@ -448,6 +450,36 @@ final class SyncEngineCourseScopeTests: XCTestCase {
         let offered = await replaced.items
         XCTAssertEqual(offered.map(\.filename), ["slides.pdf"], "Only the downloaded file; the other was never on this Mac")
         XCTAssertEqual(offered.first?.contentVersion, "1", "It is offered as the version the user had")
+    }
+
+        func testAssignmentsAndQuizzesGetSummariesTheCourseworkRefreshKeepsCurrent() async throws {
+        let site = MoodleSite(id: "site-1", displayName: "Example", baseURL: URL(string: "https://moodle.example.edu")!)
+        let course = MoodleCourse(id: 101, shortName: "C101", fullName: "Course 101", siteID: site.id)
+        try database.saveCourses([course])
+        try database.saveAssignments([MoodleAssignment(id: 7, courseID: 101, name: "Essay", moduleID: 401)], siteID: site.id)
+        try database.saveQuizzes([MoodleQuiz(id: 8, courseID: 101, name: "Quiz 1", moduleID: 402)], siteID: site.id)
+        let snapshot = #"[{"id":10,"section":1,"modules":[{"id":401,"name":"Essay","modname":"assign"},{"id":402,"name":"Quiz 1","modname":"quiz"}]}]"#
+        let assignments = #"{"courses":[{"id":101,"assignments":[{"id":7,"cmid":401,"course":101,"name":"Essay","intro":"<p>Write it</p>","introattachments":[]}]}],"warnings":[]}"#
+        try await engine(snapshot: snapshot, assignments: assignments).syncCourse(site: site, token: AuthToken(token: "t"), course: course)
+
+        let essayID = CourseworkSummary.summaryID(for: .assignment, siteID: site.id, courseID: 101, moduleID: 401)
+        let quizID = CourseworkSummary.summaryID(for: .quiz, siteID: site.id, courseID: 101, moduleID: 402)
+        let essay = try XCTUnwrap(database.fetchItem(id: essayID))
+        XCTAssertEqual(essay.filename, "Essay.findleassignment")
+        XCTAssertEqual(essay.parentID, "assign-site-1-101-401", "It sits in the assignment's folder")
+        XCTAssertEqual(try database.fetchItem(id: quizID)?.filename, "Quiz 1.findlequiz")
+        let first = try XCTUnwrap(CourseworkSummary.decode(XCTUnwrap(database.fetchGeneratedContent(itemID: essayID))))
+        XCTAssertEqual(first.status, "Not submitted")
+        XCTAssertEqual(first.brief, "Write it")
+
+        XCTAssertFalse(try database.refreshCourseworkSummaries(siteID: site.id), "Nothing changed, nothing is rewritten")
+        try database.saveAssignments([MoodleAssignment(id: 7, courseID: 101, name: "Essay", moduleID: 401, submitted: true)],
+                                     siteID: site.id)
+        XCTAssertTrue(try database.refreshCourseworkSummaries(siteID: site.id))
+        let second = try XCTUnwrap(CourseworkSummary.decode(XCTUnwrap(database.fetchGeneratedContent(itemID: essayID))))
+        XCTAssertEqual(second.status, "Submitted")
+        XCTAssertEqual(second.brief, "Write it", "The brief stays as the sync wrote it")
+        XCTAssertNotEqual(try database.fetchItem(id: essayID)?.contentVersion, essay.contentVersion, "Finder fetches the new summary")
     }
 
         func testSyncCourseOnlyDiffsItemsFromCurrentCourse() async throws {
