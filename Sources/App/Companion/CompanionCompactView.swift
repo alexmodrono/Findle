@@ -22,6 +22,9 @@ struct CompanionCompactView: View {
                 CompanionIconButton(title: "Open in Moodle", symbol: "globe", action: actions.openMoodle)
                 CompanionFilesMenu(nodes: presentation.nodes, openNode: actions.openNode)
             }
+            if let next = presentation.deadlines.first {
+                CompanionNextDeadlineView(deadline: next)
+            }
             Spacer(minLength: 0)
             CompanionStatusView(presentation: presentation, compact: true, openSettings: actions.openSettings)
             CompanionIconButton(title: "Findle Settings", symbol: "gearshape", action: actions.openSettings)

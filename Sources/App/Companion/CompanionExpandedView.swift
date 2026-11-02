@@ -23,6 +23,10 @@ struct CompanionExpandedView: View {
             }
             .padding(14)
             Divider().padding(.horizontal, 14)
+            if !presentation.deadlines.isEmpty {
+                CompanionDeadlinesView(deadlines: presentation.deadlines)
+                Divider().padding(.horizontal, 14)
+            }
             if presentation.nodes.isEmpty {
                 ContentUnavailableView("No files yet", systemImage: "folder", description: Text(presentation.emptyMessage))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

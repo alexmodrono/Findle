@@ -84,6 +84,7 @@ final class CompanionViewController: NSViewController {
         let enabledCourses = state.courses.filter(\.isSyncEnabled)
         presentation.subtitle = course == nil ? "\(enabledCourses.count) courses selected" : state.currentSite?.displayName ?? ""
         presentation.hasCourse = course != nil
+        presentation.deadlines = course.map { state.companionDeadlines(for: $0) } ?? []
         if let course {
             presentation.isSyncing = state.courseSyncStates[course.id] == .syncing
             presentation.canSync = course.isSyncEnabled && !presentation.isSyncing

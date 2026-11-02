@@ -1786,6 +1786,8 @@ final class AppState: ObservableObject {
         }
 
         logger.info("Tracking refresh complete")
+        // The companion shows deadlines and their state from what was just stored.
+        objectWillChange.send()
     }
 
     /// Run `transform` over `items` with a bounded number of concurrent tasks.
@@ -2054,6 +2056,16 @@ final class AppState: ObservableObject {
                 logger.warning("Could not record the opened folder: \(DiagnosticFailure(error).summary, privacy: .public)")
             }
         }
+    }
+
+    /// The course's assignments and quizzes not yet due, for the companion.
+    func companionDeadlines(for course: MoodleCourse) -> [CompanionDeadline] {
+        guard let database, currentSite?.id == course.siteID else { return [] }
+        return CompanionDeadline.upcoming(
+            for: course,
+            assignments: (try? database.fetchAssignments(siteID: course.siteID)) ?? [],
+            quizzes: (try? database.fetchQuizzes(siteID: course.siteID)) ?? [],
+            attempts: (try? database.fetchQuizAttempts(siteID: course.siteID)) ?? [])
     }
 
     /// The course and folders of the item Finder shows, for the companion.

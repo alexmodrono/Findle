@@ -25,6 +25,8 @@ final class CompanionPresentation {
     var sessionExpired = false
     var errorMessage: String?
     var emptyMessage = "Choose courses in Settings."
+    /// The course's assignments and quizzes not yet due, soonest first.
+    var deadlines: [CompanionDeadline] = []
     private(set) var nodes: [CompanionNode] = []
     private(set) var expandedIDs = Set<String>()
     private(set) var hasSnapshot = false
