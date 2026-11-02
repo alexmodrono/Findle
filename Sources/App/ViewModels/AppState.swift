@@ -2145,6 +2145,16 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Assignments and quizzes due in the next seven days across synced courses.
+    func dueThisWeek(now: Date = Date()) -> [DueThisWeekEntry] {
+        guard let database, let site = currentSite else { return [] }
+        return DueThisWeekEntry.entries(
+            courses: courses.filter { $0.siteID == site.id },
+            assignments: (try? database.fetchAssignments(siteID: site.id)) ?? [],
+            quizzes: (try? database.fetchQuizzes(siteID: site.id)) ?? [],
+            attempts: (try? database.fetchQuizAttempts(siteID: site.id)) ?? [], now: now)
+    }
+
     /// The course's assignments and quizzes not yet due, for the companion.
     func companionDeadlines(for course: MoodleCourse) -> [CompanionDeadline] {
         guard let database, currentSite?.id == course.siteID else { return [] }

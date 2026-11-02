@@ -35,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         #endif
         LegacySettingsMigration.run()
         UNUserNotificationCenter.current().delegate = self
+        IntentBridge.state = state
         UserDefaults.standard.register(defaults: ["finderCompanionEnabled": true])
         configureMenu()
         let companion = CompanionWindowController(state: state) { [weak self] in self?.showSettings() }

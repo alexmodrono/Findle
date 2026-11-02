@@ -193,6 +193,7 @@ targets:
       - path: Sources/App/Services/SyncReportPresentation.swift
       - path: Sources/App/Services/SpotlightIndexer.swift
       - path: Sources/App/Services/NotificationPlanner.swift
+      - path: Sources/App/Services/DueThisWeek.swift
       - path: Sources/App/Services/SessionWorkCoordinator.swift
       - path: Sources/App/Services/ProviderResetCoordinator.swift
     dependencies:
