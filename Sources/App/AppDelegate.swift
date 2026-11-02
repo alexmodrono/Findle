@@ -4,9 +4,10 @@ import Carbon
 import Combine
 import CoreSpotlight
 import SharedDomain
+import UserNotifications
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private lazy var state = AppState()
     private lazy var updates = UpdateController()
     private var companion: CompanionWindowController?
@@ -33,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         #endif
         LegacySettingsMigration.run()
+        UNUserNotificationCenter.current().delegate = self
         UserDefaults.standard.register(defaults: ["finderCompanionEnabled": true])
         configureMenu()
         let companion = CompanionWindowController(state: state) { [weak self] in self?.showSettings() }
@@ -95,6 +97,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard userActivity.activityType == CSSearchableItemActionType else { return false }
         state.handleSpotlightActivity(userActivity)
         return true
+    }
+
+    // MARK: - Notifications
+
+    /// Clicking a notification reveals what it is about in Finder.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        guard let itemID = response.notification.request.content.userInfo[AppState.notificationItemKey] as? String else { return }
+        await MainActor.run {
+            let state = self.state
+            Task { await state.revealInFinder(itemID: itemID) }
+        }
+    }
+
+    /// Findle's news shows even while one of its windows is in front.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async
+        -> UNNotificationPresentationOptions {
+        [.banner, .sound, .list]
     }
 
     private func screenChanged() {

@@ -32,7 +32,9 @@ final class GeneralSettingsController: SettingsFormController {
 
         addSeparator()
         addRow("Sync", toggle("Sync when Findle launches", key: "syncOnLaunch", fallback: true))
-        addRow(nil, toggle("Notify when sync completes", key: "notifyOnSyncComplete"))
+        addRow("Notify me about", toggle("New files in my courses", key: NotificationPlanner.Kind.newFiles.defaultsKey, fallback: true))
+        addRow(nil, toggle("Assignments due within a day", key: NotificationPlanner.Kind.dueSoon.defaultsKey, fallback: true))
+        addRow(nil, toggle("Grades posted", key: NotificationPlanner.Kind.grades.defaultsKey, fallback: true))
         let cadence = NSPopUpButton()
         let values: [(String, Double)] = [("Every 5 minutes", 5), ("Every 15 minutes", 15), ("Every 30 minutes", 30), ("Every hour", 60), ("Every 2 hours", 120), ("Manually", 0)]
         for (title, value) in values { cadence.addItem(withTitle: title); cadence.lastItem?.representedObject = value }

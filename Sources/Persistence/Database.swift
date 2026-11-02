@@ -1959,6 +1959,23 @@ extension Database {
         AND activity.arrived_at > COALESCE(parent.opened_at, 0)
         """
 
+    /// Items syncs brought in or replaced at or after `date`, for notifications.
+    public func fetchItemsArrived(since date: Date, siteID: String) throws -> [LocalItem] {
+        let sql = """
+            SELECT items.* FROM items
+            JOIN item_activity activity ON activity.item_id = items.id
+            WHERE items.site_id = ? AND activity.arrived_at >= ? AND items.is_local = 0
+            ORDER BY items.filename
+            """
+        return try queue.sync {
+            let stmt = try prepareStatement(sql)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_double(stmt, 2, date.timeIntervalSince1970)
+            return try readItems(from: stmt)
+        }
+    }
+
     /// What is new in a course since the user last looked.
     public func fetchNewItems(courseID: Int, siteID: String) throws -> [LocalItem] {
         let sql = """

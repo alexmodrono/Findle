@@ -1546,6 +1546,7 @@ final class AppState: ObservableObject {
         syncStatus = .syncing(progress: 0)
 
         let enabledCourses = courses.filter(\.isSyncEnabled)
+        let syncStarted = Date()
         syncProgressDetail = enabledCourses.isEmpty
             ? nil
             : SyncProgressDetail(completed: 0, total: enabledCourses.count, courseName: enabledCourses[0].shortName)
@@ -1608,13 +1609,11 @@ final class AppState: ObservableObject {
         if report.succeededCount > 0 || report.incompleteCount > 0 {
             signalFileProviderChanges()
             indexForSpotlight()
+            announceArrivals(since: syncStarted)
         }
         guard !report.wasCancelled, !report.requiresReauthentication else { return false }
         await reconcilePersonalFiles()
         guard sessionWork.isCurrent(lease), syncEngine === engine else { return false }
-        if SyncReportPresentation(report: report).shouldNotifyCompletion {
-            notifySyncCompletedIfEnabled(courseCount: report.succeededCount)
-        }
         trackingRefreshTask?.cancel()
         trackingRefreshTask = Task { [weak self] in
             await self?.refreshTracking()
@@ -1694,11 +1693,13 @@ final class AppState: ObservableObject {
         syncStatus = .syncing(progress: 0)
         courseSyncStates[course.id] = .syncing
 
+        let syncStarted = Date()
         let report = await engine.syncAllCourses(site: site, token: token, courses: [course])
         guard sessionWork.owns(lease), currentSite?.id == site.id, syncEngine === engine, !isDatabaseTransitioning else { return false }
         applySyncReport(report)
         if report.succeededCount > 0 || report.incompleteCount > 0 {
             signalFileProviderChanges()
+            announceArrivals(since: syncStarted)
             // Moodle files can clash with personal files; reconciliation preserves both.
             await reconcilePersonalFiles()
         }
@@ -1748,6 +1749,9 @@ final class AppState: ObservableObject {
             }
             guard sessionWork.isCurrent(lease), database === db else { return }
             try? db.saveAssignments(enriched, siteID: site.id)
+            post(NotificationPlanner.gradesPosted(before: Array(storedAssignments.values), after: enriched,
+                                                  courses: courses, siteID: site.id))
+            announceDueSoon(enriched, site: site)
             // Saving them works out which assignments are due soon.
             signalFileProviderChanges(for: site)
         }
@@ -1957,8 +1961,29 @@ final class AppState: ObservableObject {
 
     // MARK: - Notifications
 
-    private func notifySyncCompletedIfEnabled(courseCount: Int) {
-        guard userDefaults.bool(forKey: "notifyOnSyncComplete") else { return }
+    /// Files the sync that started at `date` brought in, one notification per course.
+    private func announceArrivals(since date: Date) {
+        guard let database, let site = currentSite else { return }
+        let arrived = (try? database.fetchItemsArrived(since: date, siteID: site.id)) ?? []
+        post(NotificationPlanner.newFiles(arrived: arrived, courses: courses))
+    }
+
+    /// Unsubmitted assignments due within a day, each announced once.
+    private func announceDueSoon(_ assignments: [MoodleAssignment], site: MoodleSite) {
+        let key = "announcedDueAssignments"
+        let announced = Set(userDefaults.stringArray(forKey: key) ?? [])
+        let plan = NotificationPlanner.dueSoon(assignments: assignments, courses: courses, siteID: site.id,
+                                               now: Date(), announced: announced)
+        // Only what is still due soon is remembered, so the list stays short.
+        userDefaults.set(Array(plan.keys), forKey: key)
+        post(plan.notices)
+    }
+
+    /// Posts the notices whose kind is turned on in General settings, asking
+    /// for permission the first time there is something to say.
+    private func post(_ notices: [NotificationPlanner.Notice]) {
+        let wanted = notices.filter { userDefaults.object(forKey: $0.kind.defaultsKey) as? Bool ?? true }
+        guard !wanted.isEmpty else { return }
         let lease = sessionWork.lease
 
         Task {
@@ -1972,21 +1997,19 @@ final class AppState: ObservableObject {
             }
             guard authorized, sessionWork.isCurrent(lease) else { return }
 
-            let content = UNMutableNotificationContent()
-            content.title = "Sync complete"
-            content.body = courseCount == 1
-                ? "1 course is up to date."
-                : "\(courseCount) courses are up to date."
-            content.sound = .default
-
-            let request = UNNotificationRequest(
-                identifier: UUID().uuidString,
-                content: content,
-                trigger: nil
-            )
-            try? await center.add(request)
+            for notice in wanted {
+                let content = UNMutableNotificationContent()
+                content.title = notice.title
+                content.body = notice.body
+                content.sound = .default
+                content.threadIdentifier = notice.threadID
+                if let itemID = notice.itemID { content.userInfo = [Self.notificationItemKey: itemID] }
+                try? await center.add(UNNotificationRequest(identifier: notice.id, content: content, trigger: nil))
+            }
         }
     }
+
+    nonisolated static let notificationItemKey = "itemID"
 
     private func signalFileProviderChanges() {
         guard let site = currentSite else { return }
@@ -2082,6 +2105,10 @@ final class AppState: ObservableObject {
     /// out again on the sync schedule and when the app becomes active.
     func refreshBadges() {
         guard let database, let site = currentSite, !isDatabaseTransitioning else { return }
+        // An assignment becomes due soon with time, not with a sync.
+        if let assignments = try? database.fetchAssignments(siteID: site.id) {
+            announceDueSoon(assignments, site: site)
+        }
         let logger = self.logger
         Task.detached(priority: .utility) { [weak self] in
             do {
