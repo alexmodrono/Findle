@@ -66,11 +66,19 @@
 			</dict>
 			<dict>
 				<key>NSExtensionFileProviderActionActivationRule</key>
-				<string>SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR ($item.userInfo.moodle == YES AND $item.userInfo.kept == NO)).@count &gt; 0</string>
+				<string>SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR ($item.userInfo.moodle == YES AND $item.userInfo.kept == NO AND $item.userInfo.kind != "course")).@count &gt; 0</string>
 				<key>NSExtensionFileProviderActionIdentifier</key>
 				<string>$(FINDLE_BUNDLE_PREFIX).action.keep-downloaded</string>
 				<key>NSExtensionFileProviderActionName</key>
 				<string>Keep Downloaded</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR ($item.userInfo.moodle == YES AND $item.userInfo.kept == NO AND $item.userInfo.kind == "course")).@count &gt; 0</string>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).action.keep-course-offline</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Keep Course Offline</string>
 			</dict>
 			<dict>
 				<key>NSExtensionFileProviderActionActivationRule</key>
@@ -79,6 +87,14 @@
 				<string>$(FINDLE_BUNDLE_PREFIX).action.remove-download</string>
 				<key>NSExtensionFileProviderActionName</key>
 				<string>Remove Download</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.moodle == YES).@count == 1</string>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).action.show-in-findle</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Show in Findle</string>
 			</dict>
 		</array>
 		<key>NSExtensionFileProviderDocumentGroup</key>

@@ -364,6 +364,34 @@ final class SyncEngineCourseScopeTests: XCTestCase {
         XCTAssertEqual(try newNames(), ["syllabus.pdf"], "Replaced content is new again; unchanged files stay seen")
     }
 
+    func testACourseKeptOfflineKeepsWhatMoodleAddsLater() async throws {
+        let site = MoodleSite(id: "site-1", displayName: "Example", baseURL: URL(string: "https://moodle.example.edu")!)
+        let course = MoodleCourse(id: 101, shortName: "C101", fullName: "Course 101", siteID: site.id)
+        let token = AuthToken(token: "token")
+        func snapshot(_ sections: [(id: Int, modules: [Int])]) -> String {
+            let parts = sections.map { section in
+                let modules = section.modules.map { #"{"id":\#($0),"modname":"resource","contents":[{"type":"file","filename":"f\#($0).pdf","filesize":20,"timemodified":1}]}"# }
+                return #"{"id":\#(section.id),"section":\#(section.id),"name":"Week \#(section.id)","modules":["# + modules.joined(separator: ",") + "]}"
+            }
+            return "[" + parts.joined(separator: ",") + "]"
+        }
+        func kept() throws -> Set<String> {
+            Set(try database.fetchItems(courseID: course.id, siteID: site.id).filter { $0.isPinned && !$0.isDirectory }.map(\.filename))
+        }
+
+        try await engine(snapshot: snapshot([(1, [301]), (2, [302])])).syncCourse(site: site, token: token, course: course)
+        let items = try database.fetchItems(courseID: course.id, siteID: site.id)
+        let courseFolder = try XCTUnwrap(items.first { $0.id.hasPrefix("course-") })
+        let week2 = try XCTUnwrap(items.first { $0.filename == "f302.pdf" }?.parentID)
+        try database.pinItemsRecursively(id: courseFolder.id, isPinned: true)
+        try database.pinItemsRecursively(id: week2, isPinned: false)
+
+        try await engine(snapshot: snapshot([(1, [301, 303]), (2, [302, 304]), (3, [305])]))
+            .syncCourse(site: site, token: token, course: course)
+        XCTAssertEqual(try kept(), ["f301.pdf", "f303.pdf", "f305.pdf"],
+                       "New files follow their folder: a new section of a kept course is kept, a folder whose download was removed is not")
+    }
+
     func testSyncCourseOnlyDiffsItemsFromCurrentCourse() async throws {
         let site = MoodleSite(
             id: "site-1",

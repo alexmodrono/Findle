@@ -412,12 +412,19 @@ targets:
             - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.open-course-page
               NSExtensionFileProviderActionName: Open Course Page
               NSExtensionFileProviderActionActivationRule: 'fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR ($item.userInfo.moodle == YES AND ($item.userInfo.kind == "folder" OR $item.userInfo.kind == "file"))).@count == 1'
+            # On a course folder, keeping it downloaded is keeping the course offline.
             - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.keep-downloaded
               NSExtensionFileProviderActionName: Keep Downloaded
-              NSExtensionFileProviderActionActivationRule: 'SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR ($item.userInfo.moodle == YES AND $item.userInfo.kept == NO)).@count > 0'
+              NSExtensionFileProviderActionActivationRule: 'SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR ($item.userInfo.moodle == YES AND $item.userInfo.kept == NO AND $item.userInfo.kind != "course")).@count > 0'
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.keep-course-offline
+              NSExtensionFileProviderActionName: Keep Course Offline
+              NSExtensionFileProviderActionActivationRule: 'SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR ($item.userInfo.moodle == YES AND $item.userInfo.kept == NO AND $item.userInfo.kind == "course")).@count > 0'
             - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.remove-download
               NSExtensionFileProviderActionName: Remove Download
               NSExtensionFileProviderActionActivationRule: 'SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.kept == YES).@count > 0'
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.show-in-findle
+              NSExtensionFileProviderActionName: Show in Findle
+              NSExtensionFileProviderActionActivationRule: 'fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.moodle == YES).@count == 1'
           # Moodle items can't be deleted, renamed or moved (their capabilities say
           # so). These alerts tell the user why and what to do instead. They match
           # only items that published personal == NO, so personal files and items

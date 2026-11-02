@@ -62,6 +62,8 @@ public enum BundleIdentifiers {
     public static let actionCopyMoodleLink = "\(prefix).action.copy-moodle-link"
     public static let actionOpenCoursePage = "\(prefix).action.open-course-page"
     public static let actionKeepDownloaded = "\(prefix).action.keep-downloaded"
+    public static let actionKeepCourseOffline = "\(prefix).action.keep-course-offline"
+    public static let actionShowInFindle = "\(prefix).action.show-in-findle"
     public static let actionRemoveDownload = "\(prefix).action.remove-download"
     public static let actionSyncNow = "\(prefix).action.sync-now"
 

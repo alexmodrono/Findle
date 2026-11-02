@@ -3,6 +3,7 @@ import Airlock
 import Carbon
 import Combine
 import CoreSpotlight
+import SharedDomain
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -74,6 +75,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
+        if let courseID = urls.lazy.compactMap(FindleLinks.shownCourse(in:)).last {
+            showCourse(courseID)
+        }
         for url in urls where url.scheme == "findle" && url.host == "sync" {
             let courseID = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
                 .first { $0.name == "course" }?.value.flatMap(Int.init)
@@ -121,6 +125,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         onboarding = controller
         controller.present()
+    }
+
+    /// Show in Findle: Settings, with the course selected in Courses.
+    private func showCourse(_ courseID: Int) {
+        showSettings()
+        Task {
+            if state.courses.isEmpty { await state.loadCourses() }
+            settings?.reveal(courseID: courseID)
+        }
     }
 
     @objc private func showSettings() {

@@ -704,6 +704,18 @@ public actor SyncEngine {
         var removed: [LocalItem] = []
         var arrived: [LocalItem] = []
 
+        // A new item in a folder kept downloaded is kept too, so keeping a
+        // folder or a whole course covers what Moodle adds to it later.
+        var keptFolders: [String: Bool] = [:]
+        func isKept(_ id: String?) -> Bool {
+            guard let id else { return false }
+            if let known = keptFolders[id] { return known }
+            keptFolders[id] = false
+            let kept = existingByID[id]?.isPinned ?? isKept(incomingByID[id]?.parentID)
+            keptFolders[id] = kept
+            return kept
+        }
+
         for (id, var item) in incomingByID {
             if let existing = existingByID[id] {
                 // Preserve user-set metadata across syncs
@@ -730,6 +742,7 @@ public actor SyncEngine {
                     modified.append(item)
                 }
             } else {
+                item.isPinned = isKept(item.parentID)
                 added.append(item)
                 arrived.append(item)
             }

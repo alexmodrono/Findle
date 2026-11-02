@@ -15,6 +15,8 @@ extension FileProviderExtension: NSFileProviderCustomAction {
     private static let copyMoodleLinkIdentifier = BundleIdentifiers.actionCopyMoodleLink
     private static let openCoursePageIdentifier = BundleIdentifiers.actionOpenCoursePage
     private static let keepDownloadedIdentifier = BundleIdentifiers.actionKeepDownloaded
+    private static let keepCourseOfflineIdentifier = BundleIdentifiers.actionKeepCourseOffline
+    private static let showInFindleIdentifier = BundleIdentifiers.actionShowInFindle
     private static let removeDownloadIdentifier = BundleIdentifiers.actionRemoveDownload
     private static let syncNowIdentifier = BundleIdentifiers.actionSyncNow
 
@@ -132,6 +134,29 @@ extension FileProviderExtension: NSFileProviderCustomAction {
                 logger.error("Failed to keep items downloaded: \(DiagnosticFailure(error).summary, privacy: .public)")
                 completionHandler(error)
             }
+
+        case Self.keepCourseOfflineIdentifier:
+            // Keeping a course folder keeps everything in it, and the sync keeps
+            // what Moodle adds to it later.
+            let courses = itemIdentifiers.map(\.rawValue).filter { $0.hasPrefix("course-") }
+            do {
+                try DownloadRetention.keep(courses, database: db)
+                logger.info("Kept \(courses.count) courses offline")
+                signalChanges()
+                completionHandler(nil)
+            } catch {
+                logger.error("Failed to keep courses offline: \(DiagnosticFailure(error).summary, privacy: .public)")
+                completionHandler(error)
+            }
+
+        case Self.showInFindleIdentifier:
+            guard let localItem, !localItem.isLocal, let url = FindleLinks.showCourse(localItem.courseID) else {
+                completionHandler(NSFileProviderError(.noSuchItem))
+                break
+            }
+            logger.info("Showing course \(localItem.courseID, privacy: .public) in Findle")
+            NSWorkspace.shared.open(url)
+            completionHandler(nil)
 
         case Self.removeDownloadIdentifier:
             removeDownloads(

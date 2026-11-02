@@ -11,7 +11,9 @@ final class FinderActionRuleTests: XCTestCase {
         case copyMoodleLink = "copy-moodle-link"
         case openCoursePage = "open-course-page"
         case keepDownloaded = "keep-downloaded"
+        case keepCourseOffline = "keep-course-offline"
         case removeDownload = "remove-download"
+        case showInFindle = "show-in-findle"
     }
 
     private var rules: [Action: NSPredicate] = [:]
@@ -70,17 +72,19 @@ final class FinderActionRuleTests: XCTestCase {
         let cases: [(String, NSObject, Set<Action>)] = [
             ("root", RootContainerItem(filename: "Findle"), [.syncNow, .openInMoodle, .copyMoodleLink]),
             ("course folder", item("course-a-1", directory: true),
-             [.syncNow, .openInMoodle, .copyMoodleLink, .keepDownloaded]),
+             [.syncNow, .openInMoodle, .copyMoodleLink, .keepCourseOffline, .showInFindle]),
+            ("course kept offline", item("course-a-1", directory: true, kept: true),
+             [.syncNow, .openInMoodle, .copyMoodleLink, .removeDownload, .showInFindle]),
             ("section folder", item("section-a-1-2", directory: true),
-             [.syncNow, .openInMoodle, .copyMoodleLink, .keepDownloaded]),
+             [.syncNow, .openInMoodle, .copyMoodleLink, .keepDownloaded, .showInFindle]),
             ("module folder", item("folder-a-9", directory: true),
-             [.syncNow, .openInMoodle, .copyMoodleLink, .openCoursePage, .keepDownloaded]),
+             [.syncNow, .openInMoodle, .copyMoodleLink, .openCoursePage, .keepDownloaded, .showInFindle]),
             ("cloud-only file", item("file-a-1"),
-             [.syncNow, .openInMoodle, .copyMoodleLink, .openCoursePage, .keepDownloaded]),
+             [.syncNow, .openInMoodle, .copyMoodleLink, .openCoursePage, .keepDownloaded, .showInFindle]),
             ("kept file", item("file-a-2", kept: true),
-             [.syncNow, .openInMoodle, .copyMoodleLink, .openCoursePage, .removeDownload]),
+             [.syncNow, .openInMoodle, .copyMoodleLink, .openCoursePage, .removeDownload, .showInFindle]),
             ("kept folder", item("folder-a-3", directory: true, kept: true),
-             [.syncNow, .openInMoodle, .copyMoodleLink, .openCoursePage, .removeDownload]),
+             [.syncNow, .openInMoodle, .copyMoodleLink, .openCoursePage, .removeDownload, .showInFindle]),
             ("personal file", item("local-essay", personal: true), [.syncNow]),
             ("personal file in a kept folder", item("local-notes", kept: true, personal: true), [.syncNow]),
             ("stand-in for an unsynced course", item("course-a-2", directory: true, personal: true), [.syncNow])
@@ -96,6 +100,8 @@ final class FinderActionRuleTests: XCTestCase {
                        "Moodle links and pages only open for a single item")
         XCTAssertEqual(visibleActions(for: [item("local-essay", personal: true), item("file-a-1")]),
                        [.syncNow, .keepDownloaded])
+        XCTAssertEqual(visibleActions(for: [item("course-a-1", directory: true), item("file-a-1")]),
+                       [.syncNow, .keepDownloaded, .keepCourseOffline], "Each keeps the items it applies to")
     }
 
     func testItemsThatHaveNotPublishedTheirStateKeepEveryAction() {
