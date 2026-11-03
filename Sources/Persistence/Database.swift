@@ -26,14 +26,26 @@ enum DatabaseConnectionGate {
 
 /// An older binary must leave a newer store untouched instead of repairing or
 /// downgrading it. This distinct error must not trigger an empty fallback store.
-/// A course rename would give its folder the same name as another course's
-/// folder on the same site. Nothing was written.
+/// A course rename would give its folder the same name as another item at
+/// the top of the site's Findle location. Nothing was written.
 public struct CourseFolderNameConflictError: Error, LocalizedError, Sendable, Equatable {
     public let courseID: Int
-    public let conflictingCourseID: Int
+    /// The course whose folder already uses the name, or `nil` when the name
+    /// belongs to something else there, such as the user's own folder.
+    public let conflictingCourseID: Int?
+    /// The top-level item already using the name, when it isn't a course.
+    public let conflictingItemID: String?
+
+    public init(courseID: Int, conflictingCourseID: Int? = nil, conflictingItemID: String? = nil) {
+        self.courseID = courseID
+        self.conflictingCourseID = conflictingCourseID
+        self.conflictingItemID = conflictingItemID
+    }
 
     public var errorDescription: String? {
-        "Another course already uses that folder name."
+        conflictingCourseID == nil
+            ? "An item at the top of your courses folder already uses that name."
+            : "Another course already uses that folder name."
     }
 }
 
@@ -1237,17 +1249,28 @@ extension Database {
     /// stored name and the name Finder shows can't disagree after a failure.
     /// A `nil` or blank `customName` restores the Moodle name.
     ///
-    /// The folder-name check runs against courses read inside the same write
-    /// transaction, so it holds even when the app and the File Provider
+    /// The folder-name checks run against rows read inside the same write
+    /// transaction, so they hold even when the app and the File Provider
     /// extension rename courses at the same time from stale in-memory lists.
+    /// The new name must not match another course's folder, nor any other
+    /// item at the top of the site (the user's own folders and stand-ins),
+    /// compared case-insensitively like the extension's sibling checks.
     /// Throws `CourseFolderNameConflictError` without writing on a collision.
     public func renameCourse(courseID: Int, siteID: String, customName: String?) throws {
         try queue.sync {
             try transactionUnsafe {
                 let courses = try coursesForNamingUnsafe(siteID: siteID)
-                if let course = courses.first(where: { $0.id == courseID }),
-                   let conflict = course.folderNameConflict(forProposedName: customName, among: courses) {
-                    throw CourseFolderNameConflictError(courseID: courseID, conflictingCourseID: conflict.id)
+                if var course = courses.first(where: { $0.id == courseID }) {
+                    if let conflict = course.folderNameConflict(forProposedName: customName, among: courses) {
+                        throw CourseFolderNameConflictError(courseID: courseID, conflictingCourseID: conflict.id)
+                    }
+                    course.customFolderName = course.normalizedCustomName(customName)
+                    let filename = course.effectiveFolderName
+                    if let clash = try topLevelItemsUnsafe(siteID: siteID).first(where: {
+                        $0.id != course.rootItemID && $0.filename.caseInsensitiveCompare(filename) == .orderedSame
+                    }) {
+                        throw CourseFolderNameConflictError(courseID: courseID, conflictingItemID: clash.id)
+                    }
                 }
                 try updateCourseCustomFolderNameUnsafe(courseID: courseID, siteID: siteID, customName: customName)
                 try reconcileCourseRootFilenameUnsafe(courseID: courseID, siteID: siteID)
@@ -1272,6 +1295,20 @@ extension Database {
             ))
         }
         return courses
+    }
+
+    /// IDs and filenames of the items at the top of the site's domain.
+    /// The caller must hold `queue`.
+    private func topLevelItemsUnsafe(siteID: String) throws -> [(id: String, filename: String)] {
+        let stmt = try prepareStatement("SELECT id, filename FROM items WHERE site_id = ? AND parent_id IS NULL")
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        var items: [(id: String, filename: String)] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let id = sqlite3_column_text(stmt, 0), let filename = sqlite3_column_text(stmt, 1) else { continue }
+            items.append((String(cString: id), String(cString: filename)))
+        }
+        return items
     }
 
     /// The caller must hold `queue`.

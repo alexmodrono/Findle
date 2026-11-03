@@ -1202,7 +1202,7 @@ final class AppState: ObservableObject {
         } catch let conflict as CourseFolderNameConflictError {
             // Another course took the name after our list was loaded (e.g. a
             // Finder rename whose notification hasn't arrived); catch up.
-            logger.error("Refused rename of course \(conflict.courseID, privacy: .public): folder name already used by course \(conflict.conflictingCourseID, privacy: .public)")
+            logger.error("Refused rename of course \(conflict.courseID, privacy: .public): \(conflict.conflictingItemID ?? "course \(conflict.conflictingCourseID.map(String.init) ?? "?")", privacy: .public) already uses that folder name")
             refreshCourseCustomizationsFromDatabase()
         } catch {
             logger.error("Failed to update custom folder name: \(DiagnosticFailure(error).summary, privacy: .public)")

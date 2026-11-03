@@ -501,6 +501,14 @@ final class DatabaseTests: XCTestCase {
         XCTAssertNil(try database.fetchCourse(id: 1, siteID: "site-1")?.customFolderName)
         XCTAssertEqual(try database.fetchItem(id: os.rootItemID)?.filename, "Operating Systems")
         XCTAssertEqual(try database.currentChangeCounter(), anchor)
+        // Nor may it take the name of the user's own folder at the top level.
+        try database.saveItems([LocalItem(id: "local-notes", siteID: "site-1", courseID: 0, remoteID: 0,
+                                          filename: "My Notes", isDirectory: true, isLocal: true)])
+        XCTAssertThrowsError(try database.renameCourse(courseID: 1, siteID: "site-1", customName: "my notes")) { error in
+            XCTAssertEqual(error as? CourseFolderNameConflictError,
+                           CourseFolderNameConflictError(courseID: 1, conflictingItemID: "local-notes"))
+        }
+        XCTAssertNil(try database.fetchCourse(id: 1, siteID: "site-1")?.customFolderName)
         // Courses on another site don't collide.
         try database.saveCourses([MoodleCourse(id: 3, shortName: "X", fullName: "Other", siteID: "site-2")])
         XCTAssertNoThrow(try database.renameCourse(courseID: 3, siteID: "site-2", customName: "Kernels"))
