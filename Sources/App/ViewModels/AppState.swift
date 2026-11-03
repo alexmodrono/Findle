@@ -1371,7 +1371,8 @@ final class AppState: ObservableObject {
     /// any course, that tag (with its spelling and color) is used instead.
     func addTag(_ tag: FinderTag, to course: MoodleCourse) {
         let trimmedName = tag.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty, !hasTag(tag, on: course) else { return }
+        guard !trimmedName.isEmpty,
+              !hasTag(FinderTag(name: trimmedName, color: tag.color), on: course) else { return }
         let canonical = FinderTag.existing(named: trimmedName, in: knownTags)
             ?? FinderTag(name: trimmedName, color: tag.color)
         updateCourseTags(for: course, tags: tags(for: course) + [canonical])

@@ -94,11 +94,12 @@ final class CourseSelectionView: NSView, NSTableViewDataSource, NSTableViewDeleg
 
     // MARK: - Context menu
 
-    /// Rebuild the context menu for the row that was clicked; empty when the
-    /// click wasn't on a row or the list has no customization.
+    /// Rebuild the context menu for the clicked row, or the selected row when
+    /// the menu was opened from the keyboard. Empty when there's no such row
+    /// or the list has no customization.
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let row = table.clickedRow
+        let row = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
         guard let customization, courses.indices.contains(row) else { return }
         for item in customization.menuItems(for: courses[row], in: { [weak self] in self?.window }) {
             menu.addItem(item)
