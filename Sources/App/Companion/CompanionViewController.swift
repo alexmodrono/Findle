@@ -12,6 +12,9 @@ final class CompanionViewController: NSViewController {
     private let state: AppState
     private let openSettings: @MainActor () -> Void
     private var course: MoodleCourse?
+    /// The folder last revealed, so the outline follows Finder without undoing
+    /// what the user selects while Finder stays put.
+    private var revealedFolder: String?
     private var subscription: AnyCancellable?
     private var refreshTask: Task<Void, Never>?
 
@@ -30,7 +33,20 @@ final class CompanionViewController: NSViewController {
             sync: { [weak self] in self?.sync() },
             openMoodle: { [weak self] in self?.openMoodle() },
             openSettings: openSettings,
-            openNode: { [weak self] in self?.open($0) }
+            openNode: { [weak self] in self?.open($0) },
+            openSelectionInMoodle: { selection in selection.moodleURL.map { _ = NSWorkspace.shared.open($0) } },
+            keepSelection: { [weak self] in self?.state.keepDownloaded(itemID: $0.itemID) },
+            removeSelectionDownload: { [weak self] in self?.state.removeDownload(itemID: $0.itemID) },
+            item: CompanionItemActions(
+                url: { [state] id in await state.companionItemURL(id) },
+                quickLook: { [state] id in
+                    Task { if let url = await state.companionItemURL(id) { CompanionQuickLook.shared.show(url) } }
+                },
+                reveal: { [state] id in Task { await state.revealInFinder(itemID: id) } },
+                moodleURL: { [state] id in state.moodleURL(forItem: id) },
+                keep: { [state] id in state.keepDownloaded(itemID: id) },
+                removeDownload: { [state] id in state.removeDownload(itemID: id) }
+            )
         )
         let hosting = CompanionHostingView(rootView: CompanionView(presentation: presentation, actions: actions))
         // Finder placement is the only source of window dimensions and behavior.
@@ -57,12 +73,24 @@ final class CompanionViewController: NSViewController {
         }
     }
 
-    func show(course: MoodleCourse?) {
+    /// Shows the item selected in Finder, or the course view when none or several are.
+    func showSelection(_ selection: CompanionSelection?) {
+        guard presentation.selection != selection else { return }
+        presentation.selection = selection
+    }
+
+    /// `folderIDs` are the folder Finder shows and the folders holding it,
+    /// innermost first; the outline reveals the first one it has.
+    func show(course: MoodleCourse?, folderIDs: [String] = []) {
         let changed = self.course?.id != course?.id || self.course?.siteID != course?.siteID
         self.course = course
         let wasLoaded = isViewLoaded
         _ = view
         if changed || !wasLoaded || !presentation.hasSnapshot { refresh() }
+        if folderIDs.first != revealedFolder || changed {
+            revealedFolder = folderIDs.first
+            if !folderIDs.isEmpty { presentation.reveal(folderIDs.map { "item:\($0)" }) }
+        }
     }
 
     private func refresh() {
@@ -75,6 +103,7 @@ final class CompanionViewController: NSViewController {
         let enabledCourses = state.courses.filter(\.isSyncEnabled)
         presentation.subtitle = course == nil ? "\(enabledCourses.count) courses selected" : state.currentSite?.displayName ?? ""
         presentation.hasCourse = course != nil
+        presentation.deadlines = course.map { state.companionDeadlines(for: $0) } ?? []
         if let course {
             presentation.isSyncing = state.courseSyncStates[course.id] == .syncing
             presentation.canSync = course.isSyncEnabled && !presentation.isSyncing

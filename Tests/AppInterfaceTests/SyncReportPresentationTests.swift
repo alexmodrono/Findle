@@ -14,31 +14,27 @@ struct SyncReportPresentationTests {
         ))
     }
 
-    @Test func partialRunKeepsPreviousSuccessAndSuppressesCompletionNotification() {
+    @Test func partialRunKeepsPreviousSuccess() {
         let value = presentation([.succeeded, .failed, .incomplete, .skipped])
         #expect(value.lastSuccessfulSync(previous: previous) == previous)
-        #expect(!value.shouldNotifyCompletion)
         #expect(value.message == "1 of 4 courses updated. 1 failed, 1 incomplete, 1 skipped. Try again.")
     }
 
     @Test func emptySelectionIsANoOp() {
         let value = presentation([])
         #expect(value.report.isNoOp)
-        #expect(!value.shouldNotifyCompletion)
         #expect(value.lastSuccessfulSync(previous: nil) == nil)
         #expect(value.message == nil)
     }
 
     @Test func cancellationCannotTurnCommittedCoursesIntoFullSuccess() {
         let value = presentation([.succeeded, .cancelled, .skipped], cancelled: true)
-        #expect(!value.shouldNotifyCompletion)
         #expect(value.lastSuccessfulSync(previous: previous) == previous)
         #expect(value.message == "Sync cancelled. 1 of 3 courses updated.")
     }
 
-    @Test func fullRecoveryAdvancesSuccessAndEnablesNotification() {
+    @Test func fullRecoveryAdvancesSuccess() {
         let value = presentation([.succeeded, .succeeded])
-        #expect(value.shouldNotifyCompletion)
         #expect(value.lastSuccessfulSync(previous: previous) == finished)
         #expect(value.message == nil)
     }
@@ -63,7 +59,6 @@ struct SyncReportStoreTests {
         let snapshot = try #require(relaunched.load(siteID: "site-a"))
         #expect(snapshot.report == partial)
         #expect(snapshot.lastSuccessfulSync == earlier)
-        #expect(!SyncReportPresentation(report: snapshot.report).shouldNotifyCompletion)
         #expect(relaunched.load(siteID: "site-b") == nil)
         relaunched.remove(siteID: "site-a")
         #expect(store.load(siteID: "site-a") == nil)

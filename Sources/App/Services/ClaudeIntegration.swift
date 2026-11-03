@@ -19,7 +19,7 @@ import SharedDomain
 /// copying a ready-to-paste snippet to the clipboard and revealing the config.
 @MainActor
 enum ClaudeIntegration {
-    private static let logger = Logger(subsystem: "es.amodrono.findle", category: "ClaudeIntegration")
+    private static let logger = Logger(subsystem: "com.amodrono.findle", category: "ClaudeIntegration")
 
     enum Target: CaseIterable, Hashable {
         case desktop

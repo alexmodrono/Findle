@@ -18,7 +18,7 @@ enum LegacySettingsMigration {
             }
             defaults.set(true, forKey: "appkitPreferencesMigrated")
         } catch {
-            Logger(subsystem: "es.amodrono.findle", category: "Migration")
+            Logger(subsystem: "com.amodrono.findle", category: "Migration")
                 .error("Could not import sandbox preferences: \(error.localizedDescription, privacy: .public)")
         }
     }

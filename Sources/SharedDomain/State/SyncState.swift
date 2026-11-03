@@ -137,6 +137,17 @@ public struct LocalItem: Sendable, Codable, Equatable, Identifiable {
     /// When `true`, the item was created locally by the user and should never be
     /// synced to Moodle.  The sync engine skips local items entirely.
     public var isLocal: Bool
+    /// Who uploaded the file to Moodle, when Moodle says.
+    public var author: String?
+    /// The badges Finder shows on the item. The database works them out; a
+    /// sync never sets them.
+    public var badges: ItemBadges
+    /// For an entry of a Finder collection, the path of the item it links to,
+    /// relative to the entry's folder.
+    public var linkTarget: String?
+    /// Kept downloaded by Findle because it belongs to the current week of a
+    /// weekly course (FI-16), as opposed to `isPinned`, which the user sets.
+    public var isAutoKept: Bool
 
     public init(
         id: String = UUID().uuidString,
@@ -156,7 +167,11 @@ public struct LocalItem: Sendable, Codable, Equatable, Identifiable {
         remoteURL: URL? = nil,
         contentVersion: String? = nil,
         tagData: Data? = nil,
-        isLocal: Bool = false
+        isLocal: Bool = false,
+        author: String? = nil,
+        badges: ItemBadges = [],
+        linkTarget: String? = nil,
+        isAutoKept: Bool = false
     ) {
         self.id = id
         self.parentID = parentID
@@ -176,6 +191,10 @@ public struct LocalItem: Sendable, Codable, Equatable, Identifiable {
         self.contentVersion = contentVersion
         self.tagData = tagData
         self.isLocal = isLocal
+        self.author = author
+        self.badges = badges
+        self.linkTarget = linkTarget
+        self.isAutoKept = isAutoKept
     }
 
     /// Whether this is a synced course's root folder at the top of the domain.

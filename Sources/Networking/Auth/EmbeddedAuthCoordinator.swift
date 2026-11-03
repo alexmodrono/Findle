@@ -22,7 +22,7 @@ public struct EmbeddedAuthResult: Sendable {
 @MainActor
 public final class EmbeddedAuthCoordinator: NSObject {
 
-    private let logger = Logger(subsystem: "es.amodrono.findle.networking", category: "EmbeddedAuth")
+    private let logger = Logger(subsystem: "com.amodrono.findle.networking", category: "EmbeddedAuth")
 
     /// The WKWebView managed by this coordinator. Callers embed this in their view hierarchy.
     public private(set) var webView: WKWebView!

@@ -32,15 +32,15 @@ enum FinderFolderResolver {
         return matches.count == 1 ? matches.values.first : nil
     }
 
-    /// The course shown in the Finder folder `name` at the top of the Findle location.
+    /// The course shown in the Finder folder `name` at the top of the Findle location,
+    /// while the folder's File Provider identity is still being looked up.
     ///
-    /// Two courses can sanitize to the same folder name. When only one of them is
-    /// synced, that one owns the folder. Otherwise the name can't tell them apart,
-    /// so no course is returned rather than a guess.
+    /// Two courses can sanitize to the same folder name, and which one is synced
+    /// doesn't say whose folder it is: a folder that survives because it holds
+    /// personal files belongs to the course that made it. So a shared name returns
+    /// no course, and the companion waits for the identity instead of guessing.
     static func course(folderName name: String, siteID: String?, in courses: [MoodleCourse]) -> MoodleCourse? {
         let named = courses.filter { $0.siteID == siteID && $0.effectiveFolderName == name }
-        if named.count == 1 { return named[0] }
-        let synced = named.filter(\.isSyncEnabled)
-        return synced.count == 1 ? synced[0] : nil
+        return named.count == 1 ? named[0] : nil
     }
 }

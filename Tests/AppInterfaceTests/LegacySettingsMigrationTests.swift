@@ -3,7 +3,7 @@ import Testing
 
 struct LegacySettingsMigrationTests {
     @Test func existingPreferencesWinAndOldPreferencesAreImportedOnce() throws {
-        let id = "es.amodrono.findle.migration-tests.\(UUID().uuidString)"
+        let id = "com.amodrono.findle.migration-tests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: id))
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer {
@@ -25,7 +25,7 @@ struct LegacySettingsMigrationTests {
     }
 
     @Test func unreadablePreferencesCanBeRetried() throws {
-        let id = "es.amodrono.findle.migration-tests.\(UUID().uuidString)"
+        let id = "com.amodrono.findle.migration-tests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: id))
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer {

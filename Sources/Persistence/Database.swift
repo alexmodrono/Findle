@@ -4,6 +4,7 @@
 // You may obtain a copy of the License in the LICENSE file at the root of this repository.
 
 import Foundation
+import CryptoKit
 import SQLite3
 import Darwin
 import OSLog
@@ -60,8 +61,8 @@ public struct UnsupportedDatabaseSchemaError: Error, LocalizedError, Sendable {
 public final class Database: @unchecked Sendable {
     private static let appGroupIdentifier = BundleIdentifiers.appGroup
     private var db: OpaquePointer?
-    private let queue = DispatchQueue(label: "es.amodrono.findle.persistence.db", qos: .userInitiated)
-    private let logger = Logger(subsystem: "es.amodrono.findle.persistence", category: "Database")
+    private let queue = DispatchQueue(label: "com.amodrono.findle.persistence.db", qos: .userInitiated)
+    private let logger = Logger(subsystem: "com.amodrono.findle.persistence", category: "Database")
     private let path: String
     public var filePath: String { path }
 
@@ -74,7 +75,18 @@ public final class Database: @unchecked Sendable {
             .path
     }
 
-    public static let schemaVersion = 15
+    public static let schemaVersion = 26
+
+    /// Every column Finder shows, so changing one reports the item to Finder.
+    private static let itemsBumpAfterUpdateTrigger = """
+        CREATE TRIGGER IF NOT EXISTS items_bump_after_update
+        AFTER UPDATE OF parent_id, filename, file_size, sync_state, is_pinned, local_path, remote_url, content_version, tag_data, is_local, modification_date, badges, link_target, auto_kept
+        ON items
+        BEGIN
+            UPDATE system_metadata SET value = value + 1 WHERE key = 'change_counter';
+            UPDATE items SET updated_at = (SELECT value FROM system_metadata WHERE key = 'change_counter') WHERE id = NEW.id;
+        END
+        """
 
     /// Opens the database.
     ///
@@ -124,7 +136,7 @@ public final class Database: @unchecked Sendable {
                     dbDir = groupDBDir
                 } catch {
                     if error is UnsupportedDatabaseSchemaError || error is FindleError { throw error }
-                    Logger(subsystem: "es.amodrono.findle.persistence", category: "Database")
+                    Logger(subsystem: "com.amodrono.findle.persistence", category: "Database")
                         .error("App Group container unusable, using the app container instead: \(DiagnosticFailure(error).summary, privacy: .public)")
                 }
             }
@@ -526,6 +538,54 @@ public final class Database: @unchecked Sendable {
             )
         """)
 
+        // When a sync brought each item in (or replaced its content) and when the
+        // user last opened it. Kept apart from items so syncs rewriting a row
+        // don't lose it and Finder isn't told about changes it doesn't show.
+        // The version of a file the user had before Moodle replaced it (FI-15).
+        // The copy lives in the app's container; this records where.
+        try executeUnsafe("""
+            CREATE TABLE IF NOT EXISTS previous_versions (
+                item_id TEXT PRIMARY KEY,
+                site_id TEXT NOT NULL,
+                course_id INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                replaced_at REAL NOT NULL
+            )
+        """)
+
+        // Activity completion on Moodle, by course module. Fetched again with
+        // the coursework, so recovery doesn't need to keep it.
+        try executeUnsafe("""
+            CREATE TABLE IF NOT EXISTS activity_completion (
+                site_id TEXT NOT NULL,
+                course_id INTEGER NOT NULL,
+                module_id INTEGER NOT NULL,
+                manual INTEGER NOT NULL,
+                complete INTEGER NOT NULL,
+                PRIMARY KEY (site_id, module_id)
+            )
+        """)
+
+        try executeUnsafe("""
+            CREATE TABLE IF NOT EXISTS item_activity (
+                item_id TEXT PRIMARY KEY,
+                site_id TEXT NOT NULL,
+                arrived_at REAL,
+                opened_at REAL
+            )
+        """)
+
+        // Files Findle writes itself, such as a section's README.md with its
+        // labels. Saved by the sync with its items and served by the File Provider.
+        try executeUnsafe("""
+            CREATE TABLE IF NOT EXISTS generated_contents (
+                item_id TEXT PRIMARY KEY,
+                site_id TEXT NOT NULL,
+                data BLOB NOT NULL
+            )
+        """)
+
         try executeUnsafe("""
             CREATE INDEX IF NOT EXISTS idx_items_parent ON items(parent_id)
         """)
@@ -809,6 +869,98 @@ public final class Database: @unchecked Sendable {
             logger.info("Migrated database schema to version 15 (site-scoped tombstones)")
         }
 
+        if currentVersion < 16 {
+            // v15 -> v16: item_activity, created above. Existing items have no
+            // arrival, so nothing counts as new until a sync adds or changes it.
+            logger.info("Migrated database schema to version 16 (item activity)")
+        }
+
+        if currentVersion < 17 {
+            // v16 -> v17: generated_contents, created above and filled by the
+            // next sync of each course.
+            logger.info("Migrated database schema to version 17 (generated contents)")
+        }
+
+        if currentVersion < 18 {
+            // Added at the end, so recovery's positional copy lines up in every database.
+            if !(try existingColumns(table: "items")).contains("author") {
+                try executeUnsafe("ALTER TABLE items ADD COLUMN author TEXT")
+            }
+            logger.info("Migrated database schema to version 18 (item authors)")
+        }
+
+        if currentVersion < 19 {
+            // Added at the end, so recovery's positional copy lines up in every database.
+            if !(try existingColumns(table: "items")).contains("badges") {
+                try executeUnsafe("ALTER TABLE items ADD COLUMN badges INTEGER NOT NULL DEFAULT 0")
+            }
+            if !(try existingColumns(table: "assignments")).contains("module_id") {
+                try executeUnsafe("ALTER TABLE assignments ADD COLUMN module_id INTEGER")
+            }
+            // A badge change is a change Finder must hear about.
+            try executeUnsafe("DROP TRIGGER IF EXISTS items_bump_after_update")
+            try executeUnsafe(Self.itemsBumpAfterUpdateTrigger)
+            logger.info("Migrated database schema to version 19 (Finder badges)")
+        }
+
+        if currentVersion < 20 {
+            // Added at the end, so recovery's positional copy lines up in every database.
+            if !(try existingColumns(table: "items")).contains("link_target") {
+                try executeUnsafe("ALTER TABLE items ADD COLUMN link_target TEXT")
+            }
+            try executeUnsafe("DROP TRIGGER IF EXISTS items_bump_after_update")
+            try executeUnsafe(Self.itemsBumpAfterUpdateTrigger)
+            logger.info("Migrated database schema to version 20 (Finder collections)")
+        }
+
+        if currentVersion < 21 {
+            // Added at the end, so recovery's positional copy lines up in every database.
+            if !(try existingColumns(table: "items")).contains("auto_kept") {
+                try executeUnsafe("ALTER TABLE items ADD COLUMN auto_kept INTEGER NOT NULL DEFAULT 0")
+            }
+            if !(try existingColumns(table: "courses")).contains("format") {
+                try executeUnsafe("ALTER TABLE courses ADD COLUMN format TEXT")
+            }
+            try executeUnsafe("DROP TRIGGER IF EXISTS items_bump_after_update")
+            try executeUnsafe(Self.itemsBumpAfterUpdateTrigger)
+            logger.info("Migrated database schema to version 21 (current week kept downloaded)")
+        }
+
+        if currentVersion < 22 {
+            // v21 -> v22: activity_completion, created above. Filled by the next coursework refresh.
+            logger.info("Migrated database schema to version 22 (activity completion)")
+        }
+
+        if currentVersion < 26 {
+            // Added at the end, so recovery's positional copy lines up in every database.
+            let columns = try existingColumns(table: "assignments")
+            for column in ["takes_files", "can_edit", "can_submit", "requires_statement"] where !columns.contains(column) {
+                try executeUnsafe("ALTER TABLE assignments ADD COLUMN \(column) INTEGER NOT NULL DEFAULT 0")
+            }
+            logger.info("Migrated database schema to version 26 (submitting from Finder)")
+        }
+
+        if currentVersion < 25 {
+            // Added at the end, so recovery's positional copy lines up in every database.
+            if !(try existingColumns(table: "quizzes")).contains("module_id") {
+                try executeUnsafe("ALTER TABLE quizzes ADD COLUMN module_id INTEGER")
+            }
+            logger.info("Migrated database schema to version 25 (quiz modules)")
+        }
+
+        if currentVersion < 24 {
+            // v23 -> v24: previous_versions, created above.
+            logger.info("Migrated database schema to version 24 (previous versions)")
+        }
+
+        if currentVersion < 23 {
+            // Added at the end, so recovery's positional copy lines up in every database.
+            if !(try existingColumns(table: "courses")).contains("teachers") {
+                try executeUnsafe("ALTER TABLE courses ADD COLUMN teachers TEXT")
+            }
+            logger.info("Migrated database schema to version 23 (course teachers)")
+        }
+
         // Databases created before the seed marker was introduced were already
         // authoritative app databases. Promote only those legacy databases
         // that contain a session; a partial v14+ snapshot must remain false.
@@ -1079,6 +1231,24 @@ extension Database {
                     throw FindleError.databaseError(detail: "Failed to delete account items: \(String(cString: sqlite3_errmsg(db)))")
                 }
 
+                let deleteActivity = try prepareStatement("DELETE FROM item_activity WHERE site_id IN (SELECT site_id FROM accounts WHERE id = ?)")
+                defer { sqlite3_finalize(deleteActivity) }
+                sqlite3_bind_text(deleteActivity, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                guard sqlite3_step(deleteActivity) == SQLITE_DONE else {
+                    throw FindleError.databaseError(detail: "Failed to delete account item activity: \(String(cString: sqlite3_errmsg(db)))")
+                }
+
+                // Everything else kept per site goes with the account. Copies of
+                // previous versions stay on disk: they may be the only copy left.
+                for table in ["generated_contents", "previous_versions", "activity_completion"] {
+                    let delete = try prepareStatement("DELETE FROM \(table) WHERE site_id IN (SELECT site_id FROM accounts WHERE id = ?)")
+                    defer { sqlite3_finalize(delete) }
+                    sqlite3_bind_text(delete, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    guard sqlite3_step(delete) == SQLITE_DONE else {
+                        throw FindleError.databaseError(detail: "Failed to delete account \(table): \(String(cString: sqlite3_errmsg(db)))")
+                    }
+                }
+
                 let deleteAccount = try prepareStatement("DELETE FROM accounts WHERE id = ?")
                 defer { sqlite3_finalize(deleteAccount) }
                 sqlite3_bind_text(deleteAccount, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
@@ -1102,8 +1272,8 @@ extension Database {
         let sql = """
             INSERT INTO courses (id, site_id, short_name, full_name, summary,
                 category_id, start_date, end_date, last_accessed, visible, subscription_state,
-                custom_folder_name, custom_icon_name, image_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                custom_folder_name, custom_icon_name, image_url, format)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id, site_id) DO UPDATE SET
                 short_name = excluded.short_name,
                 full_name = excluded.full_name,
@@ -1116,7 +1286,8 @@ extension Database {
                 subscription_state = courses.subscription_state,
                 custom_folder_name = COALESCE(courses.custom_folder_name, excluded.custom_folder_name),
                 custom_icon_name = COALESCE(courses.custom_icon_name, excluded.custom_icon_name),
-                image_url = excluded.image_url
+                image_url = excluded.image_url,
+                format = excluded.format
         """
         try queue.sync {
             try executeUnsafe("BEGIN IMMEDIATE TRANSACTION")
@@ -1154,6 +1325,7 @@ extension Database {
                     } else {
                         sqlite3_bind_null(stmt, 14)
                     }
+                    if let format = course.format { sqlite3_bind_text(stmt, 15, (format as NSString).utf8String, -1, SQLITE_TRANSIENT) }
 
                     guard sqlite3_step(stmt) == SQLITE_DONE else {
                         throw FindleError.databaseError(detail: "saveCourses step failed: \(String(cString: sqlite3_errmsg(db)))")
@@ -1218,7 +1390,8 @@ extension Database {
                     customFolderName: customFolderName,
                     customIconName: customIconName,
                     isSyncEnabled: subscriptionState != CourseSubscriptionState.unsubscribed.rawValue,
-                    imageURL: imageURL
+                    imageURL: imageURL,
+                    format: columnIndex(stmt, named: "format").flatMap { sqlite3_column_text(stmt, $0) }.map { String(cString: $0) }
                 ))
             }
             return courses
@@ -1395,7 +1568,8 @@ extension Database {
             defer { try? provider.executeUnsafe("ROLLBACK") }
             try provider.verifyRecoveryStateUnsafe(requireComplete: false)
             let tables = ["sites", "accounts", "courses", "course_tags", "course_outlines", "items",
-                          "sync_cursors", "assignments", "grade_items", "quizzes", "quiz_attempts", "pending_deletions"]
+                          "sync_cursors", "assignments", "grade_items", "quizzes", "quiz_attempts", "pending_deletions",
+                          "item_activity", "generated_contents"]
             let hasSavedRows = try tables.contains { table in
                 try provider.scalarUnsafe("SELECT EXISTS(SELECT 1 FROM \(table) LIMIT 1)") != 0
             }
@@ -1492,7 +1666,7 @@ extension Database {
                 }
                 let tables = ["sites", "accounts", "courses", "course_tags", "course_outlines", "items",
                               "sync_cursors", "assignments", "grade_items", "quizzes", "quiz_attempts",
-                              "pending_deletions", "system_metadata"]
+                              "pending_deletions", "item_activity", "generated_contents", "system_metadata"]
                 for table in tables.reversed() { try executeUnsafe("DELETE FROM main.\(table)") }
                 for table in tables { try executeUnsafe("INSERT INTO main.\(table) SELECT * FROM recovery.\(table)") }
                 if resetRemoteContent {
@@ -1542,11 +1716,15 @@ extension Database {
     /// one, including its tombstones, change counters, cursor, and outline.
     /// Callers check cancellation before entering; this synchronous operation has
     /// no cancellation boundary that could expose only part of a course update.
+    /// `arrivedItemIDs` are the items this sync added or whose content it
+    /// replaced; they count as new until the user opens them or their folder.
     public func commitCourseSync(
         items: [LocalItem],
         deletingItemIDs: [String],
         cursor: SyncCursor,
-        outline: CourseOutlineSnapshot
+        outline: CourseOutlineSnapshot,
+        arrivedItemIDs: [String] = [],
+        generatedContents: [String: Data] = [:]
     ) throws {
         guard outline.courseID == cursor.courseID,
               items.allSatisfy({ $0.courseID == cursor.courseID && $0.siteID == cursor.siteID }) else {
@@ -1564,6 +1742,9 @@ extension Database {
                 // round trips, so a tag edit may have landed since.
                 try reconcileCourseRootTagDataUnsafe(courseID: cursor.courseID, siteID: cursor.siteID)
                 try deleteItemsWithTombstoneUnsafe(ids: deletingItemIDs)
+                try recordArrivalsUnsafe(ids: arrivedItemIDs, siteID: cursor.siteID, at: cursor.lastSyncDate)
+                _ = try refreshFinderStateUnsafe(siteID: cursor.siteID, now: Date())
+                try saveGeneratedContentsUnsafe(generatedContents, siteID: cursor.siteID)
                 try saveSyncCursorUnsafe(cursor)
                 try saveCourseOutlineUnsafe(courseID: outline.courseID, siteID: cursor.siteID, payload: payload)
             }
@@ -1588,16 +1769,13 @@ extension Database {
         )
         let filename = course.effectiveFolderName
 
-        // modification_date feeds the item's metadataVersion, so bump it with
-        // the name or Finder may keep showing the old one.
-        let update = try prepareStatement(
-            "UPDATE items SET filename = ?, modification_date = ? WHERE id = ? AND filename <> ?"
-        )
+        // The name is part of the item's metadata version, so the folder's date
+        // stays put, as for any other rename.
+        let update = try prepareStatement("UPDATE items SET filename = ? WHERE id = ? AND filename <> ?")
         defer { sqlite3_finalize(update) }
         sqlite3_bind_text(update, 1, (filename as NSString).utf8String, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_double(update, 2, Date().timeIntervalSince1970)
-        sqlite3_bind_text(update, 3, (course.rootItemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(update, 4, (filename as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(update, 2, (course.rootItemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(update, 3, (filename as NSString).utf8String, -1, SQLITE_TRANSIENT)
         guard sqlite3_step(update) == SQLITE_DONE else {
             throw FindleError.databaseError(detail: "Failed to reconcile course root filename")
         }
@@ -1612,6 +1790,547 @@ extension Database {
         } catch {
             try? executeUnsafe("ROLLBACK")
             throw error
+        }
+    }
+}
+
+// MARK: - Generated Contents
+
+extension Database {
+    /// Rewrites the coursework summaries (FX-04) whose status, dates or grade
+    /// changed since the sync wrote them, after a coursework refresh. Their
+    /// brief and Moodle link stay as the sync wrote them. Returns whether any changed.
+    @discardableResult
+    public func refreshCourseworkSummaries(siteID: String) throws -> Bool {
+        let assignments = try fetchAssignments(siteID: siteID)
+        let quizzes = try fetchQuizzes(siteID: siteID)
+        let attempts = try fetchQuizAttempts(siteID: siteID)
+        let courseNames = Dictionary(try fetchCourses(siteID: siteID).map { ($0.id, $0.fullName) }, uniquingKeysWith: { first, _ in first })
+        return try queue.sync {
+            var changed = false
+            try transactionUnsafe {
+                let read = try prepareStatement("""
+                    SELECT items.id, items.course_id, items.remote_id, generated_contents.data FROM items
+                    JOIN generated_contents ON generated_contents.item_id = items.id
+                    WHERE items.site_id = ? AND (items.id LIKE 'assignsum-%' OR items.id LIKE 'quizsum-%')
+                    """)
+                defer { sqlite3_finalize(read) }
+                sqlite3_bind_text(read, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                var updates: [(id: String, data: Data)] = []
+                while sqlite3_step(read) == SQLITE_ROW {
+                    let id = String(cString: sqlite3_column_text(read, 0))
+                    let courseID = Int(sqlite3_column_int64(read, 1))
+                    let moduleID = Int(sqlite3_column_int64(read, 2))
+                    let bytes = sqlite3_column_blob(read, 3)
+                    let stored = bytes.map { Data(bytes: $0, count: Int(sqlite3_column_bytes(read, 3))) } ?? Data()
+                    guard let old = CourseworkSummary.decode(stored) else { continue }
+                    let courseName = courseNames[courseID] ?? old.courseName
+                    let fresh: CourseworkSummary
+                    if old.kind == .assignment {
+                        fresh = .assignment(name: old.name, courseName: courseName,
+                                            assignment: assignments.first { $0.courseID == courseID && $0.moduleID == moduleID },
+                                            brief: old.brief, moodleURL: old.moodleURL)
+                    } else {
+                        let quiz = quizzes.first { $0.courseID == courseID && $0.moduleID == moduleID }
+                        fresh = .quiz(name: old.name, courseName: courseName, quiz: quiz,
+                                      attempts: quiz.map { quiz in attempts.filter { $0.quizID == quiz.id } } ?? [],
+                                      moodleURL: old.moodleURL)
+                    }
+                    let data = fresh.encoded()
+                    if data != stored { updates.append((id, data)) }
+                }
+                let save = try prepareStatement("UPDATE generated_contents SET data = ? WHERE item_id = ?")
+                defer { sqlite3_finalize(save) }
+                // A new content version makes Finder fetch the new summary.
+                let version = try prepareStatement(
+                    "UPDATE items SET content_version = ?, file_size = ?, sync_state = 'placeholder', local_path = NULL WHERE id = ?")
+                defer { sqlite3_finalize(version) }
+                for update in updates {
+                    sqlite3_reset(save)
+                    _ = update.data.withUnsafeBytes { sqlite3_bind_blob(save, 1, $0.baseAddress, Int32($0.count), SQLITE_TRANSIENT) }
+                    sqlite3_bind_text(save, 2, (update.id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    guard sqlite3_step(save) == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to update a summary") }
+                    sqlite3_reset(version)
+                    let digest = SHA256.hash(data: update.data).prefix(8).map { String(format: "%02x", $0) }.joined()
+                    sqlite3_bind_text(version, 1, (digest as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_int64(version, 2, Int64(update.data.count))
+                    sqlite3_bind_text(version, 3, (update.id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    guard sqlite3_step(version) == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to version a summary") }
+                    changed = true
+                }
+            }
+            return changed
+        }
+    }
+
+    /// The caller must hold `queue`. Also drops content of items that are gone.
+    private func saveGeneratedContentsUnsafe(_ contents: [String: Data], siteID: String) throws {
+        let stmt = try prepareStatement("INSERT OR REPLACE INTO generated_contents (item_id, site_id, data) VALUES (?, ?, ?)")
+        defer { sqlite3_finalize(stmt) }
+        for (id, data) in contents {
+            sqlite3_reset(stmt)
+            sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            _ = data.withUnsafeBytes { sqlite3_bind_blob(stmt, 3, $0.baseAddress, Int32($0.count), SQLITE_TRANSIENT) }
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw FindleError.databaseError(detail: "Failed to save generated content")
+            }
+        }
+        let prune = try prepareStatement("DELETE FROM generated_contents WHERE site_id = ? AND item_id NOT IN (SELECT id FROM items)")
+        defer { sqlite3_finalize(prune) }
+        sqlite3_bind_text(prune, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(prune) == SQLITE_DONE else {
+            throw FindleError.databaseError(detail: "Failed to prune generated contents")
+        }
+    }
+
+    /// The bytes of a file Findle generates, or nil for items downloaded from Moodle.
+    public func fetchGeneratedContent(itemID: String) throws -> Data? {
+        try queue.sync {
+            let stmt = try prepareStatement("SELECT data FROM generated_contents WHERE item_id = ?")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            switch sqlite3_step(stmt) {
+            case SQLITE_ROW:
+                let count = Int(sqlite3_column_bytes(stmt, 0))
+                guard count > 0, let bytes = sqlite3_column_blob(stmt, 0) else { return Data() }
+                return Data(bytes: bytes, count: count)
+            case SQLITE_DONE:
+                return nil
+            default:
+                throw FindleError.databaseError(detail: "Failed to read generated content")
+            }
+        }
+    }
+}
+
+// MARK: - Item Activity
+
+extension Database {
+    /// The caller must hold `queue`. Also drops activity for items that are gone,
+    /// so an item Moodle removes and later restores arrives again.
+    private func recordArrivalsUnsafe(ids: [String], siteID: String, at date: Date) throws {
+        let stmt = try prepareStatement("""
+            INSERT INTO item_activity (item_id, site_id, arrived_at) VALUES (?, ?, ?)
+            ON CONFLICT(item_id) DO UPDATE SET arrived_at = excluded.arrived_at
+            """)
+        defer { sqlite3_finalize(stmt) }
+        for id in ids {
+            sqlite3_reset(stmt)
+            sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_double(stmt, 3, date.timeIntervalSince1970)
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw FindleError.databaseError(detail: "Failed to record item arrival")
+            }
+        }
+        let prune = try prepareStatement("DELETE FROM item_activity WHERE site_id = ? AND item_id NOT IN (SELECT id FROM items)")
+        defer { sqlite3_finalize(prune) }
+        sqlite3_bind_text(prune, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(prune) == SQLITE_DONE else {
+            throw FindleError.databaseError(detail: "Failed to prune item activity")
+        }
+    }
+
+    /// Record that the user opened an item (a file, or a folder whose contents
+    /// they then saw). Earlier dates never replace a later one. Returns whether
+    /// any item's badges changed, which the caller reports to Finder.
+    @discardableResult
+    public func markItemOpened(id: String, at date: Date) throws -> Bool {
+        try queue.sync {
+            var badgesChanged = false
+            try transactionUnsafe {
+                let stmt = try prepareStatement("""
+                    INSERT INTO item_activity (item_id, site_id, opened_at)
+                    SELECT id, site_id, ? FROM items WHERE id = ?
+                    ON CONFLICT(item_id) DO UPDATE SET opened_at = MAX(COALESCE(item_activity.opened_at, 0), excluded.opened_at)
+                    """)
+                defer { sqlite3_finalize(stmt) }
+                sqlite3_bind_double(stmt, 1, date.timeIntervalSince1970)
+                sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                guard sqlite3_step(stmt) == SQLITE_DONE else {
+                    throw FindleError.databaseError(detail: "Failed to record opened item")
+                }
+                if let siteID = try siteIDUnsafe(itemID: id) {
+                    badgesChanged = try refreshFinderStateUnsafe(siteID: siteID, now: Date())
+                }
+            }
+            return badgesChanged
+        }
+    }
+
+    /// Works out the badges of every item of a site and the Finder collections
+    /// (FinderCollection), and stores what changed, which reports it to Finder.
+    /// Due-soon badges and Due This Week depend on the time, so this also runs
+    /// on a schedule. Returns whether anything changed.
+    @discardableResult
+    public func refreshBadges(siteID: String, now: Date = Date()) throws -> Bool {
+        try queue.sync {
+            var changed = false
+            try transactionUnsafe { changed = try refreshFinderStateUnsafe(siteID: siteID, now: now) }
+            return changed
+        }
+    }
+
+    /// The caller must hold `queue` inside a write transaction.
+    private func refreshFinderStateUnsafe(siteID: String, now: Date) throws -> Bool {
+        let badges = try refreshBadgesUnsafe(siteID: siteID, now: now)
+        let collections = try refreshCollectionsUnsafe(siteID: siteID, now: now)
+        return badges || collections
+    }
+
+    /// The caller must hold `queue`.
+    private func siteIDUnsafe(itemID: String) throws -> String? {
+        let stmt = try prepareStatement("SELECT site_id FROM items WHERE id = ?")
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return sqlite3_column_text(stmt, 0).map { String(cString: $0) }
+    }
+
+    /// The caller must hold `queue`. A folder is new while anything inside it
+    /// is, so the user can follow the badges down to what arrived. Personal
+    /// files never get badges.
+    private func refreshBadgesUnsafe(siteID: String, now: Date) throws -> Bool {
+        struct Row {
+            let id: String
+            let parentID: String?
+            let courseID: Int
+            let remoteID: Int
+            let isLocal: Bool
+            let isPinned: Bool
+            let badges: Int
+            let isNew: Bool
+        }
+        let read = try prepareStatement("""
+            SELECT items.id, items.parent_id, items.course_id, items.remote_id, items.is_local, items.is_pinned, items.badges,
+                activity.arrived_at IS NOT NULL
+                    AND activity.arrived_at > COALESCE(activity.opened_at, 0)
+                    AND activity.arrived_at > COALESCE(parent.opened_at, 0)
+            FROM items
+            LEFT JOIN item_activity activity ON activity.item_id = items.id
+            LEFT JOIN item_activity parent ON parent.item_id = items.parent_id
+            WHERE items.site_id = ?
+            """)
+        defer { sqlite3_finalize(read) }
+        sqlite3_bind_text(read, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        var rows: [Row] = []
+        var status = sqlite3_step(read)
+        while status == SQLITE_ROW {
+            rows.append(Row(
+                id: String(cString: sqlite3_column_text(read, 0)),
+                parentID: sqlite3_column_text(read, 1).map { String(cString: $0) },
+                courseID: Int(sqlite3_column_int64(read, 2)),
+                remoteID: Int(sqlite3_column_int64(read, 3)),
+                isLocal: sqlite3_column_int(read, 4) == 1,
+                isPinned: sqlite3_column_int(read, 5) == 1,
+                badges: Int(sqlite3_column_int64(read, 6)),
+                isNew: sqlite3_column_int(read, 7) == 1))
+            status = sqlite3_step(read)
+        }
+        guard status == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to read item badges") }
+
+        let due = try prepareStatement("""
+            SELECT course_id, module_id FROM assignments
+            WHERE site_id = ? AND module_id IS NOT NULL AND submitted = 0 AND due_date > ? AND due_date <= ?
+            """)
+        defer { sqlite3_finalize(due) }
+        sqlite3_bind_text(due, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_double(due, 2, now.timeIntervalSince1970)
+        sqlite3_bind_double(due, 3, now.addingTimeInterval(ItemBadges.dueSoonWindow).timeIntervalSince1970)
+        var dueSoon = Set<[Int]>()
+        status = sqlite3_step(due)
+        while status == SQLITE_ROW {
+            dueSoon.insert([Int(sqlite3_column_int64(due, 0)), Int(sqlite3_column_int64(due, 1))])
+            status = sqlite3_step(due)
+        }
+        guard status == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to read due assignments") }
+
+        // An activity's badge goes on its outermost item: a folder, not each file in it.
+        let completion = try prepareStatement("SELECT course_id, module_id, manual, complete FROM activity_completion WHERE site_id = ?")
+        defer { sqlite3_finalize(completion) }
+        sqlite3_bind_text(completion, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        var completionByModule: [[Int]: (manual: Bool, complete: Bool)] = [:]
+        status = sqlite3_step(completion)
+        while status == SQLITE_ROW {
+            completionByModule[[Int(sqlite3_column_int64(completion, 0)), Int(sqlite3_column_int64(completion, 1))]] =
+                (sqlite3_column_int(completion, 2) == 1, sqlite3_column_int(completion, 3) == 1)
+            status = sqlite3_step(completion)
+        }
+        guard status == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to read activity completion") }
+        let rowsByID = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        func isActivityItem(_ row: Row) -> Bool {
+            guard !row.id.hasPrefix("course-"), !row.id.hasPrefix("section-") else { return false }
+            guard let parent = row.parentID.flatMap({ rowsByID[$0] }) else { return true }
+            return parent.remoteID != row.remoteID || parent.id.hasPrefix("section-") || parent.id.hasPrefix("course-")
+        }
+
+        let previous = try prepareStatement("SELECT item_id FROM previous_versions WHERE site_id = ?")
+        defer { sqlite3_finalize(previous) }
+        sqlite3_bind_text(previous, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        var updatedIDs = Set<String>()
+        while sqlite3_step(previous) == SQLITE_ROW { updatedIDs.insert(String(cString: sqlite3_column_text(previous, 0))) }
+
+        let parents = Dictionary(rows.map { ($0.id, $0.parentID) }, uniquingKeysWith: { first, _ in first })
+        var newIDs = Set<String>()
+        for row in rows where row.isNew && !row.isLocal {
+            var next: String? = row.id
+            while let id = next, newIDs.insert(id).inserted {
+                next = parents[id] ?? nil
+            }
+        }
+
+        let update = try prepareStatement("UPDATE items SET badges = ? WHERE id = ?")
+        defer { sqlite3_finalize(update) }
+        var changed = false
+        for row in rows {
+            var badges: ItemBadges = []
+            if !row.isLocal {
+                if newIDs.contains(row.id) { badges.insert(.new) }
+                if row.isPinned { badges.insert(.kept) }
+                if row.id.hasPrefix("assign-"), dueSoon.contains([row.courseID, row.remoteID]) { badges.insert(.dueSoon) }
+                if updatedIDs.contains(row.id) { badges.insert(.updated) }
+                if let state = completionByModule[[row.courseID, row.remoteID]], isActivityItem(row) {
+                    if state.complete { badges.insert(.completed) }
+                    if state.manual { badges.insert(.manualCompletion) }
+                }
+            }
+            guard badges.rawValue != row.badges else { continue }
+            sqlite3_reset(update)
+            sqlite3_bind_int64(update, 1, Int64(badges.rawValue))
+            sqlite3_bind_text(update, 2, (row.id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            guard sqlite3_step(update) == SQLITE_DONE else {
+                throw FindleError.databaseError(detail: "Failed to update item badges")
+            }
+            changed = true
+        }
+        return changed
+    }
+
+    /// The caller must hold `queue` inside a write transaction. Brings the
+    /// collection folders and their links in line with what they gather:
+    /// - Recently Added: items new since the user last looked
+    /// - Due This Week: assignment folders due in the next seven days
+    /// - Kept Offline: what the user kept downloaded (the outermost kept item)
+    private func refreshCollectionsUnsafe(siteID: String, now: Date) throws -> Bool {
+        struct Row {
+            let id: String
+            let parentID: String?
+            let filename: String
+            let courseID: Int
+            let remoteID: Int
+            let isDirectory: Bool
+            let isPinned: Bool
+            let isLocal: Bool
+            let modified: Date?
+            let isNew: Bool
+        }
+        let read = try prepareStatement("""
+            SELECT items.id, items.parent_id, items.filename, items.course_id, items.remote_id, items.is_directory,
+                items.is_pinned, items.is_local, items.modification_date,
+                activity.arrived_at IS NOT NULL
+                    AND activity.arrived_at > COALESCE(activity.opened_at, 0)
+                    AND activity.arrived_at > COALESCE(parent.opened_at, 0)
+            FROM items
+            LEFT JOIN item_activity activity ON activity.item_id = items.id
+            LEFT JOIN item_activity parent ON parent.item_id = items.parent_id
+            WHERE items.site_id = ?
+            """)
+        defer { sqlite3_finalize(read) }
+        sqlite3_bind_text(read, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        var rows: [Row] = []
+        var existing: [String: LocalItem] = [:]
+        var status = sqlite3_step(read)
+        while status == SQLITE_ROW {
+            let row = Row(
+                id: String(cString: sqlite3_column_text(read, 0)),
+                parentID: sqlite3_column_text(read, 1).map { String(cString: $0) },
+                filename: String(cString: sqlite3_column_text(read, 2)),
+                courseID: Int(sqlite3_column_int64(read, 3)),
+                remoteID: Int(sqlite3_column_int64(read, 4)),
+                isDirectory: sqlite3_column_int(read, 5) == 1,
+                isPinned: sqlite3_column_int(read, 6) == 1,
+                isLocal: sqlite3_column_int(read, 7) == 1,
+                modified: sqlite3_column_type(read, 8) == SQLITE_NULL ? nil : Date(timeIntervalSince1970: sqlite3_column_double(read, 8)),
+                isNew: sqlite3_column_int(read, 9) == 1)
+            if FinderCollection.contains(row.id) {
+                existing[row.id] = LocalItem(id: row.id, parentID: row.parentID, siteID: siteID, courseID: 0, remoteID: 0,
+                                             filename: row.filename, isDirectory: row.isDirectory)
+            } else {
+                rows.append(row)
+            }
+            status = sqlite3_step(read)
+        }
+        guard status == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to read items for collections") }
+        // Collections read their entries' targets back from the rows they replace.
+        let stored = try existing.isEmpty ? [] : fetchCollectionRowsUnsafe(siteID: siteID)
+
+        let due = try prepareStatement("""
+            SELECT course_id, module_id FROM assignments
+            WHERE site_id = ? AND module_id IS NOT NULL AND due_date > ? AND due_date <= ?
+            """)
+        defer { sqlite3_finalize(due) }
+        sqlite3_bind_text(due, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_double(due, 2, now.timeIntervalSince1970)
+        sqlite3_bind_double(due, 3, now.addingTimeInterval(FinderCollection.dueWindow).timeIntervalSince1970)
+        var dueModules = Set<[Int]>()
+        status = sqlite3_step(due)
+        while status == SQLITE_ROW {
+            dueModules.insert([Int(sqlite3_column_int64(due, 0)), Int(sqlite3_column_int64(due, 1))])
+            status = sqlite3_step(due)
+        }
+        guard status == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to read due assignments") }
+
+        var shortNames: [Int: String] = [:]
+        let courses = try prepareStatement("SELECT id, short_name FROM courses WHERE site_id = ?")
+        defer { sqlite3_finalize(courses) }
+        sqlite3_bind_text(courses, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        while sqlite3_step(courses) == SQLITE_ROW {
+            shortNames[Int(sqlite3_column_int64(courses, 0))] = sqlite3_column_text(courses, 1).map { String(cString: $0) }
+        }
+        let byID = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        /// The item's path from the Findle root, or nil if a folder is missing.
+        func path(of row: Row) -> [String]? {
+            var names = [row.filename]
+            var next = row.parentID
+            while let id = next {
+                guard let parent = byID[id], names.count < 64 else { return nil }
+                names.insert(parent.filename, at: 0)
+                next = parent.parentID
+            }
+            return names
+        }
+
+        var members: [FinderCollection: [Row]] = [:]
+        for row in rows where !row.isLocal {
+            if row.isNew { members[.recentlyAdded, default: []].append(row) }
+            if row.id.hasPrefix("assign-"), dueModules.contains([row.courseID, row.remoteID]) {
+                members[.dueThisWeek, default: []].append(row)
+            }
+            if row.isPinned, !(row.parentID.flatMap { byID[$0] }?.isPinned ?? false) {
+                members[.keptOffline, default: []].append(row)
+            }
+        }
+
+        var desired: [String: LocalItem] = [:]
+        for collection in FinderCollection.allCases {
+            let folderID = collection.folderID(siteID: siteID)
+            desired[folderID] = LocalItem(id: folderID, siteID: siteID, courseID: 0, remoteID: 0, filename: collection.name,
+                                          isDirectory: true, syncState: .materialized)
+            var taken = Set<String>()
+            let sorted = (members[collection] ?? []).sorted { ($0.filename, $0.id) < ($1.filename, $1.id) }
+            for row in sorted {
+                guard let components = path(of: row) else { continue }
+                // Entries from different courses may share a name.
+                var name = row.filename
+                if taken.contains(name.lowercased()) {
+                    let base = (row.filename as NSString).deletingPathExtension
+                    let ext = (row.filename as NSString).pathExtension
+                    let course = shortNames[row.courseID].map { " (\($0))" } ?? ""
+                    var candidate = base + course
+                    var counter = 2
+                    while taken.contains((ext.isEmpty ? candidate : candidate + "." + ext).lowercased()) {
+                        candidate = base + course + " \(counter)"
+                        counter += 1
+                    }
+                    name = ext.isEmpty ? candidate : candidate + "." + ext
+                }
+                taken.insert(name.lowercased())
+                let entryID = collection.entryID(siteID: siteID, itemID: row.id)
+                desired[entryID] = LocalItem(
+                    id: entryID, parentID: folderID, siteID: siteID, courseID: 0, remoteID: 0, filename: name,
+                    contentType: "public.symlink", modificationDate: row.modified, syncState: .materialized,
+                    // Collections sit at the root, one level below it.
+                    linkTarget: "../" + components.joined(separator: "/"))
+            }
+        }
+
+        let storedByID = Dictionary(stored.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let removed = existing.keys.filter { desired[$0] == nil }
+        let changed = desired.values.filter { item in
+            guard let old = storedByID[item.id] else { return true }
+            return old.parentID != item.parentID || old.filename != item.filename || old.linkTarget != item.linkTarget
+                || old.modificationDate != item.modificationDate
+        }
+        // Entries are removed before others take their names.
+        try deleteItemsWithTombstoneUnsafe(ids: removed.sorted())
+        try saveItemsUnsafe(changed.sorted { $0.id < $1.id })
+        return !removed.isEmpty || !changed.isEmpty
+    }
+
+    /// The caller must hold `queue`.
+    private func fetchCollectionRowsUnsafe(siteID: String) throws -> [LocalItem] {
+        let stmt = try prepareStatement("SELECT * FROM items WHERE site_id = ? AND id LIKE 'collection-%'")
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        return try readItems(from: stmt)
+    }
+
+    /// An item is new from when a sync brings it in until the user opens it or
+    /// the folder that holds it. Personal files are never new.
+    private static let newItemCondition = """
+        items.is_local = 0
+        AND activity.arrived_at IS NOT NULL
+        AND activity.arrived_at > COALESCE(activity.opened_at, 0)
+        AND activity.arrived_at > COALESCE(parent.opened_at, 0)
+        """
+
+    /// Items syncs brought in or replaced at or after `date`, for notifications.
+    public func fetchItemsArrived(since date: Date, siteID: String) throws -> [LocalItem] {
+        let sql = """
+            SELECT items.* FROM items
+            JOIN item_activity activity ON activity.item_id = items.id
+            WHERE items.site_id = ? AND activity.arrived_at >= ? AND items.is_local = 0
+            ORDER BY items.filename
+            """
+        return try queue.sync {
+            let stmt = try prepareStatement(sql)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_double(stmt, 2, date.timeIntervalSince1970)
+            return try readItems(from: stmt)
+        }
+    }
+
+    /// What is new in a course since the user last looked.
+    public func fetchNewItems(courseID: Int, siteID: String) throws -> [LocalItem] {
+        let sql = """
+            SELECT items.* FROM items
+            JOIN item_activity activity ON activity.item_id = items.id
+            LEFT JOIN item_activity parent ON parent.item_id = items.parent_id
+            WHERE items.site_id = ? AND items.course_id = ? AND \(Self.newItemCondition)
+            ORDER BY activity.arrived_at DESC, items.filename
+            """
+        return try queue.sync {
+            let stmt = try prepareStatement(sql)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_int64(stmt, 2, Int64(courseID))
+            return try readItems(from: stmt)
+        }
+    }
+
+    /// How many new items each course of a site has. Courses with none are omitted.
+    public func newItemCounts(siteID: String) throws -> [Int: Int] {
+        let sql = """
+            SELECT items.course_id, COUNT(*) FROM items
+            JOIN item_activity activity ON activity.item_id = items.id
+            LEFT JOIN item_activity parent ON parent.item_id = items.parent_id
+            WHERE items.site_id = ? AND \(Self.newItemCondition)
+            GROUP BY items.course_id
+            """
+        return try queue.sync {
+            let stmt = try prepareStatement(sql)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            var counts: [Int: Int] = [:]
+            var status = sqlite3_step(stmt)
+            while status == SQLITE_ROW {
+                counts[Int(sqlite3_column_int64(stmt, 0))] = Int(sqlite3_column_int64(stmt, 1))
+                status = sqlite3_step(stmt)
+            }
+            guard status == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to count new items") }
+            return counts
         }
     }
 }
@@ -1847,8 +2566,9 @@ extension Database {
         let sql = """
             INSERT OR REPLACE INTO items (id, parent_id, site_id, course_id, remote_id,
                 filename, is_directory, content_type, file_size, creation_date,
-                modification_date, sync_state, is_pinned, local_path, remote_url, content_version, tag_data, is_local)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                modification_date, sync_state, is_pinned, local_path, remote_url, content_version, tag_data, is_local, author, badges,
+                link_target, auto_kept)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         let clearTombstoneStmt = try prepareStatement("DELETE FROM pending_deletions WHERE item_id = ?")
         defer { sqlite3_finalize(clearTombstoneStmt) }
@@ -1888,6 +2608,10 @@ extension Database {
                 sqlite3_bind_null(stmt, 17)
             }
             sqlite3_bind_int(stmt, 18, item.isLocal ? 1 : 0)
+            if let author = item.author { sqlite3_bind_text(stmt, 19, (author as NSString).utf8String, -1, SQLITE_TRANSIENT) }
+            sqlite3_bind_int64(stmt, 20, Int64(item.badges.rawValue))
+            if let target = item.linkTarget { sqlite3_bind_text(stmt, 21, (target as NSString).utf8String, -1, SQLITE_TRANSIENT) }
+            sqlite3_bind_int(stmt, 22, item.isAutoKept ? 1 : 0)
 
             guard sqlite3_step(stmt) == SQLITE_DONE else {
                 throw FindleError.databaseError(detail: "saveItems step failed: \(String(cString: sqlite3_errmsg(db)))")
@@ -1977,13 +2701,12 @@ extension Database {
     }
 
     public func updateItemFilename(id: String, filename: String) throws {
-        let sql = "UPDATE items SET filename = ?, modification_date = ? WHERE id = ?"
+        let sql = "UPDATE items SET filename = ? WHERE id = ?"
         try queue.sync {
             let stmt = try prepareStatement(sql)
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_text(stmt, 1, (filename as NSString).utf8String, -1, SQLITE_TRANSIENT)
-            sqlite3_bind_double(stmt, 2, Date().timeIntervalSince1970)
-            sqlite3_bind_text(stmt, 3, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
             let status = sqlite3_step(stmt)
             guard status == SQLITE_DONE else {
                 throw FindleError.databaseError(detail: "Failed to update item filename")
@@ -1997,17 +2720,17 @@ extension Database {
         }
     }
 
+    /// Tags leave the date alone; they're part of the item's metadata version.
     /// The caller must hold `queue`.
     private func updateItemTagDataUnsafe(id: String, tagData: Data?) throws {
-        let stmt = try prepareStatement("UPDATE items SET tag_data = ?, modification_date = ? WHERE id = ?")
+        let stmt = try prepareStatement("UPDATE items SET tag_data = ? WHERE id = ?")
         defer { sqlite3_finalize(stmt) }
         if let td = tagData {
             sqlite3_bind_blob(stmt, 1, (td as NSData).bytes, Int32(td.count), SQLITE_TRANSIENT)
         } else {
             sqlite3_bind_null(stmt, 1)
         }
-        sqlite3_bind_double(stmt, 2, Date().timeIntervalSince1970)
-        sqlite3_bind_text(stmt, 3, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw FindleError.databaseError(detail: "Failed to update item tag data")
         }
@@ -2127,11 +2850,226 @@ extension Database {
         }
     }
 
+    /// Records the kept copy of a file's previous version, replacing an older one.
+    /// Returns the path of the copy it replaced, which the caller removes.
+    @discardableResult
+    public func savePreviousVersion(itemID: String, siteID: String, courseID: Int, path: String, size: Int64,
+                                    replacedAt: Date = Date()) throws -> String? {
+        try queue.sync {
+            var replaced: String?
+            try transactionUnsafe {
+                let old = try prepareStatement("SELECT path FROM previous_versions WHERE item_id = ?")
+                defer { sqlite3_finalize(old) }
+                sqlite3_bind_text(old, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                if sqlite3_step(old) == SQLITE_ROW { replaced = sqlite3_column_text(old, 0).map { String(cString: $0) } }
+                let insert = try prepareStatement("""
+                    INSERT OR REPLACE INTO previous_versions (item_id, site_id, course_id, path, size, replaced_at) VALUES (?, ?, ?, ?, ?, ?)
+                    """)
+                defer { sqlite3_finalize(insert) }
+                sqlite3_bind_text(insert, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(insert, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_int64(insert, 3, Int64(courseID))
+                sqlite3_bind_text(insert, 4, (path as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_int64(insert, 5, size)
+                sqlite3_bind_double(insert, 6, replacedAt.timeIntervalSince1970)
+                guard sqlite3_step(insert) == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to record previous version") }
+                _ = try refreshFinderStateUnsafe(siteID: siteID, now: Date())
+            }
+            return replaced == path ? nil : replaced
+        }
+    }
+
+    /// Where the kept previous version of an item is, if there is one.
+    public func previousVersionPath(itemID: String) throws -> String? {
+        try queue.sync {
+            let stmt = try prepareStatement("SELECT path FROM previous_versions WHERE item_id = ?")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+            return sqlite3_column_text(stmt, 0).map { String(cString: $0) }
+        }
+    }
+
+    /// Forgets an item's previous version (the user dismissed it). Returns the
+    /// path of the copy, which the caller removes.
+    @discardableResult
+    public func discardPreviousVersion(itemID: String, siteID: String) throws -> String? {
+        try queue.sync {
+            var path: String?
+            try transactionUnsafe {
+                let read = try prepareStatement("SELECT path FROM previous_versions WHERE item_id = ? AND site_id = ?")
+                defer { sqlite3_finalize(read) }
+                sqlite3_bind_text(read, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(read, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                if sqlite3_step(read) == SQLITE_ROW { path = sqlite3_column_text(read, 0).map { String(cString: $0) } }
+                let delete = try prepareStatement("DELETE FROM previous_versions WHERE item_id = ? AND site_id = ?")
+                defer { sqlite3_finalize(delete) }
+                sqlite3_bind_text(delete, 1, (itemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(delete, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                guard sqlite3_step(delete) == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to discard previous version") }
+                _ = try refreshFinderStateUnsafe(siteID: siteID, now: Date())
+            }
+            return path
+        }
+    }
+
+    /// What a course's kept previous versions take on this Mac.
+    public func previousVersionBytes(courseID: Int, siteID: String) throws -> Int64 {
+        try queue.sync {
+            let stmt = try prepareStatement("SELECT COALESCE(SUM(size), 0) FROM previous_versions WHERE course_id = ? AND site_id = ?")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int64(stmt, 1, Int64(courseID))
+            sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+            return sqlite3_column_int64(stmt, 0)
+        }
+    }
+
+    /// Stores the teachers Moodle lists for each course, for Course Info in Finder.
+    public func saveCourseTeachers(_ teachers: [Int: [String]], siteID: String) throws {
+        try queue.sync {
+            try transactionUnsafe {
+                let update = try prepareStatement("UPDATE courses SET teachers = ? WHERE id = ? AND site_id = ?")
+                defer { sqlite3_finalize(update) }
+                for (courseID, names) in teachers {
+                    sqlite3_reset(update)
+                    let json = String(decoding: try JSONEncoder().encode(names), as: UTF8.self)
+                    sqlite3_bind_text(update, 1, (json as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_int64(update, 2, Int64(courseID))
+                    sqlite3_bind_text(update, 3, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    guard sqlite3_step(update) == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to save teachers") }
+                }
+            }
+        }
+    }
+
+    public func fetchCourseTeachers(courseID: Int, siteID: String) throws -> [String] {
+        try queue.sync {
+            let stmt = try prepareStatement("SELECT teachers FROM courses WHERE id = ? AND site_id = ?")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int64(stmt, 1, Int64(courseID))
+            sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            guard sqlite3_step(stmt) == SQLITE_ROW, let text = sqlite3_column_text(stmt, 0) else { return [] }
+            return (try? JSONDecoder().decode([String].self, from: Data(String(cString: text).utf8))) ?? []
+        }
+    }
+
+    /// Replaces a course's activity completion with what Moodle reported, and
+    /// updates the checkmarks Finder shows.
+    public func saveActivityCompletion(_ statuses: [ActivityCompletion], courseID: Int, siteID: String) throws {
+        try queue.sync {
+            try transactionUnsafe {
+                let clear = try prepareStatement("DELETE FROM activity_completion WHERE site_id = ? AND course_id = ?")
+                defer { sqlite3_finalize(clear) }
+                sqlite3_bind_text(clear, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_int64(clear, 2, Int64(courseID))
+                guard sqlite3_step(clear) == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to clear activity completion") }
+                let insert = try prepareStatement("""
+                    INSERT OR REPLACE INTO activity_completion (site_id, course_id, module_id, manual, complete) VALUES (?, ?, ?, ?, ?)
+                    """)
+                defer { sqlite3_finalize(insert) }
+                for status in statuses where status.courseID == courseID {
+                    sqlite3_reset(insert)
+                    sqlite3_bind_text(insert, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_int64(insert, 2, Int64(courseID))
+                    sqlite3_bind_int64(insert, 3, Int64(status.moduleID))
+                    sqlite3_bind_int(insert, 4, status.isManual ? 1 : 0)
+                    sqlite3_bind_int(insert, 5, status.isComplete ? 1 : 0)
+                    guard sqlite3_step(insert) == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to save activity completion") }
+                }
+                _ = try refreshFinderStateUnsafe(siteID: siteID, now: Date())
+            }
+        }
+    }
+
+    /// Records a completion change the user made from Finder, once Moodle accepted it.
+    public func setActivityComplete(moduleID: Int, siteID: String, complete: Bool) throws {
+        try queue.sync {
+            try transactionUnsafe {
+                let update = try prepareStatement("UPDATE activity_completion SET complete = ? WHERE site_id = ? AND module_id = ?")
+                defer { sqlite3_finalize(update) }
+                sqlite3_bind_int(update, 1, complete ? 1 : 0)
+                sqlite3_bind_text(update, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_int64(update, 3, Int64(moduleID))
+                guard sqlite3_step(update) == SQLITE_DONE else { throw FindleError.databaseError(detail: "Failed to record completion") }
+                _ = try refreshFinderStateUnsafe(siteID: siteID, now: Date())
+            }
+        }
+    }
+
+    /// Marks exactly `itemIDs` as kept downloaded for the current week, and
+    /// releases what an earlier week kept. Returns whether anything changed.
+    @discardableResult
+    public func setAutoKept(_ itemIDs: Set<String>, siteID: String) throws -> Bool {
+        try queue.sync {
+            var changed = false
+            try transactionUnsafe {
+                let read = try prepareStatement("SELECT id FROM items WHERE site_id = ? AND auto_kept = 1")
+                defer { sqlite3_finalize(read) }
+                sqlite3_bind_text(read, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                var current = Set<String>()
+                while sqlite3_step(read) == SQLITE_ROW { current.insert(String(cString: sqlite3_column_text(read, 0))) }
+                let update = try prepareStatement("UPDATE items SET auto_kept = ? WHERE id = ? AND site_id = ? AND is_local = 0")
+                defer { sqlite3_finalize(update) }
+                for (id, value) in current.subtracting(itemIDs).map({ ($0, 0) }) + itemIDs.subtracting(current).map({ ($0, 1) }) {
+                    sqlite3_reset(update)
+                    sqlite3_bind_int(update, 1, Int32(value))
+                    sqlite3_bind_text(update, 2, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(update, 3, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    guard sqlite3_step(update) == SQLITE_DONE else {
+                        throw FindleError.databaseError(detail: "Failed to update the current week")
+                    }
+                    if sqlite3_changes(db) > 0 { changed = true }
+                }
+            }
+            return changed
+        }
+    }
+
     public func pinItemsRecursively(id: String, isPinned: Bool) throws {
+        try pinItemAndChildren(id: id, isPinned: isPinned)
+        if let siteID = try queue.sync(execute: { try siteIDUnsafe(itemID: id) }) {
+            try refreshBadges(siteID: siteID)
+        }
+    }
+
+    private func pinItemAndChildren(id: String, isPinned: Bool) throws {
         try updateItemPinned(id: id, isPinned: isPinned)
         let children = try fetchItems(parentID: id)
         for child in children {
-            try pinItemsRecursively(id: child.id, isPinned: isPinned)
+            try pinItemAndChildren(id: child.id, isPinned: isPinned)
+        }
+    }
+
+    /// Report every row as changed, so the system re-reads metadata that Findle
+    /// started publishing after it last saw the item (content policy, action
+    /// state). Without this, items keep their old metadata until they change.
+    @discardableResult
+    public func republishAllItems() throws -> Int {
+        try queue.sync {
+            try executeUnsafe("UPDATE items SET is_pinned = is_pinned")
+            return Int(sqlite3_changes(db))
+        }
+    }
+
+    /// Moodle files at or below `id`. Personal files and folders are excluded:
+    /// only synced files can be evicted and downloaded again.
+    public func fetchSyncedFiles(underItemID id: String) throws -> [LocalItem] {
+        let sql = """
+            WITH RECURSIVE subtree(id) AS (
+                SELECT id FROM items WHERE id = ?
+                UNION ALL
+                SELECT items.id FROM items JOIN subtree ON items.parent_id = subtree.id
+            )
+            SELECT * FROM items
+            WHERE id IN (SELECT id FROM subtree) AND is_directory = 0 AND is_local = 0
+            ORDER BY filename
+            """
+        return try queue.sync {
+            let stmt = try prepareStatement(sql)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            return try readItems(from: stmt)
         }
     }
 
@@ -2150,6 +3088,8 @@ extension Database {
             .filter { !$0.isLocal }
             .map(\.id)
         try deleteItemsWithTombstone(ids: ids)
+        // Collections stop linking to the course's items.
+        try refreshBadges(siteID: siteID)
     }
 
     public func deleteAllItems(siteID: String) throws {
@@ -2814,6 +3754,10 @@ extension Database {
         // decoded value stays correct across both column layouts.
         let isLocalIndex = columnIndex(stmt, named: "is_local")
         let isLocal = isLocalIndex.map { sqlite3_column_int(stmt, $0) == 1 } ?? false
+        let author = columnIndex(stmt, named: "author").flatMap { sqlite3_column_text(stmt, $0) }.map { String(cString: $0) }
+        let badges = columnIndex(stmt, named: "badges").map { ItemBadges(rawValue: Int(sqlite3_column_int64(stmt, $0))) } ?? []
+        let linkTarget = columnIndex(stmt, named: "link_target").flatMap { sqlite3_column_text(stmt, $0) }.map { String(cString: $0) }
+        let isAutoKept = columnIndex(stmt, named: "auto_kept").map { sqlite3_column_int(stmt, $0) == 1 } ?? false
 
         return LocalItem(
             id: String(cString: sqlite3_column_text(stmt, 0)),
@@ -2833,7 +3777,11 @@ extension Database {
             remoteURL: sqlite3_column_text(stmt, 14).flatMap { URL(string: String(cString: $0)) },
             contentVersion: sqlite3_column_text(stmt, 15).map { String(cString: $0) },
             tagData: tagData,
-            isLocal: isLocal
+            isLocal: isLocal,
+            author: author,
+            badges: badges,
+            linkTarget: linkTarget,
+            isAutoKept: isAutoKept
         )
     }
 
@@ -2928,8 +3876,9 @@ extension Database {
             do {
                 try deleteForSite("assignments", siteID: siteID)
                 let sql = """
-                    INSERT OR REPLACE INTO assignments (id, site_id, course_id, name, due_date, cutoff_date, submitted, graded, grade)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT OR REPLACE INTO assignments (id, site_id, course_id, name, due_date, cutoff_date, submitted, graded, grade, module_id,
+                        takes_files, can_edit, can_submit, requires_statement)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
                 for a in assignments {
                     let stmt = try prepareStatement(sql)
@@ -2943,10 +3892,16 @@ extension Database {
                     sqlite3_bind_int(stmt, 7, a.submitted ? 1 : 0)
                     sqlite3_bind_int(stmt, 8, a.graded ? 1 : 0)
                     bindOptionalText(stmt, 9, a.grade)
+                    if let moduleID = a.moduleID { sqlite3_bind_int64(stmt, 10, Int64(moduleID)) }
+                    sqlite3_bind_int(stmt, 11, a.takesFiles ? 1 : 0)
+                    sqlite3_bind_int(stmt, 12, a.canEdit ? 1 : 0)
+                    sqlite3_bind_int(stmt, 13, a.canSubmit ? 1 : 0)
+                    sqlite3_bind_int(stmt, 14, a.requiresStatement ? 1 : 0)
                     guard sqlite3_step(stmt) == SQLITE_DONE else {
                         throw FindleError.databaseError(detail: "saveAssignments: \(String(cString: sqlite3_errmsg(db)))")
                     }
                 }
+                _ = try refreshFinderStateUnsafe(siteID: siteID, now: Date())
                 try executeUnsafe("COMMIT")
             } catch {
                 try? executeUnsafe("ROLLBACK")
@@ -2957,21 +3912,30 @@ extension Database {
 
     public func fetchAssignments(siteID: String) throws -> [MoodleAssignment] {
         try queue.sync {
-            let stmt = try prepareStatement("SELECT id, course_id, name, due_date, cutoff_date, submitted, graded, grade FROM assignments WHERE site_id = ?")
+            let stmt = try prepareStatement("""
+                SELECT id, course_id, name, due_date, cutoff_date, submitted, graded, grade, module_id,
+                    takes_files, can_edit, can_submit, requires_statement FROM assignments WHERE site_id = ?
+                """)
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
             var out: [MoodleAssignment] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
-                out.append(MoodleAssignment(
+                var assignment = MoodleAssignment(
                     id: Int(sqlite3_column_int64(stmt, 0)),
                     courseID: Int(sqlite3_column_int64(stmt, 1)),
                     name: String(cString: sqlite3_column_text(stmt, 2)),
                     dueDate: Self.columnDate(stmt, 3),
                     cutoffDate: Self.columnDate(stmt, 4),
+                    moduleID: sqlite3_column_type(stmt, 8) == SQLITE_NULL ? nil : Int(sqlite3_column_int64(stmt, 8)),
                     submitted: sqlite3_column_int(stmt, 5) == 1,
                     graded: sqlite3_column_int(stmt, 6) == 1,
                     grade: sqlite3_column_text(stmt, 7).map { String(cString: $0) }
-                ))
+                )
+                assignment.takesFiles = sqlite3_column_int(stmt, 9) == 1
+                assignment.canEdit = sqlite3_column_int(stmt, 10) == 1
+                assignment.canSubmit = sqlite3_column_int(stmt, 11) == 1
+                assignment.requiresStatement = sqlite3_column_int(stmt, 12) == 1
+                out.append(assignment)
             }
             return out
         }
@@ -3034,8 +3998,8 @@ extension Database {
             do {
                 try deleteForSite("quizzes", siteID: siteID)
                 let sql = """
-                    INSERT OR REPLACE INTO quizzes (id, site_id, course_id, name, open_date, close_date, time_limit)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT OR REPLACE INTO quizzes (id, site_id, course_id, name, open_date, close_date, time_limit, module_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """
                 for q in quizzes {
                     let stmt = try prepareStatement(sql)
@@ -3047,6 +4011,7 @@ extension Database {
                     bindOptionalDate(stmt, 5, q.openDate)
                     bindOptionalDate(stmt, 6, q.closeDate)
                     if let t = q.timeLimit { sqlite3_bind_int64(stmt, 7, Int64(t)) } else { sqlite3_bind_null(stmt, 7) }
+                    if let m = q.moduleID { sqlite3_bind_int64(stmt, 8, Int64(m)) } else { sqlite3_bind_null(stmt, 8) }
                     guard sqlite3_step(stmt) == SQLITE_DONE else {
                         throw FindleError.databaseError(detail: "saveQuizzes: \(String(cString: sqlite3_errmsg(db)))")
                     }
@@ -3061,7 +4026,7 @@ extension Database {
 
     public func fetchQuizzes(siteID: String) throws -> [MoodleQuiz] {
         try queue.sync {
-            let stmt = try prepareStatement("SELECT id, course_id, name, open_date, close_date, time_limit FROM quizzes WHERE site_id = ?")
+            let stmt = try prepareStatement("SELECT id, course_id, name, open_date, close_date, time_limit, module_id FROM quizzes WHERE site_id = ?")
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
             var out: [MoodleQuiz] = []
@@ -3072,7 +4037,8 @@ extension Database {
                     name: String(cString: sqlite3_column_text(stmt, 2)),
                     openDate: Self.columnDate(stmt, 3),
                     closeDate: Self.columnDate(stmt, 4),
-                    timeLimit: sqlite3_column_type(stmt, 5) != SQLITE_NULL ? Int(sqlite3_column_int64(stmt, 5)) : nil
+                    timeLimit: sqlite3_column_type(stmt, 5) != SQLITE_NULL ? Int(sqlite3_column_int64(stmt, 5)) : nil,
+                    moduleID: sqlite3_column_type(stmt, 6) != SQLITE_NULL ? Int(sqlite3_column_int64(stmt, 6)) : nil
                 ))
             }
             return out
@@ -3177,6 +4143,7 @@ extension Database {
                     "items", "pending_deletions", "course_tags", "sync_cursors",
                     "course_outlines",
                     "assignments", "grade_items", "quizzes", "quiz_attempts",
+                    "item_activity", "generated_contents", "previous_versions", "activity_completion",
                     "courses", "accounts", "sites"
                 ] {
                     try executeUnsafe("DELETE FROM \(table)")

@@ -4,12 +4,15 @@ import AppKit
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var onClose: (@MainActor () -> Void)?
 
+    private let tabs = NSTabViewController()
+    private let courses: CoursesSettingsController
+
     init(state: AppState, updates: UpdateController, companion: FinderWindowObserver, autosavesFrame: Bool = true,
          reconnect: @escaping @MainActor () -> Void) {
-        let tabs = NSTabViewController()
+        courses = CoursesSettingsController(state: state)
         tabs.tabStyle = .toolbar
         let pages: [(String, String, NSViewController)] = [
-            ("Courses", "folder", CoursesSettingsController(state: state)),
+            ("Courses", "folder", courses),
             ("General", "gearshape", GeneralSettingsController(state: state, updates: updates, companion: companion)),
             ("Account", "person.crop.circle", AccountSettingsController(state: state, reconnect: reconnect)),
             ("Assistants", "bubble.left.and.bubble.right", AssistantSettingsController(state: state)),
@@ -43,6 +46,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         showWindow(nil)
         NSApp.activate()
         window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Switch to Courses and select the course.
+    func reveal(courseID: Int) {
+        tabs.selectedTabViewItemIndex = 0
+        courses.reveal(courseID: courseID)
     }
 
     func windowWillClose(_ notification: Notification) { onClose?() }

@@ -1,11 +1,10 @@
 import Foundation
 import SharedDomain
 
-/// One policy for timestamps, notifications and the status shown after a sync.
+/// One policy for timestamps and the status shown after a sync.
 struct SyncReportPresentation {
     let report: SyncRunReport
 
-    var shouldNotifyCompletion: Bool { report.allSucceeded }
     func lastSuccessfulSync(previous: Date?) -> Date? { report.successfulCompletionDate ?? previous }
 
     var message: String? {

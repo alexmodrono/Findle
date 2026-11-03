@@ -3,7 +3,9 @@
 // Licensed under the Apache License, Version 2.0.
 // You may obtain a copy of the License in the LICENSE file at the root of this repository.
 
+import CryptoKit
 import FileProvider
+import Synchronization
 import UniformTypeIdentifiers
 import SharedDomain
 
@@ -18,12 +20,29 @@ func isContainer(_ item: LocalItem) -> Bool {
     item.isDirectory
 }
 
-/// Adapts a LocalItem to NSFileProviderItem for the File Provider framework.
-final class FileProviderItem: NSObject, NSFileProviderItem {
-    private let localItem: LocalItem
+/// The Moodle address of each site the extension serves, so items can say where
+/// they came from without each caller looking the site up.
+enum MoodleSiteLinks {
+    private static let baseURLs = Mutex<[String: URL]>([:])
 
-    init(localItem: LocalItem) {
+    static func register(_ site: MoodleSite) {
+        baseURLs.withLock { $0[site.id] = site.baseURL }
+    }
+
+    static func baseURL(siteID: String) -> URL? {
+        baseURLs.withLock { $0[siteID] }
+    }
+}
+
+/// Adapts a LocalItem to NSFileProviderItem for the File Provider framework.
+final class FileProviderItem: NSObject, NSFileProviderItem, NSFileProviderItemDecorating {
+    private let localItem: LocalItem
+    private let openedAt: Date?
+
+    /// `lastUsedDate` echoes a date the system just reported, so its replica keeps it.
+    init(localItem: LocalItem, lastUsedDate: Date? = nil) {
         self.localItem = localItem
+        self.openedAt = lastUsedDate
     }
 
     var itemIdentifier: NSFileProviderItemIdentifier {
@@ -38,10 +57,15 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
     }
 
     var capabilities: NSFileProviderItemCapabilities {
+        // Findle keeps collections up to date; nothing goes in or out by hand.
+        if localItem.isInFinderCollection {
+            return localItem.isDirectory ? [.allowsReading, .allowsContentEnumerating] : [.allowsReading]
+        }
         if isUserItem(localItem) {
+            // Trashing keeps personal files recoverable in Finder's Trash (FI-17).
             var caps: NSFileProviderItemCapabilities = [
                 .allowsReading, .allowsWriting, .allowsRenaming,
-                .allowsReparenting, .allowsDeleting
+                .allowsReparenting, .allowsDeleting, .allowsTrashing
             ]
             if localItem.isDirectory {
                 caps.insert(.allowsContentEnumerating)
@@ -72,6 +96,9 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
         if localItem.isDirectory {
             return .folder
         }
+        if localItem.linkTarget != nil {
+            return .symbolicLink
+        }
         if let mimeType = localItem.contentType {
             return UTType(mimeType: mimeType) ?? inferType()
         }
@@ -90,9 +117,22 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
         localItem.modificationDate
     }
 
+    /// A collection entry links to the real item.
+    var symlinkTargetPath: String? {
+        localItem.linkTarget
+    }
+
     var itemVersion: NSFileProviderItemVersion {
-        let contentVersion = localItem.contentVersion ?? "1"
-        let metadataVersion = localItem.modificationDate.map { String($0.timeIntervalSince1970) } ?? contentVersion
+        // A link's target is its content.
+        let contentVersion = localItem.linkTarget.map { "link-" + Self.digest(Data($0.utf8)) } ?? localItem.contentVersion ?? "1"
+        // Renaming, tagging or a new link or author leaves the date alone, so
+        // they go in the version for the system to notice them.
+        let described = [localItem.filename, moodleLink?.absoluteString ?? "", localItem.author ?? ""].joined(separator: "\u{0}")
+        let metadataVersion = (localItem.modificationDate.map { String($0.timeIntervalSince1970) } ?? contentVersion)
+            + "|" + Self.digest(Data(described.utf8) + Data([0]) + (localItem.tagData ?? Data()))
+            + DownloadRetention.metadataVersionSuffix(for: localItem)
+            + FinderBadges.metadataVersionSuffix(for: localItem)
+            + "|" + FinderActionState.revision
         return NSFileProviderItemVersion(
             contentVersion: Data(contentVersion.utf8),
             metadataVersion: Data(metadataVersion.utf8)
@@ -123,6 +163,51 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
         localItem.tagData
     }
 
+    var contentPolicy: NSFileProviderContentPolicy {
+        DownloadRetention.contentPolicy(for: localItem)
+    }
+
+    var lastUsedDate: Date? {
+        openedAt
+    }
+
+    var userInfo: [AnyHashable: Any]? {
+        FinderActionState.userInfo(for: localItem)
+    }
+
+    var decorations: [NSFileProviderItemDecorationIdentifier]? {
+        FinderBadges.decorations(for: localItem)
+    }
+
+    /// Where the item lives on Moodle, for Get Info's "Where from".
+    private var moodleLink: URL? {
+        guard !localItem.isLocal, !localItem.isInFinderCollection, let baseURL = MoodleSiteLinks.baseURL(siteID: localItem.siteID) else { return nil }
+        return MoodleURLBuilder.webURL(baseURL: baseURL, itemID: localItem.id, courseID: localItem.courseID,
+                                       remoteID: localItem.remoteID, isDirectory: localItem.isDirectory,
+                                       parentID: localItem.parentID)
+    }
+
+    /// Spotlight metadata the system writes on the file: Get Info shows the link
+    /// as "Where from", and the author makes the file findable by teacher.
+    var extendedAttributes: [String: Data] {
+        var attributes: [String: Data] = [:]
+        if let moodleLink { attributes[Self.whereFromsAttribute] = Self.plist([moodleLink.absoluteString]) }
+        if !localItem.isLocal, let author = localItem.author { attributes[Self.authorsAttribute] = Self.plist([author]) }
+        return attributes
+    }
+
+    static let whereFromsAttribute = "com.apple.metadata:kMDItemWhereFroms"
+    static let authorsAttribute = "com.apple.metadata:kMDItemAuthors"
+
+    private static func plist(_ values: [String]) -> Data? {
+        try? PropertyListSerialization.data(fromPropertyList: values, format: .binary, options: 0)
+    }
+
+    /// A short digest; versions are compared, never read.
+    private static func digest(_ data: Data) -> String {
+        SHA256.hash(data: data).prefix(6).map { String(format: "%02x", $0) }.joined()
+    }
+
     // MARK: - Type Inference
 
     private func inferType() -> UTType {
@@ -149,6 +234,8 @@ final class RootContainerItem: NSObject, NSFileProviderItem {
     var capabilities: NSFileProviderItemCapabilities { [.allowsReading, .allowsContentEnumerating, .allowsAddingSubItems] }
     var itemVersion: NSFileProviderItemVersion {
         let versionData = Data(rootName.utf8)
-        return NSFileProviderItemVersion(contentVersion: versionData, metadataVersion: versionData)
+        let metadataVersion = Data((rootName + "|" + FinderActionState.revision).utf8)
+        return NSFileProviderItemVersion(contentVersion: versionData, metadataVersion: metadataVersion)
     }
+    var userInfo: [AnyHashable: Any]? { FinderActionState.rootUserInfo() }
 }

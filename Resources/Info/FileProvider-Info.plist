@@ -42,7 +42,7 @@
 			</dict>
 			<dict>
 				<key>NSExtensionFileProviderActionActivationRule</key>
-				<string>TRUEPREDICATE</string>
+				<string>fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.kind == "root" OR $item.userInfo.moodle == YES).@count == 1</string>
 				<key>NSExtensionFileProviderActionIdentifier</key>
 				<string>$(FINDLE_BUNDLE_PREFIX).action.open-in-moodle</string>
 				<key>NSExtensionFileProviderActionName</key>
@@ -50,7 +50,7 @@
 			</dict>
 			<dict>
 				<key>NSExtensionFileProviderActionActivationRule</key>
-				<string>TRUEPREDICATE</string>
+				<string>fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.kind == "root" OR $item.userInfo.moodle == YES).@count == 1</string>
 				<key>NSExtensionFileProviderActionIdentifier</key>
 				<string>$(FINDLE_BUNDLE_PREFIX).action.copy-moodle-link</string>
 				<key>NSExtensionFileProviderActionName</key>
@@ -58,7 +58,7 @@
 			</dict>
 			<dict>
 				<key>NSExtensionFileProviderActionActivationRule</key>
-				<string>TRUEPREDICATE</string>
+				<string>fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR ($item.userInfo.moodle == YES AND ($item.userInfo.kind == "folder" OR $item.userInfo.kind == "file"))).@count == 1</string>
 				<key>NSExtensionFileProviderActionIdentifier</key>
 				<string>$(FINDLE_BUNDLE_PREFIX).action.open-course-page</string>
 				<key>NSExtensionFileProviderActionName</key>
@@ -66,7 +66,7 @@
 			</dict>
 			<dict>
 				<key>NSExtensionFileProviderActionActivationRule</key>
-				<string>TRUEPREDICATE</string>
+				<string>SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR ($item.userInfo.moodle == YES AND $item.userInfo.kept == NO AND $item.userInfo.kind != "course")).@count &gt; 0</string>
 				<key>NSExtensionFileProviderActionIdentifier</key>
 				<string>$(FINDLE_BUNDLE_PREFIX).action.keep-downloaded</string>
 				<key>NSExtensionFileProviderActionName</key>
@@ -74,11 +74,59 @@
 			</dict>
 			<dict>
 				<key>NSExtensionFileProviderActionActivationRule</key>
-				<string>TRUEPREDICATE</string>
+				<string>SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR ($item.userInfo.moodle == YES AND $item.userInfo.kept == NO AND $item.userInfo.kind == "course")).@count &gt; 0</string>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).action.keep-course-offline</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Keep Course Offline</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.kept == YES).@count &gt; 0</string>
 				<key>NSExtensionFileProviderActionIdentifier</key>
 				<string>$(FINDLE_BUNDLE_PREFIX).action.remove-download</string>
 				<key>NSExtensionFileProviderActionName</key>
 				<string>Remove Download</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>SUBQUERY(fileproviderItems, $item, $item.userInfo.completion == "todo").@count &gt; 0</string>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).action.mark-done</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Mark as Done</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>SUBQUERY(fileproviderItems, $item, $item.userInfo.completion == "done").@count &gt; 0</string>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).action.mark-not-done</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Mark as Not Done</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.previous == YES).@count == 1</string>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).action.show-previous-version</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Show Previous Version</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>SUBQUERY(fileproviderItems, $item, $item.userInfo.previous == YES).@count &gt; 0</string>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).action.discard-previous-version</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Discard Previous Version</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.moodle == YES).@count == 1</string>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).action.show-in-findle</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Show in Findle</string>
 			</dict>
 		</array>
 		<key>NSExtensionFileProviderDocumentGroup</key>
@@ -89,6 +137,188 @@
 		<string>com.apple.fileprovider-nonui</string>
 		<key>NSExtensionPrincipalClass</key>
 		<string>$(PRODUCT_MODULE_NAME).FileProviderExtension</string>
+		<key>NSFileProviderDecorations</key>
+		<array>
+			<dict>
+				<key>BadgeImageType</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).badge-image.due-soon</string>
+				<key>Category</key>
+				<string>Badge</string>
+				<key>Identifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).badge.due-soon</string>
+				<key>Label</key>
+				<string>Due soon</string>
+			</dict>
+			<dict>
+				<key>BadgeImageType</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).badge-image.new</string>
+				<key>Category</key>
+				<string>Badge</string>
+				<key>Identifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).badge.new</string>
+				<key>Label</key>
+				<string>New</string>
+			</dict>
+			<dict>
+				<key>BadgeImageType</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).badge-image.updated</string>
+				<key>Category</key>
+				<string>Badge</string>
+				<key>Identifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).badge.updated</string>
+				<key>Label</key>
+				<string>Updated</string>
+			</dict>
+			<dict>
+				<key>BadgeImageType</key>
+				<string>com.apple.icon-decoration.badge.checkmark</string>
+				<key>Category</key>
+				<string>Badge</string>
+				<key>Identifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).badge.completed</string>
+				<key>Label</key>
+				<string>Done</string>
+			</dict>
+			<dict>
+				<key>BadgeImageType</key>
+				<string>com.apple.icon-decoration.badge.pinned</string>
+				<key>Category</key>
+				<string>Badge</string>
+				<key>Identifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).badge.kept</string>
+				<key>Label</key>
+				<string>Kept downloaded</string>
+			</dict>
+		</array>
+		<key>NSFileProviderUserInteractions</key>
+		<array>
+			<dict>
+				<key>ActivationRule</key>
+				<string>(action == "Trash" OR action == "Delete") AND sourceItem.userInfo.personal == NO AND NOT sourceItem.userInfo.kind IN {"root", "collection", "link"}</string>
+				<key>Alert</key>
+				<dict>
+					<key>LocalizedRecoveryOptions</key>
+					<dict>
+						<key>Cancel</key>
+						<string>OK</string>
+					</dict>
+					<key>LocalizedSubTitle</key>
+					<string>Findle shows each course as it is on Moodle, so its files and folders stay until Moodle removes them. To free space on your Mac, choose Remove Download. The file stays here and downloads again when you open it.</string>
+					<key>LocalizedTitle</key>
+					<string>Files from Moodle can’t be deleted</string>
+					<key>RecoveryOptions</key>
+					<dict>
+						<key>Continue</key>
+						<false/>
+					</dict>
+				</dict>
+			</dict>
+			<dict>
+				<key>ActivationRule</key>
+				<string>action == "Rename" AND sourceItem.userInfo.personal == NO AND NOT sourceItem.userInfo.kind IN {"root", "collection", "link", "course"}</string>
+				<key>Alert</key>
+				<dict>
+					<key>LocalizedRecoveryOptions</key>
+					<dict>
+						<key>Cancel</key>
+						<string>OK</string>
+					</dict>
+					<key>LocalizedSubTitle</key>
+					<string>Their names come from Moodle and follow any change made there. To keep your own copy under another name, hold Option while you drag it to make a copy, then rename the copy.</string>
+					<key>LocalizedTitle</key>
+					<string>Files from Moodle can’t be renamed</string>
+					<key>RecoveryOptions</key>
+					<dict>
+						<key>Continue</key>
+						<false/>
+					</dict>
+				</dict>
+			</dict>
+			<dict>
+				<key>ActivationRule</key>
+				<string>(action == "Move" OR action == "MoveOut") AND sourceItem.userInfo.personal == NO AND NOT sourceItem.userInfo.kind IN {"root", "collection", "link"}</string>
+				<key>Alert</key>
+				<dict>
+					<key>LocalizedRecoveryOptions</key>
+					<dict>
+						<key>Cancel</key>
+						<string>OK</string>
+					</dict>
+					<key>LocalizedSubTitle</key>
+					<string>They stay where they are in the course on Moodle. To put a copy somewhere else, hold Option while you drag it.</string>
+					<key>LocalizedTitle</key>
+					<string>Files from Moodle can’t be moved</string>
+					<key>RecoveryOptions</key>
+					<dict>
+						<key>Continue</key>
+						<false/>
+					</dict>
+				</dict>
+			</dict>
+			<dict>
+				<key>ActivationRule</key>
+				<string>(action == "Trash" OR action == "Delete" OR action == "Rename" OR action == "Move" OR action == "MoveOut") AND sourceItem.userInfo.kind IN {"collection", "link"}</string>
+				<key>Alert</key>
+				<dict>
+					<key>LocalizedRecoveryOptions</key>
+					<dict>
+						<key>Cancel</key>
+						<string>OK</string>
+					</dict>
+					<key>LocalizedSubTitle</key>
+					<string>It gathers items from your courses, and they leave it on their own, for example once you open a new file or remove a download. The items themselves stay in their courses.</string>
+					<key>LocalizedTitle</key>
+					<string>Findle keeps this folder up to date</string>
+					<key>RecoveryOptions</key>
+					<dict>
+						<key>Continue</key>
+						<false/>
+					</dict>
+				</dict>
+			</dict>
+		</array>
 	</dict>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.icon-decoration.badge</string>
+				<string>com.apple.icon-decoration-position.trailing-bottom</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Findle New Badge</string>
+			<key>UTTypeIconFile</key>
+			<string>NewBadge</string>
+			<key>UTTypeIdentifier</key>
+			<string>$(FINDLE_BUNDLE_PREFIX).badge-image.new</string>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.icon-decoration.badge</string>
+				<string>com.apple.icon-decoration-position.trailing-bottom</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Findle Updated Badge</string>
+			<key>UTTypeIconFile</key>
+			<string>UpdatedBadge</string>
+			<key>UTTypeIdentifier</key>
+			<string>$(FINDLE_BUNDLE_PREFIX).badge-image.updated</string>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.icon-decoration.badge</string>
+				<string>com.apple.icon-decoration-position.trailing-bottom</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Findle Due Soon Badge</string>
+			<key>UTTypeIconFile</key>
+			<string>DueSoonBadge</string>
+			<key>UTTypeIdentifier</key>
+			<string>$(FINDLE_BUNDLE_PREFIX).badge-image.due-soon</string>
+		</dict>
+	</array>
 </dict>
 </plist>

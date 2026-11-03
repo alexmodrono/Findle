@@ -4,6 +4,7 @@
 // You may obtain a copy of the License in the LICENSE file at the root of this repository.
 
 import Foundation
+import CryptoKit
 import OSLog
 import SharedDomain
 import FindleNetworking
@@ -13,11 +14,9 @@ import FindlePersistence
 public actor SyncEngine {
     private let provider: LMSProvider
     private let database: Database
-    private let logger = Logger(subsystem: "es.amodrono.findle.sync", category: "SyncEngine")
+    private let logger = Logger(subsystem: "com.amodrono.findle.sync", category: "SyncEngine")
 
     private var activeTasks: [Int: Task<Date?, Error>] = [:]
-    /// Pinned-item downloads in flight, tracked so `stopAllSyncs` can cancel and await them.
-    private var pinnedDownloadTasks: Set<Task<[Int: DiagnosticFailure], Error>> = []
     private var syncProgress: [Int: SyncProgress] = [:]
     private var isStopping = false
 
@@ -33,10 +32,17 @@ public actor SyncEngine {
         }
     }
 
-    public init(provider: LMSProvider, database: Database) {
+    /// `willReplaceDownloads` runs before a course commits, with the downloaded
+    /// files whose content Moodle replaced, so the app can keep the version the
+    /// user had (FI-15).
+    public init(provider: LMSProvider, database: Database,
+                willReplaceDownloads: (@Sendable ([LocalItem]) async -> Void)? = nil) {
         self.provider = provider
         self.database = database
+        self.willReplaceDownloads = willReplaceDownloads
     }
+
+    private let willReplaceDownloads: (@Sendable ([LocalItem]) async -> Void)?
 
     // MARK: - Course Sync
 
@@ -122,24 +128,6 @@ public actor SyncEngine {
             syncProgress[course.id]?.state = .stale
         }
 
-        let published = Set(outcomes.values.filter { $0.outcome == .succeeded }.map(\.courseID))
-        if !wasCancelled, !authenticationFailed, !published.isEmpty {
-            do {
-                let failures = try await runPinnedDownloads(site: site, token: token, courseIDs: published)
-                for (courseID, failure) in failures {
-                    guard let previous = outcomes[courseID] else { continue }
-                    outcomes[courseID] = SyncCourseOutcome(
-                        courseID: courseID, outcome: .incomplete, startedAt: previous.startedAt,
-                        lastSuccessfulSync: previous.lastSuccessfulSync, failure: failure
-                    )
-                    syncProgress[courseID]?.state = .stale
-                }
-            } catch {
-                runFailure = DiagnosticFailure(error)
-                authenticationFailed = (error as? FindleError)?.requiresReauthentication == true
-                wasCancelled = Self.isCancellation(error) || Task.isCancelled
-            }
-        }
         let report = SyncRunReport(
             id: attemptID, siteID: site.id, startedAt: startedAt,
             courses: selected.compactMap { outcomes[$0.id] }, wasCancelled: wasCancelled,
@@ -187,15 +175,10 @@ public actor SyncEngine {
         }
     }
 
-    /// Sync a single course, then materialize any pinned items that still need
-    /// downloading. Batch runs use `syncCourseTracked` directly and download
-    /// pinned items once at the end instead.
+    /// Sync a single course. Kept items are downloaded by the system, which
+    /// reads their content policy from the File Provider extension.
     public func syncCourse(site: MoodleSite, token: AuthToken, course: MoodleCourse) async throws {
-        guard try await syncCourseTracked(site: site, token: token, course: course) != nil else { return }
-        let failures = try await runPinnedDownloads(site: site, token: token, courseIDs: [course.id])
-        if !failures.isEmpty {
-            throw FindleError.downloadFailed(itemID: "course-\(course.id)", reason: "Pinned files could not finish downloading. Try again.")
-        }
+        _ = try await syncCourseTracked(site: site, token: token, course: course)
     }
 
     /// Sync a single course: enumerate content, diff against local state, update database.
@@ -263,6 +246,10 @@ public actor SyncEngine {
 
         try Task.checkCancellation()
 
+        let briefs = try await fetchAssignmentBriefs(site: site, token: token, course: course, sections: sections)
+
+        try Task.checkCancellation()
+
         // Look up Finder tags for this course
         let courseTags = try database.fetchCourseTags(courseID: course.id, siteID: site.id)
         let courseTagData = FinderTag.tagData(from: courseTags)
@@ -286,12 +273,16 @@ public actor SyncEngine {
             filename: folderSource.effectiveFolderName,
             isDirectory: true,
             creationDate: course.startDate,
-            modificationDate: Date(),
             syncState: .materialized,
             tagData: courseTagData
         )
 
         var allItems: [LocalItem] = [courseItem]
+        var generatedContents: [String: Data] = [:]
+        // What the coursework summaries say; stored by the last tracking refresh.
+        let coursework = (assignments: (try? database.fetchAssignments(siteID: site.id)) ?? [],
+                          quizzes: (try? database.fetchQuizzes(siteID: site.id)) ?? [],
+                          attempts: (try? database.fetchQuizAttempts(siteID: site.id)) ?? [])
 
         // Build items from sections and modules
         for section in sections {
@@ -306,13 +297,51 @@ public actor SyncEngine {
                 remoteID: section.id,
                 filename: section.sanitizedFolderName,
                 isDirectory: true,
-                modificationDate: Date(),
                 syncState: .materialized
             )
             allItems.append(sectionItem)
 
+            var sectionItems: [LocalItem] = []
             for module in section.modules {
                 guard module.visible else { continue }
+                if module.resourceType == .assignment {
+                    let assignment = assignmentItems(for: module, brief: briefs[module.id], parentID: sectionItemID,
+                                                     siteID: site.id, courseID: course.id)
+                    sectionItems.append(contentsOf: assignment.items)
+                    generatedContents.merge(assignment.generated) { _, new in new }
+                    // A summary for Quick Look, thumbnails and Spotlight (FX-04).
+                    let folderID = "assign-\(site.id)-\(course.id)-\(module.id)"
+                    let summary = CourseworkSummary.assignment(
+                        name: module.name, courseName: course.fullName,
+                        assignment: coursework.assignments.first { $0.courseID == course.id && $0.moduleID == module.id },
+                        brief: briefs[module.id]?.intro.map(MoodleText.plainText(fromHTML:)),
+                        moodleURL: MoodleURLBuilder.webURL(baseURL: site.baseURL, itemID: folderID, courseID: course.id,
+                                                           remoteID: module.id, isDirectory: true, parentID: sectionItemID))
+                    let file = Self.summaryFile(summary, moduleID: module.id, parentID: folderID, siteID: site.id, courseID: course.id)
+                    sectionItems.append(file.item)
+                    generatedContents[file.item.id] = file.data
+                    // Files dropped in Submit become the draft submission (FX-06).
+                    if coursework.assignments.first(where: { $0.courseID == course.id && $0.moduleID == module.id })?
+                        .acceptsFilesFromFinder == true {
+                        sectionItems.append(LocalItem(
+                            id: "submit-\(site.id)-\(course.id)-\(module.id)", parentID: folderID, siteID: site.id,
+                            courseID: course.id, remoteID: module.id, filename: "Submit", isDirectory: true, syncState: .materialized))
+                    }
+                    continue
+                }
+                if module.resourceType == .quiz {
+                    let quiz = coursework.quizzes.first { $0.courseID == course.id && $0.moduleID == module.id }
+                    var link = URLComponents(url: site.baseURL.appendingPathComponent("mod/quiz/view.php"), resolvingAgainstBaseURL: false)
+                    link?.queryItems = [URLQueryItem(name: "id", value: String(module.id))]
+                    let summary = CourseworkSummary.quiz(
+                        name: module.name, courseName: course.fullName, quiz: quiz,
+                        attempts: quiz.map { quiz in coursework.attempts.filter { $0.quizID == quiz.id } } ?? [],
+                        moodleURL: link?.url)
+                    let file = Self.summaryFile(summary, moduleID: module.id, parentID: sectionItemID, siteID: site.id, courseID: course.id)
+                    sectionItems.append(file.item)
+                    generatedContents[file.item.id] = file.data
+                    continue
+                }
                 let moduleItems = buildItems(
                     from: module,
                     parentID: sectionItemID,
@@ -320,8 +349,14 @@ public actor SyncEngine {
                     courseID: course.id,
                     token: token
                 )
-                allItems.append(contentsOf: moduleItems)
+                sectionItems.append(contentsOf: moduleItems)
             }
+            if let readme = labelReadme(for: section, siblings: sectionItems, parentID: sectionItemID,
+                                        siteID: site.id, courseID: course.id) {
+                sectionItems.append(readme.item)
+                generatedContents[readme.item.id] = readme.data
+            }
+            allItems.append(contentsOf: sectionItems)
         }
 
         syncProgress[course.id]?.totalItems = allItems.count
@@ -333,8 +368,25 @@ public actor SyncEngine {
         // the site and filtering in memory made a full sync quadratic.
         let existingItems = try database.fetchItems(courseID: course.id, siteID: site.id).filter { !$0.isLocal }
 
+        // An assignment without a brief (Moodle refused the request or left it
+        // out) keeps what earlier syncs put in its folder instead of losing it.
+        let built = Set(allItems.map(\.id))
+        let foldersWithoutBrief = Set(allItems.filter { $0.id.hasPrefix("assign-") && briefs[$0.remoteID] == nil }.map(\.id))
+        allItems += existingItems.filter { item in
+            item.parentID.map(foldersWithoutBrief.contains) == true && !built.contains(item.id)
+        }
+
+        allItems = Self.settleDates(allItems, existing: existingItems, now: Date())
         let changes = diffItems(existing: existingItems, incoming: allItems)
 
+        // Keep what the user downloaded before the new version replaces it.
+        let existingByID = Dictionary(existingItems.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let replaced = changes.modified.compactMap { item -> LocalItem? in
+            guard let old = existingByID[item.id], !old.isDirectory, old.syncState == .materialized,
+                  old.contentVersion != nil, old.contentVersion != item.contentVersion || old.fileSize != item.fileSize,
+                  !Self.becomesWebArchive(existing: old, incoming: item) else { return nil }
+            return old
+        }
         try Task.checkCancellation()
 
         // The network round trips above can be long. If the user unsubscribed in
@@ -344,6 +396,10 @@ public actor SyncEngine {
             syncProgress[course.id]?.state = .stale
             return nil
         }
+
+        // Only for a commit that will happen: an unsubscribed or cancelled course
+        // must not show previous versions of content that never changed.
+        if !replaced.isEmpty, let willReplaceDownloads { await willReplaceDownloads(replaced) }
 
         // Cancellation is safe before publication. Once SQLite starts the
         // synchronous commit, publish every part of the course or roll it all back.
@@ -356,60 +412,21 @@ public actor SyncEngine {
             lastModified: Date(),
             itemCount: allItems.count
         )
+        // The first sync of a course is its baseline: nothing in it is new.
+        let arrivedItemIDs = existingItems.isEmpty ? [] : changes.arrived.map(\.id)
         try database.commitCourseSync(
             items: changes.added + changes.modified,
             deletingItemIDs: changes.removed.map(\.id),
             cursor: cursor,
-            outline: CourseOutlineSnapshot(courseID: course.id, sections: sections)
+            outline: CourseOutlineSnapshot(courseID: course.id, sections: sections),
+            arrivedItemIDs: arrivedItemIDs,
+            generatedContents: generatedContents
         )
 
         syncProgress[course.id]?.processedItems = allItems.count
         syncProgress[course.id]?.state = .synced
         logger.info("Course \(course.id) sync complete: \(allItems.count) items")
         return cursor.lastSyncDate
-    }
-
-    /// Track downloads so database replacement can cancel and await them too.
-    private func runPinnedDownloads(
-        site: MoodleSite, token: AuthToken, courseIDs: Set<Int>
-    ) async throws -> [Int: DiagnosticFailure] {
-        if isStopping { throw CancellationError() }
-        let task = Task { [self] in
-            try await downloadPinnedItems(site: site, token: token, courseIDs: courseIDs)
-        }
-        pinnedDownloadTasks.insert(task)
-        defer { pinnedDownloadTasks.remove(task) }
-        return try await withTaskCancellationHandler {
-            try await task.value
-        } onCancel: {
-            task.cancel()
-        }
-    }
-
-    /// Failed materializations remain retryable and make their course incomplete.
-    private func downloadPinnedItems(
-        site: MoodleSite, token: AuthToken, courseIDs: Set<Int>
-    ) async throws -> [Int: DiagnosticFailure] {
-        let pending = try database.fetchPinnedItems(siteID: site.id).filter {
-            courseIDs.contains($0.courseID) && $0.syncState != .materialized
-        }
-        var failures: [Int: DiagnosticFailure] = [:]
-        for item in pending {
-            try Task.checkCancellation()
-            guard item.remoteURL != nil else { continue }
-            let pathExtension = (item.filename as NSString).pathExtension
-            let baseName = item.id.replacingOccurrences(of: "/", with: "_")
-            let tempFilename = pathExtension.isEmpty ? baseName : "\(baseName).\(pathExtension)"
-            let destination = FileManager.default.temporaryDirectory.appendingPathComponent(tempFilename)
-            do {
-                try await downloadItem(itemID: item.id, site: site, token: token, destination: destination)
-            } catch {
-                if Self.isCancellation(error) || Task.isCancelled { throw CancellationError() }
-                if (error as? FindleError)?.requiresReauthentication == true { throw error }
-                failures[item.courseID] = DiagnosticFailure(error)
-            }
-        }
-        return failures
     }
 
     // MARK: - Item Building
@@ -427,6 +444,21 @@ public actor SyncEngine {
         case .file:
             items.append(contentsOf: fileItems(for: module, parentID: parentID, siteID: siteID, courseID: courseID))
 
+        case .h5p, .scorm:
+            // The package itself, which Quick Look can preview (FX-10). A SCORM
+            // zip gets its own extension so only these zips get that preview.
+            let packages = fileItems(for: module, parentID: parentID, siteID: siteID, courseID: courseID)
+            if module.resourceType == .scorm, let package = packages.first(where: { $0.filename.lowercased().hasSuffix(".zip") }) {
+                items.append(LocalItem(
+                    id: package.id, parentID: parentID, siteID: siteID, courseID: courseID, remoteID: module.id,
+                    filename: FileNameSanitizer.sanitize(module.name) + ".scorm", contentType: "application/zip",
+                    fileSize: package.fileSize, creationDate: package.creationDate, modificationDate: package.modificationDate,
+                    syncState: .placeholder, remoteURL: package.remoteURL, contentVersion: package.contentVersion,
+                    author: package.author))
+            } else if module.resourceType == .h5p {
+                items.append(contentsOf: packages.filter { $0.filename.lowercased().hasSuffix(".h5p") })
+            }
+
         case .folder:
             let folderID = "folder-\(siteID)-\(courseID)-\(module.id)"
             let folder = LocalItem(
@@ -437,7 +469,6 @@ public actor SyncEngine {
                 remoteID: module.id,
                 filename: FileNameSanitizer.sanitize(module.name),
                 isDirectory: true,
-                modificationDate: Date(),
                 syncState: .materialized
             )
             items.append(folder)
@@ -467,7 +498,13 @@ public actor SyncEngine {
             }
 
         case .page:
-            // Represent page resources as HTML files
+            // A page is its index.html; the other files are the images it shows.
+            let html = module.contents.first { content in
+                content.type == "file" && content.fileName == "index.html" && (content.filePath ?? "/") == "/"
+            }
+            // It is saved as a web archive with its images (FI-18), so its size
+            // counts them and a replaced image is a new version.
+            let files = module.contents.filter { $0.type == "file" }
             let itemID = "page-\(siteID)-\(courseID)-\(module.id)"
             let item = LocalItem(
                 id: itemID,
@@ -475,12 +512,18 @@ public actor SyncEngine {
                 siteID: siteID,
                 courseID: courseID,
                 remoteID: module.id,
-                filename: FileNameSanitizer.sanitize(module.name) + ".html",
+                filename: FileNameSanitizer.sanitize(module.name) + ".webarchive",
                 isDirectory: false,
-                contentType: "text/html",
-                fileSize: 0,
-                modificationDate: Date(),
-                syncState: .placeholder
+                contentType: Self.webArchiveType,
+                fileSize: files.reduce(0) { $0 + max($1.fileSize, 0) },
+                creationDate: html?.timeCreated,
+                modificationDate: html?.timeModified,
+                syncState: .placeholder,
+                remoteURL: html?.fileURL,
+                contentVersion: html.map { _ in
+                    Self.webArchiveVersionPrefix + String(Int(files.compactMap(\.timeModified).max()?.timeIntervalSince1970 ?? 0))
+                },
+                author: Self.author(of: html)
             )
             items.append(item)
 
@@ -489,6 +532,132 @@ public actor SyncEngine {
         }
 
         return items
+    }
+
+    // MARK: - Assignments and Labels
+
+    /// Briefs keyed by course module, or none when the course has no assignments
+    /// or Moodle refuses the request. Signing out still stops the sync.
+    private func fetchAssignmentBriefs(
+        site: MoodleSite, token: AuthToken, course: MoodleCourse, sections: [MoodleSection]
+    ) async throws -> [Int: MoodleAssignmentBrief] {
+        let hasAssignments = sections.contains { section in
+            section.visible && section.modules.contains { $0.visible && $0.resourceType == .assignment }
+        }
+        guard hasAssignments else { return [:] }
+        do {
+            let briefs = try await provider.fetchAssignmentBriefs(site: site, token: token, courseID: course.id)
+            return Dictionary(briefs.map { ($0.moduleID, $0) }, uniquingKeysWith: { first, _ in first })
+        } catch {
+            if Self.isCancellation(error) || Task.isCancelled { throw CancellationError() }
+            if (error as? FindleError)?.requiresReauthentication == true { throw error }
+            logger.warning("Assignment briefs unavailable for course \(course.id, privacy: .public): \(DiagnosticFailure(error).summary, privacy: .public)")
+            return [:]
+        }
+    }
+
+    /// An assignment as a folder holding a README.md with its brief and the
+    /// files attached to the brief.
+    private func assignmentItems(
+        for module: MoodleModule, brief: MoodleAssignmentBrief?, parentID: String, siteID: String, courseID: Int
+    ) -> (items: [LocalItem], generated: [String: Data]) {
+        let folderID = "assign-\(siteID)-\(courseID)-\(module.id)"
+        let folder = LocalItem(
+            id: folderID, parentID: parentID, siteID: siteID, courseID: courseID, remoteID: module.id,
+            filename: FileNameSanitizer.sanitize(module.name), isDirectory: true, syncState: .materialized
+        )
+        guard let brief else { return ([folder], [:]) }
+
+        let attachmentModule = MoodleModule(id: module.id, name: module.name, modName: module.modName,
+                                            contents: brief.attachments)
+        var items = [folder] + fileItems(for: attachmentModule, parentID: folderID, siteID: siteID, courseID: courseID)
+        var generated: [String: Data] = [:]
+        let text = Self.briefText(brief)
+        if !text.isEmpty {
+            let readme = Self.generatedFile(
+                id: "brief-\(siteID)-\(courseID)-\(module.id)",
+                filename: Self.readmeName(avoiding: items.filter { $0.parentID == folderID }),
+                text: text, parentID: folderID, siteID: siteID, courseID: courseID, remoteID: module.id)
+            items.append(readme.item)
+            generated[readme.item.id] = readme.data
+        }
+        return (items, generated)
+    }
+
+    static let webArchiveType = "application/x-webarchive"
+    static let webArchiveVersionPrefix = "webarchive-"
+
+    /// A page from a build that saved it as bare HTML.
+    static func becomesWebArchive(existing: LocalItem, incoming: LocalItem) -> Bool {
+        existing.id.hasPrefix("page-")
+            && existing.contentVersion?.hasPrefix(webArchiveVersionPrefix) != true
+            && incoming.contentVersion?.hasPrefix(webArchiveVersionPrefix) == true
+    }
+
+    static func briefText(_ brief: MoodleAssignmentBrief) -> String {
+        var parts: [String] = []
+        if let dueDate = brief.dueDate {
+            parts.append("Due " + dueDate.formatted(date: .long, time: .shortened))
+        }
+        if let intro = brief.intro.map(MoodleText.plainText(fromHTML:)), !intro.isEmpty {
+            parts.append(intro)
+        }
+        guard !parts.isEmpty else { return "" }
+        return (["# " + brief.name] + parts).joined(separator: "\n\n")
+    }
+
+    /// A README.md with the text of a section's labels, which otherwise only
+    /// appear on the course page.
+    private func labelReadme(
+        for section: MoodleSection, siblings: [LocalItem], parentID: String, siteID: String, courseID: Int
+    ) -> (item: LocalItem, data: Data)? {
+        let texts = section.modules
+            .filter { $0.visible && $0.resourceType == .label }
+            .compactMap { $0.description.map(MoodleText.plainText(fromHTML:)) }
+            .filter { !$0.isEmpty }
+        guard !texts.isEmpty else { return nil }
+        return Self.generatedFile(
+            id: "readme-\(siteID)-\(courseID)-\(section.id)",
+            filename: Self.readmeName(avoiding: siblings.filter { $0.parentID == parentID }),
+            text: texts.joined(separator: "\n\n"), parentID: parentID, siteID: siteID, courseID: courseID,
+            remoteID: section.id)
+    }
+
+    /// README.md, unless Moodle already has a file by that name in the folder.
+    private static func readmeName(avoiding siblings: [LocalItem]) -> String {
+        let taken = Set(siblings.map { $0.filename.lowercased() })
+        return taken.contains("readme.md") ? "README (Findle).md" : "README.md"
+    }
+
+    /// A Markdown file whose bytes the sync stores. Its version is a digest of
+    /// the text, so it only reads as changed when the text changes.
+    /// A coursework summary file. Its name says what it is, and its type is
+    /// Findle's own, so Quick Look, thumbnails and Spotlight read it.
+    static func summaryFile(_ summary: CourseworkSummary, moduleID: Int, parentID: String, siteID: String,
+                            courseID: Int) -> (item: LocalItem, data: Data) {
+        let data = summary.encoded()
+        let digest = SHA256.hash(data: data).prefix(8).map { String(format: "%02x", $0) }.joined()
+        let ext = summary.kind == .assignment ? CourseworkSummary.assignmentExtension : CourseworkSummary.quizExtension
+        let item = LocalItem(
+            id: CourseworkSummary.summaryID(for: summary.kind, siteID: siteID, courseID: courseID, moduleID: moduleID),
+            parentID: parentID, siteID: siteID, courseID: courseID, remoteID: moduleID,
+            filename: FileNameSanitizer.sanitize(summary.name) + "." + ext,
+            contentType: summary.kind == .assignment ? CourseworkSummary.assignmentType : CourseworkSummary.quizType,
+            fileSize: Int64(data.count), syncState: .placeholder, contentVersion: digest)
+        return (item, data)
+    }
+
+    private static func generatedFile(
+        id: String, filename: String, text: String, parentID: String, siteID: String, courseID: Int, remoteID: Int
+    ) -> (item: LocalItem, data: Data) {
+        let data = Data((text + "\n").utf8)
+        let digest = SHA256.hash(data: data).prefix(8).map { String(format: "%02x", $0) }.joined()
+        let item = LocalItem(
+            id: id, parentID: parentID, siteID: siteID, courseID: courseID, remoteID: remoteID,
+            filename: filename, contentType: "net.daringfireball.markdown", fileSize: Int64(data.count),
+            syncState: .placeholder, contentVersion: digest
+        )
+        return (item, data)
     }
 
     /// Build the file items for a file or folder module.
@@ -516,9 +685,15 @@ public actor SyncEngine {
                 modificationDate: content.timeModified,
                 syncState: .placeholder,
                 remoteURL: content.fileURL,
-                contentVersion: content.timeModified.map { String(Int($0.timeIntervalSince1970)) }
+                contentVersion: content.timeModified.map { String(Int($0.timeIntervalSince1970)) },
+                author: Self.author(of: content)
             )
         }
+    }
+
+    private static func author(of content: MoodleFileContent?) -> String? {
+        guard let name = content?.author?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else { return nil }
+        return name
     }
 
     /// Item ID for a file inside a module. Root-level files keep the original ID so
@@ -570,12 +745,56 @@ public actor SyncEngine {
         return pathExtension.isEmpty ? "\(stem) (\(suffix))" : "\(stem) (\(suffix)).\(pathExtension)"
     }
 
+    // MARK: - Dates
+
+    /// Gives every item a date that only moves when Moodle changes something.
+    ///
+    /// Moodle dates files and pages. Items it doesn't date (READMEs Findle
+    /// writes, pages without content) keep the date they were first seen with
+    /// until their content changes. A folder shows the newest date inside it, or
+    /// the date it was first seen with when nothing inside has one.
+    static func settleDates(_ items: [LocalItem], existing: [LocalItem], now: Date) -> [LocalItem] {
+        let previous = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+        // Whole seconds, so the date reads back from the database unchanged.
+        let now = Date(timeIntervalSince1970: now.timeIntervalSince1970.rounded(.down))
+        var settled = items.map { item -> LocalItem in
+            guard !item.isDirectory, item.modificationDate == nil else { return item }
+            var item = item
+            let old = previous[item.id]
+            let unchanged = old.map { $0.contentVersion == item.contentVersion && $0.fileSize == item.fileSize } ?? false
+            item.modificationDate = unchanged ? old?.modificationDate ?? now : now
+            return item
+        }
+
+        var children: [String: [Int]] = [:]
+        for (index, item) in settled.enumerated() {
+            if let parentID = item.parentID { children[parentID, default: []].append(index) }
+        }
+        var newest: [Int: Date?] = [:]
+        func newestDate(inside index: Int) -> Date? {
+            if let known = newest[index] { return known }
+            newest[index] = .some(nil)
+            let date = (children[settled[index].id] ?? []).compactMap { child in
+                settled[child].isDirectory ? newestDate(inside: child) : settled[child].modificationDate
+            }.max()
+            newest[index] = date
+            return date
+        }
+        for index in settled.indices where settled[index].isDirectory {
+            let date = newestDate(inside: index) ?? previous[settled[index].id]?.modificationDate ?? now
+            settled[index].modificationDate = date
+        }
+        return settled
+    }
+
     // MARK: - Diffing
 
     private struct DiffResult {
         let added: [LocalItem]
         let modified: [LocalItem]
         let removed: [LocalItem]
+        /// Added items and items whose content changed; a rename alone doesn't count.
+        let arrived: [LocalItem]
     }
 
     private func diffItems(existing: [LocalItem], incoming: [LocalItem]) -> DiffResult {
@@ -591,25 +810,51 @@ public actor SyncEngine {
         var added: [LocalItem] = []
         var modified: [LocalItem] = []
         var removed: [LocalItem] = []
+        var arrived: [LocalItem] = []
+
+        // A new item in a folder kept downloaded is kept too, so keeping a
+        // folder or a whole course covers what Moodle adds to it later.
+        var keptFolders: [String: Bool] = [:]
+        func isKept(_ id: String?) -> Bool {
+            guard let id else { return false }
+            if let known = keptFolders[id] { return known }
+            keptFolders[id] = false
+            let kept = existingByID[id]?.isPinned ?? isKept(incomingByID[id]?.parentID)
+            keptFolders[id] = kept
+            return kept
+        }
 
         for (id, var item) in incomingByID {
             if let existing = existingByID[id] {
                 // Preserve user-set metadata across syncs
                 item.isPinned = existing.isPinned
                 item.tagData = existing.tagData
+                item.badges = existing.badges
+                item.isAutoKept = existing.isAutoKept
 
                 if existing.contentVersion != item.contentVersion ||
                    existing.fileSize != item.fileSize {
                     // Content changed: keep the placeholder reset so it re-downloads.
                     modified.append(item)
-                } else if existing.filename != item.filename {
-                    // Only the display name changed. Keep any materialized copy.
+                    // An item getting its first version, or a page first saved as a
+                    // web archive, is Findle learning it, not Moodle changing it.
+                    if (existing.contentVersion != nil || item.contentVersion == nil)
+                        && !Self.becomesWebArchive(existing: existing, incoming: item) {
+                        arrived.append(item)
+                    }
+                } else if existing.filename != item.filename ||
+                          existing.modificationDate != item.modificationDate ||
+                          existing.creationDate != item.creationDate ||
+                          existing.author != item.author {
+                    // Only the name, dates or author changed. Keep any materialized copy.
                     item.syncState = existing.syncState
                     item.localPath = existing.localPath
                     modified.append(item)
                 }
             } else {
+                item.isPinned = isKept(item.parentID)
                 added.append(item)
+                arrived.append(item)
             }
         }
 
@@ -619,7 +864,7 @@ public actor SyncEngine {
             }
         }
 
-        return DiffResult(added: added, modified: modified, removed: removed)
+        return DiffResult(added: added, modified: modified, removed: removed, arrived: arrived)
     }
 
     // MARK: - Download
@@ -699,21 +944,15 @@ public actor SyncEngine {
             syncProgress[id]?.state = .stale
         }
         activeTasks.removeAll()
-        for task in pinnedDownloadTasks {
-            task.cancel()
-        }
     }
 
-    /// Cancel and await every in-flight course and pinned-download task before
-    /// callers replace or delete the database those tasks may still be writing.
+    /// Cancel and await every in-flight course task before callers replace or
+    /// delete the database those tasks may still be writing.
     public func stopAllSyncs() async {
         isStopping = true
         let tasks = Array(activeTasks.values)
-        let pinnedTasks = Array(pinnedDownloadTasks)
         for task in tasks { task.cancel() }
-        for task in pinnedTasks { task.cancel() }
         for task in tasks { _ = try? await task.value }
-        for task in pinnedTasks { _ = try? await task.value }
         for id in activeTasks.keys {
             syncProgress[id]?.state = .stale
         }

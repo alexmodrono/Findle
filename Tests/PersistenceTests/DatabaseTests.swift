@@ -466,9 +466,8 @@ final class DatabaseTests: XCTestCase {
         XCTAssertEqual(try database.fetchCourse(id: 1, siteID: "site-1")?.customFolderName, "OS: Kernels")
         let renamed = try XCTUnwrap(database.fetchItem(id: course.rootItemID))
         XCTAssertEqual(renamed.filename, FileNameSanitizer.sanitize("OS: Kernels"))
-        // The metadata version is derived from modification_date, so it must move with the name.
-        XCTAssertNotNil(renamed.modificationDate)
-        XCTAssertNotEqual(renamed.modificationDate, before.modificationDate)
+        // The folder's date stays put; the name is part of its metadata version.
+        XCTAssertEqual(renamed.modificationDate, before.modificationDate)
 
         // Re-applying the same name writes nothing.
         let anchor = try database.currentChangeCounter()

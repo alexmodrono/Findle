@@ -33,7 +33,7 @@ final class ItemEnumerator: NSObject, NSFileProviderEnumerator {
     private let containerIdentifier: NSFileProviderItemIdentifier
     private let database: Database
     private let siteID: String?
-    private let logger = Logger(subsystem: "es.amodrono.findle.file-provider", category: "Enumerator")
+    private let logger = Logger(subsystem: "com.amodrono.findle.file-provider", category: "Enumerator")
 
     init(containerIdentifier: NSFileProviderItemIdentifier, database: Database, siteID: String? = nil) {
         self.containerIdentifier = containerIdentifier
@@ -129,7 +129,7 @@ final class ItemEnumerator: NSObject, NSFileProviderEnumerator {
 final class WorkingSetEnumerator: NSObject, NSFileProviderEnumerator {
     private let database: Database
     private let siteID: String?
-    private let logger = Logger(subsystem: "es.amodrono.findle.file-provider", category: "WorkingSet")
+    private let logger = Logger(subsystem: "com.amodrono.findle.file-provider", category: "WorkingSet")
 
     init(database: Database, siteID: String? = nil) {
         self.database = database

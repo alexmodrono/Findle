@@ -3,13 +3,16 @@ import Airlock
 import Carbon
 import Combine
 import CoreSpotlight
+import SharedDomain
+import UserNotifications
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private lazy var state = AppState()
     private lazy var updates = UpdateController()
     private var companion: CompanionWindowController?
     private var settings: SettingsWindowController?
+    private var submissions: [SubmitWindowController] = []
     private var onboarding: AirlockWindowController?
     private var subscription: AnyCancellable?
     #if DEBUG
@@ -32,6 +35,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         #endif
         LegacySettingsMigration.run()
+        UNUserNotificationCenter.current().delegate = self
+        IntentBridge.state = state
         UserDefaults.standard.register(defaults: ["finderCompanionEnabled": true])
         configureMenu()
         let companion = CompanionWindowController(state: state) { [weak self] in self?.showSettings() }
@@ -74,6 +79,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
+        // Double-clicking a coursework summary in Finder opens it on Moodle (FX-04).
+        // Any other file was shared to Findle to submit (FX-07).
+        var shared: [URL] = []
+        for url in urls where url.isFileURL {
+            let extensionName = url.pathExtension.lowercased()
+            if [CourseworkSummary.assignmentExtension, CourseworkSummary.quizExtension].contains(extensionName) {
+                let access = url.startAccessingSecurityScopedResource()
+                defer { if access { url.stopAccessingSecurityScopedResource() } }
+                // Only the current Moodle site's pages: the file could have been edited.
+                if let link = (try? Data(contentsOf: url)).flatMap(CourseworkSummary.decode)?.moodleURL,
+                   link.scheme?.lowercased() == "https",
+                   let host = state.currentSite?.baseURL.host?.lowercased(), link.host?.lowercased() == host {
+                    NSWorkspace.shared.open(link)
+                }
+            } else {
+                shared.append(url)
+            }
+        }
+        if !shared.isEmpty {
+            let controller = SubmitWindowController(state: state, files: shared)
+            controller.onClose = { [weak self, weak controller] in
+                guard let self else { return }
+                self.submissions.removeAll { $0 === controller }
+                self.updateActivationPolicy()
+            }
+            submissions.append(controller)
+            controller.present()
+        }
+        if let courseID = urls.lazy.compactMap(FindleLinks.shownCourse(in:)).last {
+            showCourse(courseID)
+        }
+        for itemID in urls.compactMap(FindleLinks.revealedItem(in:)) {
+            Task { await state.revealInFinder(itemID: itemID) }
+        }
+        for courseID in urls.compactMap(FindleLinks.openedCourse(in:)) {
+            Task {
+                if state.courses.isEmpty { await state.loadCourses() }
+                await state.openFileProviderInFinder(selecting: state.courses.first { $0.id == courseID })
+            }
+        }
+        for request in urls.compactMap(FindleLinks.previousVersionRequest(in:)) {
+            if request.discard { confirmDiscardingPreviousVersion(itemID: request.itemID) } else { state.openPreviousVersion(itemID: request.itemID) }
+        }
+        if urls.contains(FindleLinks.settings) { showSettings() }
+        if urls.contains(FindleLinks.reconnect) { showSetup() }
         for url in urls where url.scheme == "findle" && url.host == "sync" {
             let courseID = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
                 .first { $0.name == "course" }?.value.flatMap(Int.init)
@@ -91,6 +141,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard userActivity.activityType == CSSearchableItemActionType else { return false }
         state.handleSpotlightActivity(userActivity)
         return true
+    }
+
+    // MARK: - Notifications
+
+    /// Clicking a notification reveals what it is about in Finder.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        guard let itemID = response.notification.request.content.userInfo[AppState.notificationItemKey] as? String else { return }
+        await MainActor.run {
+            let state = self.state
+            Task { await state.revealInFinder(itemID: itemID) }
+        }
+    }
+
+    /// Findle's news shows even while one of its windows is in front.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async
+        -> UNNotificationPresentationOptions {
+        [.banner, .sound, .list]
     }
 
     private func screenChanged() {
@@ -121,6 +188,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         onboarding = controller
         controller.present()
+    }
+
+    /// Show in Findle: Settings, with the course selected in Courses.
+    /// Any process can open a findle:// link, so a discard waits for the user.
+    private func confirmDiscardingPreviousVersion(itemID: String) {
+        guard let filename = state.previousVersionFilename(itemID: itemID) else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Discard the previous version of \u{201C}\(filename)\u{201D}?"
+        alert.informativeText = "Findle keeps it since Moodle replaced the file. You can't undo this."
+        alert.addButton(withTitle: "Discard")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+        NSApp.activate()
+        if alert.runModal() == .alertFirstButtonReturn { state.discardPreviousVersion(itemID: itemID) }
+    }
+
+    private func showCourse(_ courseID: Int) {
+        showSettings()
+        Task {
+            if state.courses.isEmpty { await state.loadCourses() }
+            settings?.reveal(courseID: courseID)
+        }
     }
 
     @objc private func showSettings() {

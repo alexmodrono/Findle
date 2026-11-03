@@ -11,9 +11,9 @@ import Foundation
 /// correct values are used automatically based on which scheme built the app.
 public enum BundleIdentifiers {
 
-    /// Base identifier prefix (e.g., `es.amodrono.findle` or `es.amodrono.findle.nightly`).
+    /// Base identifier prefix (e.g., `com.amodrono.findle` or `com.amodrono.findle.nightly`).
     public static let prefix: String = {
-        guard let id = Bundle.main.bundleIdentifier else { return "es.amodrono.findle" }
+        guard let id = Bundle.main.bundleIdentifier else { return "com.amodrono.findle" }
         // In the File Provider extension process, strip the ".file-provider" suffix.
         if id.hasSuffix(".file-provider") {
             return String(id.dropLast(".file-provider".count))
@@ -62,6 +62,14 @@ public enum BundleIdentifiers {
     public static let actionCopyMoodleLink = "\(prefix).action.copy-moodle-link"
     public static let actionOpenCoursePage = "\(prefix).action.open-course-page"
     public static let actionKeepDownloaded = "\(prefix).action.keep-downloaded"
+    public static let actionKeepCourseOffline = "\(prefix).action.keep-course-offline"
+    public static let actionShowInFindle = "\(prefix).action.show-in-findle"
+    public static let actionMarkDone = "\(prefix).action.mark-done"
+    public static let actionMarkNotDone = "\(prefix).action.mark-not-done"
+    public static let actionCourseInfo = "\(prefix).action.course-info"
+    public static let actionShowPreviousVersion = "\(prefix).action.show-previous-version"
+    public static let actionDiscardPreviousVersion = "\(prefix).action.discard-previous-version"
+    public static let actionAssignmentDetails = "\(prefix).action.assignment-details"
     public static let actionRemoveDownload = "\(prefix).action.remove-download"
     public static let actionSyncNow = "\(prefix).action.sync-now"
 
@@ -77,4 +85,12 @@ public enum BundleIdentifiers {
     /// renames or tags a course folder in Finder, so the app re-reads course
     /// names and tags from the shared database.
     public static let courseCustomizationChangedNotification = "\(prefix).course-customization-changed"
+
+    /// Posted by the extension when opening an item in Finder changed what
+    /// counts as new, so the app's views catch up.
+    public static let itemsSeenNotification = "\(prefix).items-seen"
+
+    /// Posted by the app once a new session clears the File Provider's sign-in
+    /// error, so Finder's Reconnect sheet can close.
+    public static let sessionRestoredNotification = "\(prefix).session-restored"
 }

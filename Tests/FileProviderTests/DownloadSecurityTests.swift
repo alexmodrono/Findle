@@ -44,6 +44,30 @@ final class DownloadSecurityTests: XCTestCase {
         XCTAssertEqual(try f.database.fetchItem(id: item.id)?.syncState, .materialized)
     }
 
+    func testGeneratedReadmePublishesStoredTextWithoutReadingCredentials() throws {
+        let f = try fixture()
+        let text = Data("# Essay 1\n\nWrite 500 words.\n".utf8)
+        let item = LocalItem(id: "brief-a-1-4", parentID: "root-a", siteID: "a", courseID: 1, remoteID: 4,
+                             filename: "README.md", contentType: "net.daringfireball.markdown",
+                             fileSize: Int64(text.count), contentVersion: "digest")
+        try f.database.commitCourseSync(
+            items: [item], deletingItemIDs: [], cursor: SyncCursor(courseID: 1, siteID: "a"),
+            outline: CourseOutlineSnapshot(courseID: 1, capturedAt: Date(), sections: []),
+            generatedContents: [item.id: text])
+        var completions = 0
+        try FileDownloader.startDownload(item: item, database: f.database, progress: Progress(totalUnitCount: 100),
+            temporaryDirectory: f.directory, tokenReader: { _ in
+                XCTFail("A generated file must not read Keychain")
+                return nil
+            }, completionHandler: { url, _, error in
+                completions += 1
+                XCTAssertNil(error)
+                XCTAssertEqual(url.flatMap { try? Data(contentsOf: $0) }, text)
+            })
+        XCTAssertEqual(completions, 1)
+        XCTAssertEqual(try f.database.fetchItem(id: item.id)?.syncState, .materialized)
+    }
+
     func testUntrustedFilesAreRejectedBeforeCredentialsOrStateChanges() throws {
         let f = try fixture()
         let original = try XCTUnwrap(f.database.fetchItem(id: "file-a"))

@@ -13,10 +13,12 @@ import OSLog
 /// Uses the replicated extension model for modern macOS cloud-file behavior.
 final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     let domain: NSFileProviderDomain
-    let logger = Logger(subsystem: "es.amodrono.findle.file-provider", category: "Extension")
+    let logger = Logger(subsystem: "com.amodrono.findle.file-provider", category: "Extension")
     private let stateLock = NSLock()
     private var _database: Database?
     private var databaseSecurityScopedURL: URL?
+    /// Created after `super.init` so it can read the database through `self`.
+    private var courseDataService: CourseDataServiceSource?
     /// Name of the folder this domain mounts as under `~/Library/CloudStorage`.
     /// Built from the product name so a Nightly domain for the same Moodle site
     /// can't collide with the release one.
@@ -46,6 +48,23 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     required init(domain: NSFileProviderDomain) {
         self.domain = domain
         super.init()
+        nonisolated(unsafe) weak let owner = self
+        nonisolated(unsafe) let domain = self.domain
+        courseDataService = CourseDataServiceSource(source: {
+            guard let owner, let database = owner.database, let siteID = owner.siteID else { return nil }
+            return (database, siteID)
+        }, keep: { courseID, kept in
+            guard let owner, let database = owner.database, let siteID = owner.siteID else { throw NSFileProviderError(.serverUnreachable) }
+            let id = "course-\(siteID)-\(courseID)"
+            if kept {
+                try DownloadRetention.keep([id], database: database)
+            } else {
+                // Letting the course go only changes the policy; the system
+                // evicts files when it needs the space, as for any item.
+                try database.pinItemsRecursively(id: id, isPinned: false)
+            }
+            NSFileProviderManager(for: domain)?.signalEnumerator(for: .workingSet) { _ in }
+        })
 
         logger.info("File Provider extension initialized for domain: \(domain.identifier.rawValue, privacy: .private)")
     }
@@ -98,8 +117,9 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     }
 
     private func databaseIsReady(_ database: Database) throws -> Bool {
-        if let siteID, try database.fetchSite(id: siteID) == nil {
-            return false
+        if let siteID {
+            guard let site = try database.fetchSite(id: siteID) else { return false }
+            MoodleSiteLinks.register(site)
         }
 
 
@@ -112,6 +132,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         databaseSecurityScopedURL?.stopAccessingSecurityScopedResource()
         databaseSecurityScopedURL = nil
         _database = nil
+        courseDataService?.invalidate()
         logger.info("File Provider extension invalidated")
     }
 
@@ -508,6 +529,9 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         do {
             try db.saveItems([localItem])
             completionHandler(FileProviderItem(localItem: localItem), [], false, nil)
+            if SubmissionDrafts.isSubmitFolder(parentID) {
+                Task { await SubmissionDrafts.shared.folderChanged(parentID!, database: db) }
+            }
         } catch {
             // Without a row the item would be lost on the next scan, so take it back out.
             try? FileManager.default.removeItem(at: finalURL)
@@ -557,6 +581,10 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                     db: db
                 )
                 completionHandler(FileProviderItem(localItem: updated), [], false, nil)
+                // A file moved into or out of a Submit folder, or changed in it, changes the draft.
+                for folder in Set([localItem.parentID, updated.parentID].compactMap { $0 }) where SubmissionDrafts.isSubmitFolder(folder) {
+                    Task { await SubmissionDrafts.shared.folderChanged(folder, database: db) }
+                }
             } catch {
                 logger.error("modifyItem failed: \(DiagnosticFailure(error).summary, privacy: .public)")
                 completionHandler(nil, [], false, error)
@@ -570,6 +598,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                 changedFields: changedFields,
                 tagData: item.tagData ?? nil,
                 filename: item.filename,
+                lastUsedDate: item.lastUsedDate ?? nil,
                 hasNewContents: newContents != nil,
                 siteID: siteID,
                 database: db
@@ -578,6 +607,10 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             if localItem.isCourseRoot, !changedFields.isDisjoint(with: [.filename, .tagData]) {
                 // Let the app show the new course name/tags without a resync.
                 DarwinNotification.post(BundleIdentifiers.courseCustomizationChangedNotification)
+            }
+            if result.badgesChanged {
+                NSFileProviderManager(for: domain)?.signalEnumerator(for: .workingSet) { _ in }
+                DarwinNotification.post(BundleIdentifiers.itemsSeenNotification)
             }
         } catch let error as NSFileProviderError where error.code == .cannotSynchronize {
             completionHandler(nil, changedFields, false, error)
@@ -626,7 +659,10 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                     throw NSFileProviderError(.cannotSynchronize)
                 }
                 newParentID = candidateParentID
-                newCourseID = try newParentID.flatMap { try db.fetchItem(id: $0) }?.courseID ?? 0
+                // In the Trash it keeps its course, for when it's put back.
+                newCourseID = candidateParentID == PersonalFileStore.trashParentID
+                    ? localItem.courseID
+                    : try newParentID.flatMap { try db.fetchItem(id: $0) }?.courseID ?? 0
             }
 
             if changedFields.contains(.filename) || changedFields.contains(.parentItemIdentifier) {
@@ -756,6 +792,8 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     private func isReparentAllowed(itemID: String, newParentID: String?, db: Database) -> Bool {
         guard let newParentID else { return true }
         if newParentID == itemID { return false }
+        // Finder's Trash: the files stay in the personal store until it's emptied.
+        if newParentID == PersonalFileStore.trashParentID { return true }
 
         guard let newParent = try? db.fetchItem(id: newParentID), isContainer(newParent) else {
             return false
@@ -857,11 +895,47 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             let deletedPaths = try db.deleteItemAndChildren(id: localItem.id)
             removeDeletedContent(ownPath: localItem.localPath, deletedPaths: deletedPaths)
             completionHandler(nil)
+            if let parentID = localItem.parentID, SubmissionDrafts.isSubmitFolder(parentID) {
+                Task { await SubmissionDrafts.shared.folderChanged(parentID, database: db) }
+            }
         } catch {
             logger.error("deleteItem failed: \(DiagnosticFailure(error).summary, privacy: .public)")
             completionHandler(error)
         }
 
         return Progress()
+    }
+}
+
+// MARK: - Services
+
+extension FileProviderExtension: NSFileProviderThumbnailing {
+    func fetchThumbnails(
+        for itemIdentifiers: [NSFileProviderItemIdentifier],
+        requestedSize size: CGSize,
+        perThumbnailCompletionHandler: @escaping (NSFileProviderItemIdentifier, Data?, Error?) -> Void,
+        completionHandler: @escaping (Error?) -> Void
+    ) -> Progress {
+        guard let database, let siteID else {
+            completionHandler(NSFileProviderError(.serverUnreachable))
+            return Progress()
+        }
+        return ThumbnailFetcher.shared.fetchThumbnails(
+            for: itemIdentifiers, database: database, siteID: siteID,
+            perThumbnail: perThumbnailCompletionHandler, completion: completionHandler)
+    }
+}
+
+extension FileProviderExtension: NSFileProviderServicing {
+    /// Every item offers the course data service, so a client can reach it
+    /// through any file or folder in the Findle location.
+    func supportedServiceSources(
+        for itemIdentifier: NSFileProviderItemIdentifier,
+        completionHandler: @escaping ([any NSFileProviderServiceSource]?, (any Error)?) -> Void
+    ) -> Progress {
+        completionHandler(courseDataService.map { [$0] } ?? [], nil)
+        let progress = Progress(totalUnitCount: 1)
+        progress.completedUnitCount = 1
+        return progress
     }
 }

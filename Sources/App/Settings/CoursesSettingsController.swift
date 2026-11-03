@@ -6,6 +6,7 @@ final class CoursesSettingsController: NSViewController {
     private let state: AppState
     private let status = NativeUI.label("", secondary: true)
     private var sync: ActionButton!
+    private var courses: CourseSelectionView?
     private var subscription: AnyCancellable?
 
     init(state: AppState) { self.state = state; super.init(nibName: nil, bundle: nil) }
@@ -15,6 +16,7 @@ final class CoursesSettingsController: NSViewController {
     override func loadView() {
         view = NativeSurface()
         let courses = CourseSelectionView(state: state, customization: CourseCustomizationController(state: state))
+        self.courses = courses
         let refresh = ActionButton("Refresh Courses") { [weak self] button in
             guard let self else { return }
             button.isEnabled = false
@@ -39,6 +41,11 @@ final class CoursesSettingsController: NSViewController {
             Task { @MainActor [weak self] in self?.refreshStatus() }
         }
         refreshStatus()
+    }
+
+    func reveal(courseID: Int) {
+        loadViewIfNeeded()
+        courses?.reveal(courseID: courseID)
     }
 
     private func refreshStatus() {

@@ -23,6 +23,8 @@ public struct MoodleCourse: Sendable, Codable, Equatable, Hashable, Identifiable
     /// The course's Moodle overview/banner image, used as a gallery cover.
     /// Requires the auth token to download (it's a pluginfile URL).
     public var imageURL: URL?
+    /// Moodle's course format, such as "weeks" or "topics".
+    public var format: String?
 
     public init(
         id: Int,
@@ -38,7 +40,8 @@ public struct MoodleCourse: Sendable, Codable, Equatable, Hashable, Identifiable
         customFolderName: String? = nil,
         customIconName: String? = nil,
         isSyncEnabled: Bool = true,
-        imageURL: URL? = nil
+        imageURL: URL? = nil,
+        format: String? = nil
     ) {
         self.id = id
         self.shortName = shortName
@@ -54,6 +57,16 @@ public struct MoodleCourse: Sendable, Codable, Equatable, Hashable, Identifiable
         self.customIconName = customIconName
         self.isSyncEnabled = isSyncEnabled
         self.imageURL = imageURL
+        self.format = format
+    }
+
+    /// For a course laid out by weeks, the number of the section covering
+    /// `date`: Moodle starts week 1 on the course start date. Nil for other
+    /// formats, before the course starts and after it ends.
+    public func weekSectionNumber(on date: Date) -> Int? {
+        guard format == "weeks", let startDate, date >= startDate else { return nil }
+        if let endDate, date > endDate { return nil }
+        return Int(date.timeIntervalSince(startDate) / (7 * 24 * 60 * 60)) + 1
     }
 
     /// A sanitized name suitable for use as a folder name in Finder.

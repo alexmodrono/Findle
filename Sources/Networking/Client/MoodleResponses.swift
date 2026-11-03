@@ -20,7 +20,7 @@ struct TokenResponse: Decodable {
 /// before treating the decoded elements as a complete remote snapshot.
 struct LossyArray<Element: Decodable>: Decodable {
     private static var logger: Logger {
-        Logger(subsystem: "es.amodrono.findle.networking", category: "MoodleResponses")
+        Logger(subsystem: "com.amodrono.findle.networking", category: "MoodleResponses")
     }
 
     let elements: [Element]
@@ -77,6 +77,7 @@ struct CourseResponse: Decodable {
     let enddate: Int?
     let lastaccess: Int?
     let visible: Int?
+    let format: String?
     /// Course card/banner images. The first image-type entry is used as the
     /// gallery cover. Absent on many older sites, so it's optional.
     let overviewfiles: [OverviewFileResponse]?
@@ -108,6 +109,8 @@ struct ModuleResponse: Decodable {
     let modicon: String?
     let visible: Int?
     let contents: LossyArray<ContentResponse>?
+    /// Label text, or an activity description shown on the course page (HTML).
+    let description: String?
 }
 
 /// File content response within a module.
@@ -137,10 +140,18 @@ struct AssignmentsResponse: Decodable {
     }
     struct AssignmentItem: Decodable {
         let id: Int
+        /// Course module ID, the module's ID in the course contents.
+        let cmid: Int?
         let course: Int
         let name: String
         let duedate: Int?
         let cutoffdate: Int?
+        /// The brief (HTML). Moodle omits it before the assignment opens unless
+        /// the teacher always shows the description.
+        let intro: String?
+        let introattachments: LossyArray<ContentResponse>?
+        let requiresubmissionstatement: Int?
+        let configs: [SubmissionAssignmentsResponse.Config]?
     }
 }
 
@@ -151,6 +162,8 @@ struct SubmissionStatusResponse: Decodable {
     struct LastAttempt: Decodable {
         let submission: Submission?
         let gradingstatus: String?
+        let canedit: Bool?
+        let cansubmit: Bool?
         struct Submission: Decodable { let status: String? }
     }
     struct Feedback: Decodable {
@@ -185,6 +198,7 @@ struct QuizzesResponse: Decodable {
         let timeopen: Int?
         let timeclose: Int?
         let timelimit: Int?
+        let coursemodule: Int?
     }
 }
 

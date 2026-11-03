@@ -11,7 +11,7 @@ import CommonCrypto
 /// Native Moodle web services client implementing the LMSProvider protocol.
 public final class MoodleClient: LMSProvider, Sendable {
     private let session: URLSession
-    private let logger = Logger(subsystem: "es.amodrono.findle.networking", category: "MoodleClient")
+    private let logger = Logger(subsystem: "com.amodrono.findle.networking", category: "MoodleClient")
 
     public init(session: URLSession = .shared) {
         self.session = session
@@ -459,7 +459,8 @@ public final class MoodleClient: LMSProvider, Sendable {
                 lastAccessed: course.lastaccess.flatMap { $0 > 0 ? Date(timeIntervalSince1970: TimeInterval($0)) : nil },
                 visible: (course.visible ?? 1) == 1,
                 siteID: site.id,
-                imageURL: imageURL
+                imageURL: imageURL,
+                format: course.format
             )
         }
     }
@@ -521,7 +522,8 @@ public final class MoodleClient: LMSProvider, Sendable {
                                 author: content.author,
                                 sortOrder: content.sortorder
                             )
-                        }
+                        },
+                        description: mod.description
                     )
                 }
             )
@@ -540,20 +542,63 @@ public final class MoodleClient: LMSProvider, Sendable {
         )
         return response.courses.flatMap { course in
             course.assignments.map { item in
-                MoodleAssignment(
-                    id: item.id,
-                    courseID: item.course,
-                    name: item.name,
-                    dueDate: Self.timestamp(item.duedate),
-                    cutoffDate: Self.timestamp(item.cutoffdate)
-                )
+                {
+                    var assignment = MoodleAssignment(
+                        id: item.id,
+                        courseID: item.course,
+                        name: item.name,
+                        dueDate: Self.timestamp(item.duedate),
+                        cutoffDate: Self.timestamp(item.cutoffdate),
+                        moduleID: item.cmid
+                    )
+                    assignment.takesFiles = item.configs?.contains {
+                        $0.plugin == "file" && $0.subtype == "assignsubmission" && $0.name == "enabled" && $0.value == "1"
+                    } ?? false
+                    assignment.requiresStatement = item.requiresubmissionstatement == 1
+                    return assignment
+                }()
+            }
+        }
+    }
+
+    /// Briefs and intro attachments of a course's assignments. Attachments that
+    /// can't be read safely are left out rather than failing the whole brief.
+    public func fetchAssignmentBriefs(site: MoodleSite, token: AuthToken, courseID: Int) async throws -> [MoodleAssignmentBrief] {
+        let response: AssignmentsResponse = try await callWebService(
+            site: site,
+            token: token,
+            function: "mod_assign_get_assignments",
+            params: Self.indexedParams("courseids", [courseID])
+        )
+        return response.courses.flatMap { course in
+            course.assignments.compactMap { item -> MoodleAssignmentBrief? in
+                guard let moduleID = item.cmid else { return nil }
+                let attachments = (item.introattachments?.elements ?? []).compactMap { content -> MoodleFileContent? in
+                    guard let fileName = content.filename, !fileName.isEmpty,
+                          let fileURL = content.fileurl.flatMap({ URL(string: $0) }) else { return nil }
+                    return MoodleFileContent(
+                        type: "file",
+                        fileName: fileName,
+                        filePath: content.filepath,
+                        fileSize: content.filesize ?? 0,
+                        fileURL: fileURL,
+                        timeCreated: Self.timestamp(content.timecreated),
+                        timeModified: Self.timestamp(content.timemodified),
+                        mimeType: content.mimetype,
+                        author: content.author,
+                        sortOrder: content.sortorder
+                    )
+                }
+                return MoodleAssignmentBrief(moduleID: moduleID, name: item.name, intro: item.intro,
+                                             dueDate: Self.timestamp(item.duedate), attachments: attachments)
             }
         }
     }
 
     /// Submission/grading state for one assignment. Best-effort — sites may
     /// restrict this function, so callers should tolerate a thrown error.
-    public func fetchSubmissionStatus(site: MoodleSite, token: AuthToken, assignmentID: Int) async throws -> (submitted: Bool, graded: Bool, grade: String?) {
+    public func fetchSubmissionStatus(site: MoodleSite, token: AuthToken, assignmentID: Int) async throws
+        -> (submitted: Bool, graded: Bool, grade: String?, canEdit: Bool, canSubmit: Bool) {
         let response: SubmissionStatusResponse = try await callWebService(
             site: site,
             token: token,
@@ -562,7 +607,8 @@ public final class MoodleClient: LMSProvider, Sendable {
         )
         let submitted = response.lastattempt?.submission?.status == "submitted"
         let graded = response.lastattempt?.gradingstatus == "graded"
-        return (submitted, graded, response.feedback?.grade?.grade)
+        return (submitted, graded, response.feedback?.grade?.grade,
+                response.lastattempt?.canedit ?? false, response.lastattempt?.cansubmit ?? false)
     }
 
     public func fetchGrades(site: MoodleSite, token: AuthToken, courseID: Int, userID: Int) async throws -> [MoodleGradeItem] {
@@ -601,7 +647,8 @@ public final class MoodleClient: LMSProvider, Sendable {
                 name: quiz.name,
                 openDate: Self.timestamp(quiz.timeopen),
                 closeDate: Self.timestamp(quiz.timeclose),
-                timeLimit: (quiz.timelimit ?? 0) > 0 ? quiz.timelimit : nil
+                timeLimit: (quiz.timelimit ?? 0) > 0 ? quiz.timelimit : nil,
+                moduleID: quiz.coursemodule
             )
         }
     }
@@ -687,7 +734,7 @@ public final class MoodleClient: LMSProvider, Sendable {
         try credentialOrigin(site: site, destination: fileURL).fileRequest(url: fileURL, token: token)
     }
 
-    private func credentialOrigin(site: MoodleSite, destination: URL) throws -> AuthenticatedRequestOrigin {
+    func credentialOrigin(site: MoodleSite, destination: URL) throws -> AuthenticatedRequestOrigin {
         // Background sessions follow redirects without consulting the delegate.
         guard session.configuration.identifier == nil else {
             throw AuthenticatedRequestError.unsupportedBackgroundSession
@@ -699,7 +746,7 @@ public final class MoodleClient: LMSProvider, Sendable {
 
     // MARK: - Web Service Call
 
-    private func callWebService<T: Decodable>(
+    func callWebService<T: Decodable>(
         site: MoodleSite,
         token: AuthToken,
         function: String,
@@ -797,7 +844,7 @@ public final class MoodleClient: LMSProvider, Sendable {
     }
 
     /// Parses a response body as JSON. HTML from an SSO or proxy page is reported as an invalid response.
-    private static func parseJSON(_ data: Data, context: String) throws -> Any {
+    static func parseJSON(_ data: Data, context: String) throws -> Any {
         guard let json = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else {
             throw FindleError.invalidResponse(
                 detail: "\(context) returned a non-JSON response. The server may be showing a login or proxy page."
@@ -814,24 +861,28 @@ public final class MoodleClient: LMSProvider, Sendable {
 
     // MARK: - Request Execution
 
-    private enum RequestPolicy {
+    enum RequestPolicy {
         case standard
         case interactiveValidation
         case interactiveCompatibilityProbe
         /// Sign-in POST. Carries the password, so it must never be replayed.
         case authentication
+        /// A file upload. A replay could add the file to the draft area twice.
+        case upload
 
         var retryCount: Int {
             switch self {
             case .standard:
                 return 3
-            case .interactiveValidation, .interactiveCompatibilityProbe, .authentication:
+            case .interactiveValidation, .interactiveCompatibilityProbe, .authentication, .upload:
                 return 1
             }
         }
 
         var timeoutInterval: TimeInterval {
             switch self {
+            case .upload:
+                return 120
             case .standard, .authentication:
                 return 15
             case .interactiveValidation:
@@ -843,7 +894,7 @@ public final class MoodleClient: LMSProvider, Sendable {
 
         var mapsHostErrorsToSiteUnreachable: Bool {
             switch self {
-            case .standard, .authentication:
+            case .standard, .authentication, .upload:
                 return false
             case .interactiveValidation, .interactiveCompatibilityProbe:
                 return true
@@ -851,7 +902,7 @@ public final class MoodleClient: LMSProvider, Sendable {
         }
     }
 
-    private func performRequest(
+    func performRequest(
         _ request: URLRequest,
         policy: RequestPolicy = .standard,
         credentialOrigin: AuthenticatedRequestOrigin? = nil

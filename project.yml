@@ -1,6 +1,6 @@
 name: Findle
 options:
-  bundleIdPrefix: es.amodrono.findle
+  bundleIdPrefix: com.amodrono.findle
   deploymentTarget:
     macOS: "15.0"
   xcodeVersion: "16.0"
@@ -19,14 +19,14 @@ settings:
     CODE_SIGN_STYLE: Automatic
     CODE_SIGN_IDENTITY: "Apple Development"
     SWIFT_STRICT_CONCURRENCY: complete
-    FINDLE_BUNDLE_PREFIX: es.amodrono.findle
-    APP_GROUP_IDENTIFIER: group.es.amodrono.findle
+    FINDLE_BUNDLE_PREFIX: com.amodrono.findle
+    APP_GROUP_IDENTIFIER: group.com.amodrono.findle
     FINDLE_APPCAST_URL: https://github.com/alexmodrono/Findle/releases/latest/download/appcast.xml
     FINDLE_PERSONAL_FILES_FOLDER: "Findle Personal Files"
   configs:
     Nightly:
-      FINDLE_BUNDLE_PREFIX: es.amodrono.findle.nightly
-      APP_GROUP_IDENTIFIER: group.es.amodrono.findle.nightly
+      FINDLE_BUNDLE_PREFIX: com.amodrono.findle.nightly
+      APP_GROUP_IDENTIFIER: group.com.amodrono.findle.nightly
       # Nightly ships as an unsigned CI artifact and has no appcast of its own.
       # Leaving the release feed here would let a Nightly install "update"
       # itself into the production build. An empty feed disables Sparkle.
@@ -139,7 +139,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: Findle Onboarding Preview
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.onboarding-preview
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.onboarding-preview
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Findle Onboarding Preview
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
@@ -169,7 +169,7 @@ targets:
         product: Airlock
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.onboarding-preview-tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.onboarding-preview-tests
         GENERATE_INFOPLIST_FILE: YES
 
   AppInterfaceTests:
@@ -181,6 +181,9 @@ targets:
       - path: Sources/App/Companion/FinderFolderResolver.swift
       - path: Sources/App/Companion/CompanionNode.swift
       - path: Sources/App/Companion/CompanionPresentation.swift
+      - path: Sources/App/Companion/CompanionLocation.swift
+      - path: Sources/App/Companion/CompanionDeadline.swift
+      - path: Sources/App/Companion/CompanionSelection.swift
       - path: Sources/App/Companion/FinderWindowObserver.swift
       - path: Sources/App/Companion/CompanionFrameAnimator.swift
       - path: Sources/App/Companion/CompanionMotion.swift
@@ -188,6 +191,10 @@ targets:
       - path: Sources/App/Services/LegacySettingsMigration.swift
       - path: Sources/App/Services/DiagnosticsReportBuilder.swift
       - path: Sources/App/Services/SyncReportPresentation.swift
+      - path: Sources/App/Services/SpotlightIndexer.swift
+      - path: Sources/App/Services/NotificationPlanner.swift
+      - path: Sources/App/Services/DueThisWeek.swift
+      - path: Sources/App/Services/SharedSubmission.swift
       - path: Sources/App/Services/SessionWorkCoordinator.swift
       - path: Sources/App/Services/ProviderResetCoordinator.swift
     dependencies:
@@ -195,7 +202,7 @@ targets:
       - target: FindlePersistence
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.interface-tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.interface-tests
 
   Findle:
     type: application
@@ -210,6 +217,8 @@ targets:
           enabled: 1
     sources:
       - path: Sources/App
+      # Keep Downloaded and Remove Download work the same from the companion.
+      - path: Sources/FileProviderExtension/DownloadRetention.swift
       - path: Resources/Assets.xcassets
         buildPhase: resources
     dependencies:
@@ -218,6 +227,30 @@ targets:
       - target: FindlePersistence
       - target: FindleSyncEngine
       - target: FindleFileProvider
+        embed: true
+        codeSign: true
+      - target: FindleWidgets
+        embed: true
+        codeSign: true
+      - target: FindlePackagePreview
+        embed: true
+        codeSign: true
+      - target: FindleFinderSync
+        embed: true
+        codeSign: true
+      - target: FindleFinderUI
+        embed: true
+        codeSign: true
+      - target: FindleThumbnails
+        embed: true
+        codeSign: true
+      - target: FindleSpotlightImporter
+        embed: true
+        codeSign: true
+      - target: FindleShare
+        embed: true
+        codeSign: true
+      - target: FindleQuickAction
         embed: true
         codeSign: true
       - target: FindleMCP
@@ -232,7 +265,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: Findle
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle
         INFOPLIST_FILE: Resources/Info/App-Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/Findle.entitlements
         ENABLE_APP_SANDBOX: NO
@@ -243,7 +276,7 @@ targets:
       configs:
         Nightly:
           PRODUCT_NAME: Findle Nightly
-          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly
+          PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.nightly
 
   SharedDomain:
     type: framework
@@ -255,7 +288,7 @@ targets:
       - path: Sources/SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.shared-domain
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.shared-domain
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
       configs:
         Debug:
@@ -275,7 +308,7 @@ targets:
       - target: SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.networking
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.networking
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
       configs:
         Debug:
@@ -295,7 +328,7 @@ targets:
       - target: SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.persistence
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.persistence
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
       configs:
         Debug:
@@ -317,7 +350,7 @@ targets:
       - target: FindlePersistence
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.sync-engine
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.sync-engine
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
       configs:
         Debug:
@@ -338,6 +371,8 @@ targets:
           enabled: 1
     sources:
       - path: Sources/FileProviderExtension
+      - path: Resources/Badges
+        buildPhase: resources
     dependencies:
       - target: SharedDomain
       - target: FindleNetworking
@@ -345,7 +380,7 @@ targets:
       - target: FindleSyncEngine
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.file-provider
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.file-provider
         INFOPLIST_FILE: Resources/Info/FileProvider-Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/FileProvider.entitlements
         ENABLE_APP_SANDBOX: YES
@@ -354,7 +389,7 @@ targets:
           - "@executable_path/../../../../Frameworks"
       configs:
         Nightly:
-          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly.file-provider
+          PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.nightly.file-provider
     info:
       path: Resources/Info/FileProvider-Info.plist
       properties:
@@ -363,30 +398,441 @@ targets:
           CFBundlePrimaryIcon:
             CFBundleSymbolName: graduationcap
         FindlePersonalFilesFolderName: $(FINDLE_PERSONAL_FILES_FOLDER)
+        # Badge images for NSFileProviderDecorations that macOS has no image for.
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: $(FINDLE_BUNDLE_PREFIX).badge-image.new
+            UTTypeDescription: Findle New Badge
+            UTTypeConformsTo: [com.apple.icon-decoration.badge, com.apple.icon-decoration-position.trailing-bottom]
+            UTTypeIconFile: NewBadge
+          - UTTypeIdentifier: $(FINDLE_BUNDLE_PREFIX).badge-image.updated
+            UTTypeDescription: Findle Updated Badge
+            UTTypeConformsTo: [com.apple.icon-decoration.badge, com.apple.icon-decoration-position.trailing-bottom]
+            UTTypeIconFile: UpdatedBadge
+          - UTTypeIdentifier: $(FINDLE_BUNDLE_PREFIX).badge-image.due-soon
+            UTTypeDescription: Findle Due Soon Badge
+            UTTypeConformsTo: [com.apple.icon-decoration.badge, com.apple.icon-decoration-position.trailing-bottom]
+            UTTypeIconFile: DueSoonBadge
         NSExtension:
           NSExtensionPointIdentifier: com.apple.fileprovider-nonui
           NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).FileProviderExtension"
           NSExtensionFileProviderDocumentGroup: "$(APP_GROUP_IDENTIFIER)"
           NSExtensionFileProviderSupportsEnumeration: true
+          # Items list them most pressing first (FinderBadges), and Finder draws
+          # the first. The labels show in Get Info, list view and VoiceOver.
+          NSFileProviderDecorations:
+            - Identifier: $(FINDLE_BUNDLE_PREFIX).badge.due-soon
+              BadgeImageType: $(FINDLE_BUNDLE_PREFIX).badge-image.due-soon
+              Category: Badge
+              Label: Due soon
+            - Identifier: $(FINDLE_BUNDLE_PREFIX).badge.new
+              BadgeImageType: $(FINDLE_BUNDLE_PREFIX).badge-image.new
+              Category: Badge
+              Label: New
+            - Identifier: $(FINDLE_BUNDLE_PREFIX).badge.updated
+              BadgeImageType: $(FINDLE_BUNDLE_PREFIX).badge-image.updated
+              Category: Badge
+              Label: Updated
+            - Identifier: $(FINDLE_BUNDLE_PREFIX).badge.completed
+              BadgeImageType: com.apple.icon-decoration.badge.checkmark
+              Category: Badge
+              Label: Done
+            - Identifier: $(FINDLE_BUNDLE_PREFIX).badge.kept
+              BadgeImageType: com.apple.icon-decoration.badge.pinned
+              Category: Badge
+              Label: Kept downloaded
+          # Each rule reads the state items publish in userInfo (FinderActionState) and
+          # hides the action where it does nothing; FinderActionRuleTests evaluates them.
+          # Items Finder cached before they published any state (kind == nil) keep
+          # every action, as before.
           NSExtensionFileProviderActions:
             - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.sync-now
               NSExtensionFileProviderActionName: Sync Now
               NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
             - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.open-in-moodle
               NSExtensionFileProviderActionName: Open in Moodle
-              NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
+              NSExtensionFileProviderActionActivationRule: 'fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.kind == "root" OR $item.userInfo.moodle == YES).@count == 1'
             - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.copy-moodle-link
               NSExtensionFileProviderActionName: Copy Moodle Link
-              NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
+              NSExtensionFileProviderActionActivationRule: 'fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.kind == "root" OR $item.userInfo.moodle == YES).@count == 1'
             - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.open-course-page
               NSExtensionFileProviderActionName: Open Course Page
-              NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
+              NSExtensionFileProviderActionActivationRule: 'fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR ($item.userInfo.moodle == YES AND ($item.userInfo.kind == "folder" OR $item.userInfo.kind == "file"))).@count == 1'
+            # On a course folder, keeping it downloaded is keeping the course offline.
             - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.keep-downloaded
               NSExtensionFileProviderActionName: Keep Downloaded
-              NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
+              NSExtensionFileProviderActionActivationRule: 'SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR ($item.userInfo.moodle == YES AND $item.userInfo.kept == NO AND $item.userInfo.kind != "course")).@count > 0'
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.keep-course-offline
+              NSExtensionFileProviderActionName: Keep Course Offline
+              NSExtensionFileProviderActionActivationRule: 'SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR ($item.userInfo.moodle == YES AND $item.userInfo.kept == NO AND $item.userInfo.kind == "course")).@count > 0'
             - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.remove-download
               NSExtensionFileProviderActionName: Remove Download
-              NSExtensionFileProviderActionActivationRule: TRUEPREDICATE
+              NSExtensionFileProviderActionActivationRule: 'SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.kept == YES).@count > 0'
+            # Only activities set to manual completion can be ticked off by the user.
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.mark-done
+              NSExtensionFileProviderActionName: Mark as Done
+              NSExtensionFileProviderActionActivationRule: 'SUBQUERY(fileproviderItems, $item, $item.userInfo.completion == "todo").@count > 0'
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.mark-not-done
+              NSExtensionFileProviderActionName: Mark as Not Done
+              NSExtensionFileProviderActionActivationRule: 'SUBQUERY(fileproviderItems, $item, $item.userInfo.completion == "done").@count > 0'
+            # Files Moodle replaced after the user downloaded them keep their previous version.
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.show-previous-version
+              NSExtensionFileProviderActionName: Show Previous Version
+              NSExtensionFileProviderActionActivationRule: 'fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.previous == YES).@count == 1'
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.discard-previous-version
+              NSExtensionFileProviderActionName: Discard Previous Version
+              NSExtensionFileProviderActionActivationRule: 'SUBQUERY(fileproviderItems, $item, $item.userInfo.previous == YES).@count > 0'
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.show-in-findle
+              NSExtensionFileProviderActionName: Show in Findle
+              NSExtensionFileProviderActionActivationRule: 'fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == nil OR $item.userInfo.moodle == YES).@count == 1'
+          # Moodle items can't be deleted, renamed or moved (their capabilities say
+          # so). These alerts tell the user why and what to do instead. They match
+          # only items that published personal == NO, so personal files and items
+          # Finder cached before publishing any state never see them.
+          NSFileProviderUserInteractions:
+            - ActivationRule: '(action == "Trash" OR action == "Delete") AND sourceItem.userInfo.personal == NO AND NOT sourceItem.userInfo.kind IN {"root", "collection", "link"}'
+              Alert:
+                LocalizedTitle: Files from Moodle can’t be deleted
+                LocalizedSubTitle: Findle shows each course as it is on Moodle, so its files and folders stay until Moodle removes them. To free space on your Mac, choose Remove Download. The file stays here and downloads again when you open it.
+                LocalizedRecoveryOptions:
+                  Cancel: OK
+                RecoveryOptions:
+                  Continue: false
+            # Course folders are excluded: renaming one sets the course's custom name.
+            - ActivationRule: 'action == "Rename" AND sourceItem.userInfo.personal == NO AND NOT sourceItem.userInfo.kind IN {"root", "collection", "link", "course"}'
+              Alert:
+                LocalizedTitle: Files from Moodle can’t be renamed
+                LocalizedSubTitle: Their names come from Moodle and follow any change made there. To keep your own copy under another name, hold Option while you drag it to make a copy, then rename the copy.
+                LocalizedRecoveryOptions:
+                  Cancel: OK
+                RecoveryOptions:
+                  Continue: false
+            - ActivationRule: '(action == "Move" OR action == "MoveOut") AND sourceItem.userInfo.personal == NO AND NOT sourceItem.userInfo.kind IN {"root", "collection", "link"}'
+              Alert:
+                LocalizedTitle: Files from Moodle can’t be moved
+                LocalizedSubTitle: They stay where they are in the course on Moodle. To put a copy somewhere else, hold Option while you drag it.
+                LocalizedRecoveryOptions:
+                  Cancel: OK
+                RecoveryOptions:
+                  Continue: false
+            # Collections (Recently Added, Due This Week, Kept Offline) update themselves.
+            - ActivationRule: '(action == "Trash" OR action == "Delete" OR action == "Rename" OR action == "Move" OR action == "MoveOut") AND sourceItem.userInfo.kind IN {"collection", "link"}'
+              Alert:
+                LocalizedTitle: Findle keeps this folder up to date
+                LocalizedSubTitle: It gathers items from your courses, and they leave it on their own, for example once you open a new file or remove a download. The items themselves stay in their courses.
+                LocalizedRecoveryOptions:
+                  Cancel: OK
+                RecoveryOptions:
+                  Continue: false
+
+  # The desktop widget (deadlines, new files) and the Sync Findle control. It
+  # reads only the snapshot the app writes to the App Group container.
+  FindleWidgets:
+    type: app-extension
+    platform: macOS
+    configFiles:
+      Debug: Config/Debug-Widgets.xcconfig
+      Nightly: Config/Nightly-Widgets.xcconfig
+      Release: Config/Release-Widgets.xcconfig
+    attributes:
+      SystemCapabilities:
+        com.apple.ApplicationGroups.Mac:
+          enabled: 1
+    sources:
+      - path: Sources/Widgets
+    dependencies:
+      - target: SharedDomain
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.widgets
+        INFOPLIST_FILE: Resources/Info/Widgets-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/Widgets.entitlements
+        ENABLE_APP_SANDBOX: YES
+        LD_RUNPATH_SEARCH_PATHS:
+          - "@executable_path/../Frameworks"
+          - "@executable_path/../../../../Frameworks"
+      configs:
+        Nightly:
+          PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.nightly.widgets
+    info:
+      path: Resources/Info/Widgets-Info.plist
+      properties:
+        CFBundleDisplayName: Findle
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
+  # Findle's sheets in Finder: Reconnect when the session expires. It needs no
+  # App Group or keychain; the app signs in and tells it when it's done.
+  FindleFinderUI:
+    type: app-extension
+    platform: macOS
+    configFiles:
+      Debug: Config/Debug-FinderUI.xcconfig
+      Nightly: Config/Nightly-FinderUI.xcconfig
+      Release: Config/Release-FinderUI.xcconfig
+    sources:
+      - path: Sources/FinderUI
+    dependencies:
+      - target: SharedDomain
+      - sdk: FileProviderUI.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.file-provider-ui
+        INFOPLIST_FILE: Resources/Info/FinderUI-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/FinderUI.entitlements
+        ENABLE_APP_SANDBOX: YES
+        LD_RUNPATH_SEARCH_PATHS:
+          - "@executable_path/../Frameworks"
+          - "@executable_path/../../../../Frameworks"
+      configs:
+        Nightly:
+          PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.nightly.file-provider-ui
+    info:
+      path: Resources/Info/FinderUI-Info.plist
+      properties:
+        CFBundleDisplayName: Findle
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.fileprovider-actionsui
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).FinderSheetController"
+          # Actions that open a sheet live here; FinderActionRuleTests reads them too.
+          NSExtensionFileProviderActions:
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.course-info
+              NSExtensionFileProviderActionName: Course Info
+              NSExtensionFileProviderActionActivationRule: 'fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == "course" AND $item.userInfo.moodle == YES).@count == 1'
+            - NSExtensionFileProviderActionIdentifier: $(FINDLE_BUNDLE_PREFIX).action.assignment-details
+              NSExtensionFileProviderActionName: Assignment Details
+              NSExtensionFileProviderActionActivationRule: 'fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.assignment == YES).@count == 1'
+
+  # The Findle button for Finder's toolbar. It reads only the snapshot the app
+  # writes to the App Group container and opens findle:// links.
+  FindleFinderSync:
+    type: app-extension
+    platform: macOS
+    configFiles:
+      Debug: Config/Debug-FinderSync.xcconfig
+      Nightly: Config/Nightly-FinderSync.xcconfig
+      Release: Config/Release-FinderSync.xcconfig
+    attributes:
+      SystemCapabilities:
+        com.apple.ApplicationGroups.Mac:
+          enabled: 1
+    sources:
+      - path: Sources/FinderSync
+    dependencies:
+      - target: SharedDomain
+      - sdk: FinderSync.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.finder-sync
+        INFOPLIST_FILE: Resources/Info/FinderSync-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/FinderSync.entitlements
+        ENABLE_APP_SANDBOX: YES
+        LD_RUNPATH_SEARCH_PATHS:
+          - "@executable_path/../Frameworks"
+          - "@executable_path/../../../../Frameworks"
+      configs:
+        Nightly:
+          PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.nightly.finder-sync
+    info:
+      path: Resources/Info/FinderSync-Info.plist
+      properties:
+        CFBundleDisplayName: Findle Toolbar Button
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.FinderSync
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).FinderSync"
+          NSExtensionAttributes: {}
+
+  # Thumbnails and Spotlight for assignment and quiz summaries (FX-04). Read-only
+  # and sandboxed, with no App Group or keychain, so no provisioning profile.
+  FindleThumbnails:
+    type: app-extension
+    platform: macOS
+    configFiles:
+      Debug: Config/Debug-Thumbnails.xcconfig
+      Nightly: Config/Nightly-Thumbnails.xcconfig
+      Release: Config/Release-Thumbnails.xcconfig
+    sources:
+      - path: Sources/Thumbnails
+    dependencies:
+      - target: SharedDomain
+      - sdk: QuickLookThumbnailing.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.thumbnails
+        INFOPLIST_FILE: Resources/Info/Thumbnails-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/Thumbnails.entitlements
+        ENABLE_APP_SANDBOX: YES
+        LD_RUNPATH_SEARCH_PATHS:
+          - "@executable_path/../Frameworks"
+          - "@executable_path/../../../../Frameworks"
+      configs:
+        Nightly:
+          PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.nightly.thumbnails
+    info:
+      path: Resources/Info/Thumbnails-Info.plist
+      properties:
+        CFBundleDisplayName: Findle
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.quicklook.thumbnail
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).ThumbnailProvider"
+          NSExtensionAttributes:
+            QLSupportedContentTypes:
+              - com.amodrono.findle.assignment-summary
+              - com.amodrono.findle.quiz-summary
+            QLThumbnailMinimumDimension: 16
+
+  FindleSpotlightImporter:
+    type: app-extension
+    platform: macOS
+    configFiles:
+      Debug: Config/Debug-SpotlightImporter.xcconfig
+      Nightly: Config/Nightly-SpotlightImporter.xcconfig
+      Release: Config/Release-SpotlightImporter.xcconfig
+    sources:
+      - path: Sources/SpotlightImporter
+    dependencies:
+      - target: SharedDomain
+      - sdk: CoreSpotlight.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.spotlight-importer
+        INFOPLIST_FILE: Resources/Info/SpotlightImporter-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/SpotlightImporter.entitlements
+        ENABLE_APP_SANDBOX: YES
+        LD_RUNPATH_SEARCH_PATHS:
+          - "@executable_path/../Frameworks"
+          - "@executable_path/../../../../Frameworks"
+      configs:
+        Nightly:
+          PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.nightly.spotlight-importer
+    info:
+      path: Resources/Info/SpotlightImporter-Info.plist
+      properties:
+        CFBundleDisplayName: Findle
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.spotlight.import
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).ImportExtension"
+          NSExtensionAttributes:
+            CSSupportedContentTypes:
+              - com.amodrono.findle.assignment-summary
+              - com.amodrono.findle.quiz-summary
+
+  # Share › Findle and the Submit to Moodle Quick Action (FX-07). They only hand
+  # files to the app, so they need no App Group, keychain or profile.
+  FindleShare:
+    type: app-extension
+    platform: macOS
+    configFiles:
+      Debug: Config/Debug-Share.xcconfig
+      Nightly: Config/Nightly-Share.xcconfig
+      Release: Config/Release-Share.xcconfig
+    sources:
+      - path: Sources/Share
+      - path: Sources/ShareHandoff
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.share
+        INFOPLIST_FILE: Resources/Info/Share-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/Share.entitlements
+        ENABLE_APP_SANDBOX: YES
+      configs:
+        Nightly:
+          PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.nightly.share
+    info:
+      path: Resources/Info/Share-Info.plist
+      properties:
+        CFBundleDisplayName: Findle
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).ShareViewController"
+          NSExtensionAttributes:
+            NSExtensionActivationRule: 'SUBQUERY(extensionItems, $extensionItem, SUBQUERY($extensionItem.attachments, $attachment, ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.file-url").@count >= 1).@count >= 1'
+
+
+  FindleQuickAction:
+    type: app-extension
+    platform: macOS
+    configFiles:
+      Debug: Config/Debug-QuickAction.xcconfig
+      Nightly: Config/Nightly-QuickAction.xcconfig
+      Release: Config/Release-QuickAction.xcconfig
+    sources:
+      - path: Sources/QuickAction
+      - path: Sources/ShareHandoff
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.quick-action
+        INFOPLIST_FILE: Resources/Info/QuickAction-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/QuickAction.entitlements
+        ENABLE_APP_SANDBOX: YES
+      configs:
+        Nightly:
+          PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.nightly.quick-action
+    info:
+      path: Resources/Info/QuickAction-Info.plist
+      properties:
+        CFBundleDisplayName: Findle
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.ui-services
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).ActionViewController"
+          NSExtensionAttributes:
+            NSExtensionActivationRule: 'SUBQUERY(extensionItems, $extensionItem, SUBQUERY($extensionItem.attachments, $attachment, ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.file-url").@count >= 1).@count >= 1'
+            NSExtensionServiceAllowsFinderPreviewItem: true
+            NSExtensionServiceAllowsTouchBarItem: false
+            NSExtensionServiceFinderPreviewLabel: Submit to Moodle
+            NSExtensionServiceFinderPreviewIconName: NSShareTemplate
+            NSExtensionServiceRoleType: NSExtensionServiceRoleTypeViewer
+
+  # Quick Look for H5P and SCORM packages. Read-only and sandboxed; it needs no
+  # App Group or keychain, so release signing needs no provisioning profile.
+  FindlePackagePreview:
+    type: app-extension
+    platform: macOS
+    configFiles:
+      Debug: Config/Debug-PackagePreview.xcconfig
+      Nightly: Config/Nightly-PackagePreview.xcconfig
+      Release: Config/Release-PackagePreview.xcconfig
+    sources:
+      - path: Sources/PackagePreview
+    dependencies:
+      - target: SharedDomain
+      - sdk: QuickLookUI.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.package-preview
+        INFOPLIST_FILE: Resources/Info/PackagePreview-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/PackagePreview.entitlements
+        ENABLE_APP_SANDBOX: YES
+        LD_RUNPATH_SEARCH_PATHS:
+          - "@executable_path/../Frameworks"
+          - "@executable_path/../../../../Frameworks"
+      configs:
+        Nightly:
+          PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.nightly.package-preview
+    info:
+      path: Resources/Info/PackagePreview-Info.plist
+      properties:
+        CFBundleDisplayName: Findle Package Preview
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.quicklook.preview
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).PreviewProvider"
+          NSExtensionAttributes:
+            QLIsDataBasedPreview: true
+            QLSupportsSearchableItems: false
+            QLSupportedContentTypes:
+              - org.h5p.h5p
+              - com.amodrono.findle.scorm-package
+              - com.amodrono.findle.assignment-summary
+              - com.amodrono.findle.quiz-summary
 
   FindleMCP:
     type: tool
@@ -404,7 +850,7 @@ targets:
         product: MCP
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.mcp
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.mcp
         # The helper ships only as an embedded copy inside the app (via the app's
         # copy phase). Without this, the tool also installs to the archive's
         # Products/usr/local/bin, making the archive multi-product: Xcode then
@@ -430,7 +876,7 @@ targets:
       - target: SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.shared-domain-tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.shared-domain-tests
 
   NetworkingTests:
     type: bundle.unit-test
@@ -442,7 +888,7 @@ targets:
       - target: SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.networking-tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.networking-tests
 
   PersistenceTests:
     type: bundle.unit-test
@@ -454,7 +900,7 @@ targets:
       - target: SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.persistence-tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.persistence-tests
 
   FileProviderTests:
     type: bundle.unit-test
@@ -467,13 +913,21 @@ targets:
       - path: Sources/FileProviderExtension/ProviderAccess.swift
       - path: Sources/FileProviderExtension/DownloadPublication.swift
       - path: Sources/FileProviderExtension/SyncedItemModification.swift
+      - path: Sources/FileProviderExtension/DownloadRetention.swift
+      - path: Sources/FileProviderExtension/FinderActionState.swift
+      - path: Sources/FileProviderExtension/CourseDataServiceSource.swift
+      - path: Sources/FileProviderExtension/ThumbnailFetcher.swift
+      - path: Sources/FileProviderExtension/FinderBadges.swift
+      - path: Sources/FileProviderExtension/PageArchiver.swift
+      - path: Sources/FileProviderExtension/SubmissionDrafts.swift
     dependencies:
       - target: SharedDomain
       - target: FindleNetworking
       - target: FindlePersistence
+      - target: FindleSyncEngine
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.file-provider-tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.file-provider-tests
 
   SyncEngineTests:
     type: bundle.unit-test
@@ -487,7 +941,7 @@ targets:
       - target: FindlePersistence
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.sync-engine-tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.sync-engine-tests
 
   FindleMCPTests:
     type: bundle.unit-test
@@ -503,4 +957,4 @@ targets:
       - target: FindlePersistence
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.mcp-tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.mcp-tests

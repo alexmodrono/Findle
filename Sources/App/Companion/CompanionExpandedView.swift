@@ -23,11 +23,18 @@ struct CompanionExpandedView: View {
             }
             .padding(14)
             Divider().padding(.horizontal, 14)
+            if let selection = presentation.selection {
+                CompanionSelectionView(selection: selection, actions: actions)
+                Divider().padding(.horizontal, 14)
+            } else if !presentation.deadlines.isEmpty {
+                CompanionDeadlinesView(deadlines: presentation.deadlines)
+                Divider().padding(.horizontal, 14)
+            }
             if presentation.nodes.isEmpty {
                 ContentUnavailableView("No files yet", systemImage: "folder", description: Text(presentation.emptyMessage))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                CompanionOutlineView(presentation: presentation, openNode: actions.openNode)
+                CompanionOutlineView(presentation: presentation, openNode: actions.openNode, itemActions: actions.item)
             }
             Divider().padding(.horizontal, 14)
             VStack(alignment: .leading, spacing: 8) {

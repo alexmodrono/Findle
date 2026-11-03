@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import SharedDomain
 
 @MainActor
 final class GeneralSettingsController: SettingsFormController {
@@ -32,7 +33,16 @@ final class GeneralSettingsController: SettingsFormController {
 
         addSeparator()
         addRow("Sync", toggle("Sync when Findle launches", key: "syncOnLaunch", fallback: true))
-        addRow(nil, toggle("Notify when sync completes", key: "notifyOnSyncComplete"))
+        let week = ActionButton("Keep the current week downloaded", checkbox: true) { [weak self] button in
+            UserDefaults.standard.set(button.state == .on, forKey: CurrentWeek.defaultsKey)
+            self?.state.refreshCurrentWeek()
+        }
+        week.state = UserDefaults.standard.object(forKey: CurrentWeek.defaultsKey) as? Bool ?? true ? .on : .off
+        week.toolTip = "In courses organised by weeks, this week's files stay on your Mac; earlier weeks download again when you open them."
+        addRow(nil, week)
+        addRow("Notify me about", toggle("New files in my courses", key: NotificationPlanner.Kind.newFiles.defaultsKey, fallback: true))
+        addRow(nil, toggle("Assignments due within a day", key: NotificationPlanner.Kind.dueSoon.defaultsKey, fallback: true))
+        addRow(nil, toggle("Grades posted", key: NotificationPlanner.Kind.grades.defaultsKey, fallback: true))
         let cadence = NSPopUpButton()
         let values: [(String, Double)] = [("Every 5 minutes", 5), ("Every 15 minutes", 15), ("Every 30 minutes", 30), ("Every hour", 60), ("Every 2 hours", 120), ("Manually", 0)]
         for (title, value) in values { cadence.addItem(withTitle: title); cadence.lastItem?.representedObject = value }

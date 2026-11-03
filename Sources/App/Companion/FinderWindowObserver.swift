@@ -9,6 +9,10 @@ final class FinderWindowObserver: ObservableObject {
         let folderURL: URL
         let frame: CGRect
         let settled: Bool
+        /// The item selected in the window when exactly one is, in a Findle folder.
+        var selectedURL: URL?
+        /// How many items are selected there.
+        var selectionCount = 0
     }
 
     @Published private(set) var snapshot: Snapshot?
@@ -25,10 +29,13 @@ final class FinderWindowObserver: ObservableObject {
     private let makeTimer: (@escaping @MainActor () -> Void) -> Timer
     private var placement = FinderPanelPlacement()
     private var previousFolder: URL?
-    private let logger = Logger(subsystem: "es.amodrono.findle", category: "FinderObserver")
+    private let logger = Logger(subsystem: "com.amodrono.findle", category: "FinderObserver")
     private var lastDiagnostic: String?
     var locationRootURL: URL?
     var locationNames = Set<String>()
+    /// The selection is read at most this often, so following it costs Finder little.
+    private static let selectionInterval: TimeInterval = 0.5
+    private var lastSelection: (folder: URL, at: TimeInterval, url: URL?, count: Int)?
 
     init(
         notificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
@@ -136,7 +143,8 @@ final class FinderWindowObserver: ObservableObject {
             previousFolder = context.folderURL
         }
         let visibility = placement.update(frame: context.frame, now: uptime())
-        let candidate = Snapshot(folderURL: context.folderURL, frame: context.frame, settled: visibility == .visible)
+        let candidate = Snapshot(folderURL: context.folderURL, frame: context.frame, settled: visibility == .visible,
+                                 selectedURL: context.selectedURL, selectionCount: context.selectionCount)
         diagnose(candidate.settled ? "Finder folder and geometry are settled" : "Waiting for Finder geometry to settle")
         if snapshot != candidate { snapshot = candidate }
     }
@@ -171,7 +179,61 @@ final class FinderWindowObserver: ObservableObject {
         let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0
         let frame = CGRect(x: point.x, y: primaryTop - point.y - dimensions.height,
                            width: dimensions.width, height: dimensions.height)
-        return Snapshot(folderURL: url, frame: frame, settled: false)
+        let selection = selection(in: window, folder: url)
+        return Snapshot(folderURL: url, frame: frame, settled: false, selectedURL: selection.url, selectionCount: selection.count)
+    }
+
+    /// The selected items of a window showing a Findle folder, read within a
+    /// small budget and reused for a moment so Finder isn't queried constantly.
+    private func selection(in window: AXUIElement, folder: URL) -> (url: URL?, count: Int) {
+        guard let root = locationRootURL?.standardizedFileURL,
+              folder.standardizedFileURL.pathComponents.starts(with: root.pathComponents) else {
+            lastSelection = nil
+            return (nil, 0)
+        }
+        let now = uptime()
+        if let lastSelection, lastSelection.folder == folder, now - lastSelection.at < Self.selectionInterval {
+            return (lastSelection.url, lastSelection.count)
+        }
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.03
+        var budget = 80
+        var url: URL?
+        var count = 0
+        if let content = contentView(in: window, depth: 0, budget: &budget, deadline: deadline) {
+            var containers: [AXUIElement] = []
+            collectSelectionContainers(in: content, depth: 0, budget: &budget, deadline: deadline, result: &containers)
+            // Column view has a list per column; the rightmost selection is the user's.
+            for container in containers.reversed() {
+                let selected = value(container, kAXSelectedRowsAttribute) as? [AXUIElement]
+                    ?? value(container, kAXSelectedChildrenAttribute) as? [AXUIElement] ?? []
+                guard !selected.isEmpty else { continue }
+                count = selected.count
+                if count == 1 {
+                    var found: [URL] = []
+                    collectItemURLs(in: selected[0], depth: 0, budget: &budget, deadline: deadline, result: &found)
+                    url = found.first
+                }
+                break
+            }
+        }
+        lastSelection = (folder, now, url, count)
+        return (url, count)
+    }
+
+    private func collectSelectionContainers(in element: AXUIElement, depth: Int, budget: inout Int,
+                                            deadline: TimeInterval, result: inout [AXUIElement]) {
+        guard budget > 0, depth < 6, ProcessInfo.processInfo.systemUptime < deadline else { return }
+        budget -= 1
+        AXUIElementSetMessagingTimeout(element, 0.02)
+        let role = value(element, kAXRoleAttribute) as? String
+        if [kAXOutlineRole, kAXTableRole, kAXListRole, kAXBrowserRole, "AXCollection", "AXGrid"].contains(role) {
+            result.append(element)
+            // A browser's columns are lists of their own.
+            guard role == kAXBrowserRole else { return }
+        }
+        for child in value(element, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
+            collectSelectionContainers(in: child, depth: depth + 1, budget: &budget, deadline: deadline, result: &result)
+        }
     }
 
     private func folderURL(of window: AXUIElement) -> URL? {
