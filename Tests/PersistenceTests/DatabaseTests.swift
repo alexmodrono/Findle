@@ -520,6 +520,56 @@ final class DatabaseTests: XCTestCase {
         XCTAssertNoThrow(try database.renameCourse(courseID: 3, siteID: "site-2", customName: "Kernels"))
     }
 
+    func testRenameCourseRollsBackNameWhenRootUpdateFails() throws {
+        let course = MoodleCourse(id: 1, shortName: "OS", fullName: "Operating Systems", siteID: "site-1")
+        try database.saveCourses([course])
+        try database.saveItems([LocalItem(id: course.rootItemID, siteID: "site-1", courseID: 1, remoteID: 1,
+                                          filename: course.effectiveFolderName, isDirectory: true)])
+        try database.execute("CREATE TRIGGER reject_root_rename BEFORE UPDATE OF filename ON items BEGIN SELECT RAISE(ABORT, 'injected failure'); END")
+        let anchor = try database.currentChangeCounter()
+
+        XCTAssertThrowsError(try database.renameCourse(courseID: 1, siteID: "site-1", customName: "Kernels"))
+        XCTAssertNil(try database.fetchCourse(id: 1, siteID: "site-1")?.customFolderName)
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.filename, "Operating Systems")
+        XCTAssertEqual(try database.currentChangeCounter(), anchor)
+
+        try database.execute("DROP TRIGGER reject_root_rename")
+        try database.renameCourse(courseID: 1, siteID: "site-1", customName: "Kernels")
+        XCTAssertEqual(try database.fetchCourse(id: 1, siteID: "site-1")?.customFolderName, "Kernels")
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.filename, "Kernels")
+    }
+
+    func testCourseCommitRollsBackWhenRootReconcileFails() throws {
+        let course = MoodleCourse(id: 1, shortName: "OS", fullName: "Operating Systems", siteID: "site-1")
+        try database.saveCourses([course])
+        let staleRoot = LocalItem(id: course.rootItemID, siteID: "site-1", courseID: 1, remoteID: 1,
+                                  filename: course.effectiveFolderName, isDirectory: true)
+        let oldCursor = SyncCursor(courseID: 1, siteID: "site-1", lastSyncDate: Date(timeIntervalSince1970: 100), itemCount: 1)
+        let oldOutline = CourseOutlineSnapshot(courseID: 1, capturedAt: oldCursor.lastSyncDate, sections: [CourseOutlineSection]())
+        try database.commitCourseSync(items: [staleRoot], deletingItemIDs: [], cursor: oldCursor, outline: oldOutline)
+        // Renamed after the sync built its root, but before it committed.
+        try database.updateCourseCustomFolderName(courseID: 1, siteID: "site-1", customName: "Kernels")
+
+        // Fail only the reconcile step's write (the item upsert keeps the old
+        // name), so this exercises the rollback of everything written before it.
+        try database.execute("CREATE TRIGGER reject_reconcile BEFORE UPDATE OF filename ON items WHEN NEW.filename = 'Kernels' BEGIN SELECT RAISE(ABORT, 'injected failure'); END")
+        let anchor = try database.currentChangeCounter()
+        let nextCursor = SyncCursor(courseID: 1, siteID: "site-1", lastSyncDate: Date(timeIntervalSince1970: 200), itemCount: 1)
+        let nextOutline = CourseOutlineSnapshot(courseID: 1, capturedAt: nextCursor.lastSyncDate,
+                                                sections: [CourseOutlineSection(id: 20, name: "After", sectionNumber: 1)])
+
+        XCTAssertThrowsError(try database.commitCourseSync(items: [staleRoot], deletingItemIDs: [], cursor: nextCursor, outline: nextOutline))
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.filename, "Operating Systems")
+        XCTAssertEqual(try database.fetchSyncCursor(courseID: 1, siteID: "site-1"), oldCursor)
+        XCTAssertEqual(try database.fetchCourseOutline(courseID: 1, siteID: "site-1"), oldOutline)
+        XCTAssertEqual(try database.currentChangeCounter(), anchor)
+
+        try database.execute("DROP TRIGGER reject_reconcile")
+        try database.commitCourseSync(items: [staleRoot], deletingItemIDs: [], cursor: nextCursor, outline: nextOutline)
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.filename, "Kernels")
+        XCTAssertEqual(try database.fetchSyncCursor(courseID: 1, siteID: "site-1"), nextCursor)
+    }
+
     func testFetchCourseReturnsStoredCustomization() throws {
         try database.saveCourses([
             MoodleCourse(id: 101, shortName: "CS101", fullName: "Intro to CS", siteID: "site-1"),
