@@ -29,9 +29,9 @@
 			<key>QLSupportedContentTypes</key>
 			<array>
 				<string>org.h5p.h5p</string>
-				<string>es.amodrono.findle.scorm-package</string>
-				<string>es.amodrono.findle.assignment-summary</string>
-				<string>es.amodrono.findle.quiz-summary</string>
+				<string>com.amodrono.findle.scorm-package</string>
+				<string>com.amodrono.findle.assignment-summary</string>
+				<string>com.amodrono.findle.quiz-summary</string>
 			</array>
 			<key>QLSupportsSearchableItems</key>
 			<false/>

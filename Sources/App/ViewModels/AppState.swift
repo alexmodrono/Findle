@@ -110,7 +110,7 @@ final class AppState: ObservableObject {
     /// Guards against a burst of "Sync Now" requests (the extension posts twice
     /// when it has to cold-launch the app) turning into overlapping syncs.
     private var lastSyncNowRequest: Date?
-    private let logger = Logger(subsystem: "es.amodrono.findle", category: "AppState")
+    private let logger = Logger(subsystem: "com.amodrono.findle", category: "AppState")
     private let userDefaults: UserDefaults
 
     #if DEBUG
@@ -234,7 +234,7 @@ final class AppState: ObservableObject {
     }
 
     private init(previewDatabase: Database) {
-        userDefaults = UserDefaults(suiteName: "es.amodrono.findle.interface-preview")!
+        userDefaults = UserDefaults(suiteName: "com.amodrono.findle.interface-preview")!
         database = previewDatabase
     }
     #endif

@@ -29,7 +29,7 @@ final class FinderWindowObserver: ObservableObject {
     private let makeTimer: (@escaping @MainActor () -> Void) -> Timer
     private var placement = FinderPanelPlacement()
     private var previousFolder: URL?
-    private let logger = Logger(subsystem: "es.amodrono.findle", category: "FinderObserver")
+    private let logger = Logger(subsystem: "com.amodrono.findle", category: "FinderObserver")
     private var lastDiagnostic: String?
     var locationRootURL: URL?
     var locationNames = Set<String>()

@@ -22,7 +22,7 @@ final class ThumbnailFetcher: NSObject, URLSessionTaskDelegate, @unchecked Senda
     /// Image types Moodle can render a preview of.
     static let previewableTypes: Set<String> = ["image/jpeg", "image/png", "image/gif"]
 
-    private let logger = Logger(subsystem: "es.amodrono.findle.file-provider", category: "Thumbnails")
+    private let logger = Logger(subsystem: "com.amodrono.findle.file-provider", category: "Thumbnails")
     private var session: URLSession!
 
     init(configuration: URLSessionConfiguration) {

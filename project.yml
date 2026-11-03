@@ -1,6 +1,6 @@
 name: Findle
 options:
-  bundleIdPrefix: es.amodrono.findle
+  bundleIdPrefix: com.amodrono.findle
   deploymentTarget:
     macOS: "15.0"
   xcodeVersion: "16.0"
@@ -19,14 +19,14 @@ settings:
     CODE_SIGN_STYLE: Automatic
     CODE_SIGN_IDENTITY: "Apple Development"
     SWIFT_STRICT_CONCURRENCY: complete
-    FINDLE_BUNDLE_PREFIX: es.amodrono.findle
-    APP_GROUP_IDENTIFIER: group.es.amodrono.findle
+    FINDLE_BUNDLE_PREFIX: com.amodrono.findle
+    APP_GROUP_IDENTIFIER: group.com.amodrono.findle
     FINDLE_APPCAST_URL: https://github.com/alexmodrono/Findle/releases/latest/download/appcast.xml
     FINDLE_PERSONAL_FILES_FOLDER: "Findle Personal Files"
   configs:
     Nightly:
-      FINDLE_BUNDLE_PREFIX: es.amodrono.findle.nightly
-      APP_GROUP_IDENTIFIER: group.es.amodrono.findle.nightly
+      FINDLE_BUNDLE_PREFIX: com.amodrono.findle.nightly
+      APP_GROUP_IDENTIFIER: group.com.amodrono.findle.nightly
       # Nightly ships as an unsigned CI artifact and has no appcast of its own.
       # Leaving the release feed here would let a Nightly install "update"
       # itself into the production build. An empty feed disables Sparkle.
@@ -139,7 +139,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: Findle Onboarding Preview
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.onboarding-preview
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.onboarding-preview
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Findle Onboarding Preview
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
@@ -169,7 +169,7 @@ targets:
         product: Airlock
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.onboarding-preview-tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.onboarding-preview-tests
         GENERATE_INFOPLIST_FILE: YES
 
   AppInterfaceTests:
@@ -202,7 +202,7 @@ targets:
       - target: FindlePersistence
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.interface-tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.interface-tests
 
   Findle:
     type: application
@@ -265,7 +265,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: Findle
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle
         INFOPLIST_FILE: Resources/Info/App-Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/Findle.entitlements
         ENABLE_APP_SANDBOX: NO
@@ -276,7 +276,7 @@ targets:
       configs:
         Nightly:
           PRODUCT_NAME: Findle Nightly
-          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly
+          PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.nightly
 
   SharedDomain:
     type: framework
@@ -288,7 +288,7 @@ targets:
       - path: Sources/SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.shared-domain
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.shared-domain
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
       configs:
         Debug:
@@ -308,7 +308,7 @@ targets:
       - target: SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.networking
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.networking
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
       configs:
         Debug:
@@ -328,7 +328,7 @@ targets:
       - target: SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.persistence
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.persistence
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
       configs:
         Debug:
@@ -350,7 +350,7 @@ targets:
       - target: FindlePersistence
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.sync-engine
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.sync-engine
         INFOPLIST_FILE: Resources/Info/Framework-Info.plist
       configs:
         Debug:
@@ -380,7 +380,7 @@ targets:
       - target: FindleSyncEngine
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.file-provider
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.file-provider
         INFOPLIST_FILE: Resources/Info/FileProvider-Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/FileProvider.entitlements
         ENABLE_APP_SANDBOX: YES
@@ -389,7 +389,7 @@ targets:
           - "@executable_path/../../../../Frameworks"
       configs:
         Nightly:
-          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly.file-provider
+          PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.nightly.file-provider
     info:
       path: Resources/Info/FileProvider-Info.plist
       properties:
@@ -544,7 +544,7 @@ targets:
       - sdk: SwiftUI.framework
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.widgets
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.widgets
         INFOPLIST_FILE: Resources/Info/Widgets-Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/Widgets.entitlements
         ENABLE_APP_SANDBOX: YES
@@ -553,7 +553,7 @@ targets:
           - "@executable_path/../../../../Frameworks"
       configs:
         Nightly:
-          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly.widgets
+          PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.nightly.widgets
     info:
       path: Resources/Info/Widgets-Info.plist
       properties:
@@ -578,7 +578,7 @@ targets:
       - sdk: FileProviderUI.framework
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.file-provider-ui
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.file-provider-ui
         INFOPLIST_FILE: Resources/Info/FinderUI-Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/FinderUI.entitlements
         ENABLE_APP_SANDBOX: YES
@@ -587,7 +587,7 @@ targets:
           - "@executable_path/../../../../Frameworks"
       configs:
         Nightly:
-          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly.file-provider-ui
+          PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.nightly.file-provider-ui
     info:
       path: Resources/Info/FinderUI-Info.plist
       properties:
@@ -625,7 +625,7 @@ targets:
       - sdk: FinderSync.framework
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.finder-sync
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.finder-sync
         INFOPLIST_FILE: Resources/Info/FinderSync-Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/FinderSync.entitlements
         ENABLE_APP_SANDBOX: YES
@@ -634,7 +634,7 @@ targets:
           - "@executable_path/../../../../Frameworks"
       configs:
         Nightly:
-          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly.finder-sync
+          PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.nightly.finder-sync
     info:
       path: Resources/Info/FinderSync-Info.plist
       properties:
@@ -661,7 +661,7 @@ targets:
       - sdk: QuickLookThumbnailing.framework
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.thumbnails
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.thumbnails
         INFOPLIST_FILE: Resources/Info/Thumbnails-Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/Thumbnails.entitlements
         ENABLE_APP_SANDBOX: YES
@@ -670,7 +670,7 @@ targets:
           - "@executable_path/../../../../Frameworks"
       configs:
         Nightly:
-          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly.thumbnails
+          PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.nightly.thumbnails
     info:
       path: Resources/Info/Thumbnails-Info.plist
       properties:
@@ -681,8 +681,8 @@ targets:
           NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).ThumbnailProvider"
           NSExtensionAttributes:
             QLSupportedContentTypes:
-              - es.amodrono.findle.assignment-summary
-              - es.amodrono.findle.quiz-summary
+              - com.amodrono.findle.assignment-summary
+              - com.amodrono.findle.quiz-summary
             QLThumbnailMinimumDimension: 16
 
   FindleSpotlightImporter:
@@ -699,7 +699,7 @@ targets:
       - sdk: CoreSpotlight.framework
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.spotlight-importer
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.spotlight-importer
         INFOPLIST_FILE: Resources/Info/SpotlightImporter-Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/SpotlightImporter.entitlements
         ENABLE_APP_SANDBOX: YES
@@ -708,7 +708,7 @@ targets:
           - "@executable_path/../../../../Frameworks"
       configs:
         Nightly:
-          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly.spotlight-importer
+          PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.nightly.spotlight-importer
     info:
       path: Resources/Info/SpotlightImporter-Info.plist
       properties:
@@ -719,8 +719,8 @@ targets:
           NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).ImportExtension"
           NSExtensionAttributes:
             CSSupportedContentTypes:
-              - es.amodrono.findle.assignment-summary
-              - es.amodrono.findle.quiz-summary
+              - com.amodrono.findle.assignment-summary
+              - com.amodrono.findle.quiz-summary
 
   # Share › Findle and the Submit to Moodle Quick Action (FX-07). They only hand
   # files to the app, so they need no App Group, keychain or profile.
@@ -736,13 +736,13 @@ targets:
       - path: Sources/ShareHandoff
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.share
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.share
         INFOPLIST_FILE: Resources/Info/Share-Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/Share.entitlements
         ENABLE_APP_SANDBOX: YES
       configs:
         Nightly:
-          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly.share
+          PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.nightly.share
     info:
       path: Resources/Info/Share-Info.plist
       properties:
@@ -767,13 +767,13 @@ targets:
       - path: Sources/ShareHandoff
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.quick-action
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.quick-action
         INFOPLIST_FILE: Resources/Info/QuickAction-Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/QuickAction.entitlements
         ENABLE_APP_SANDBOX: YES
       configs:
         Nightly:
-          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly.quick-action
+          PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.nightly.quick-action
     info:
       path: Resources/Info/QuickAction-Info.plist
       properties:
@@ -806,7 +806,7 @@ targets:
       - sdk: QuickLookUI.framework
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.package-preview
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.package-preview
         INFOPLIST_FILE: Resources/Info/PackagePreview-Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/PackagePreview.entitlements
         ENABLE_APP_SANDBOX: YES
@@ -815,7 +815,7 @@ targets:
           - "@executable_path/../../../../Frameworks"
       configs:
         Nightly:
-          PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.nightly.package-preview
+          PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.nightly.package-preview
     info:
       path: Resources/Info/PackagePreview-Info.plist
       properties:
@@ -829,9 +829,9 @@ targets:
             QLSupportsSearchableItems: false
             QLSupportedContentTypes:
               - org.h5p.h5p
-              - es.amodrono.findle.scorm-package
-              - es.amodrono.findle.assignment-summary
-              - es.amodrono.findle.quiz-summary
+              - com.amodrono.findle.scorm-package
+              - com.amodrono.findle.assignment-summary
+              - com.amodrono.findle.quiz-summary
 
   FindleMCP:
     type: tool
@@ -849,7 +849,7 @@ targets:
         product: MCP
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.mcp
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.mcp
         # The helper ships only as an embedded copy inside the app (via the app's
         # copy phase). Without this, the tool also installs to the archive's
         # Products/usr/local/bin, making the archive multi-product: Xcode then
@@ -875,7 +875,7 @@ targets:
       - target: SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.shared-domain-tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.shared-domain-tests
 
   NetworkingTests:
     type: bundle.unit-test
@@ -887,7 +887,7 @@ targets:
       - target: SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.networking-tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.networking-tests
 
   PersistenceTests:
     type: bundle.unit-test
@@ -899,7 +899,7 @@ targets:
       - target: SharedDomain
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.persistence-tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.persistence-tests
 
   FileProviderTests:
     type: bundle.unit-test
@@ -926,7 +926,7 @@ targets:
       - target: FindleSyncEngine
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.file-provider-tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.file-provider-tests
 
   SyncEngineTests:
     type: bundle.unit-test
@@ -940,7 +940,7 @@ targets:
       - target: FindlePersistence
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.sync-engine-tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.sync-engine-tests
 
   FindleMCPTests:
     type: bundle.unit-test
@@ -956,4 +956,4 @@ targets:
       - target: FindlePersistence
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: es.amodrono.findle.mcp-tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.amodrono.findle.mcp-tests

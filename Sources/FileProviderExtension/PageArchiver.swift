@@ -14,7 +14,7 @@ import FindlePersistence
 /// it opens offline and previews with Quick Look. Moodle serves those images
 /// only with the user's credentials, which a browser opening bare HTML lacks.
 enum PageArchiver {
-    private static let logger = Logger(subsystem: "es.amodrono.findle.file-provider", category: "PageArchive")
+    private static let logger = Logger(subsystem: "com.amodrono.findle.file-provider", category: "PageArchive")
     /// Bounds on what one page may pull in, so a huge page can't stall Finder.
     static let maxResources = 60
     static let maxResourceBytes = 50 * 1024 * 1024

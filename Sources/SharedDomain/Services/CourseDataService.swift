@@ -14,7 +14,7 @@ import Foundation
 /// The service is read-only, and only processes signed by the same team can
 /// connect. Replies carry JSON so the payloads can grow without new XPC types.
 public enum CourseDataService {
-    public static let serviceName = "es.amodrono.findle.course-data"
+    public static let serviceName = "com.amodrono.findle.course-data"
 
     public struct Course: Codable, Sendable, Equatable {
         public let id: Int

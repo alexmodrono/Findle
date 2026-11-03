@@ -153,6 +153,9 @@ public struct PersonalFileStore: Sendable {
         public let storedItemID: String?
     }
 
+    // Stored on the user's files, so it keeps its original name even though the
+    // bundle identifiers moved to com.amodrono: renaming it would make every
+    // existing personal file look new.
     private static let itemIDAttribute = "es.amodrono.findle.item-id"
     private static let siteMarkerName = ".findle-site.json"
     private static let anchorMarkerName = ".findle-anchor.json"

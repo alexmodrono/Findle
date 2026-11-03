@@ -13,7 +13,7 @@ import OSLog
 /// Uses the replicated extension model for modern macOS cloud-file behavior.
 final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     let domain: NSFileProviderDomain
-    let logger = Logger(subsystem: "es.amodrono.findle.file-provider", category: "Extension")
+    let logger = Logger(subsystem: "com.amodrono.findle.file-provider", category: "Extension")
     private let stateLock = NSLock()
     private var _database: Database?
     private var databaseSecurityScopedURL: URL?

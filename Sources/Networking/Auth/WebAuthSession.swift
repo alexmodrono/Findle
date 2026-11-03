@@ -24,7 +24,7 @@ extension ASWebAuthenticationSession: WebAuthenticationSessionProtocol {}
 /// a `WKWebView` in-app instead of opening the system browser.
 @MainActor
 public final class WebAuthSession: NSObject {
-    private let logger = Logger(subsystem: "es.amodrono.findle.networking", category: "WebAuth")
+    private let logger = Logger(subsystem: "com.amodrono.findle.networking", category: "WebAuth")
     typealias SessionFactory = (
         URL,
         String?,

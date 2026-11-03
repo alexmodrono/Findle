@@ -26,8 +26,8 @@ public struct CourseworkSummary: Codable, Sendable, Equatable {
 
     public static let assignmentExtension = "findleassignment"
     public static let quizExtension = "findlequiz"
-    public static let assignmentType = "es.amodrono.findle.assignment-summary"
-    public static let quizType = "es.amodrono.findle.quiz-summary"
+    public static let assignmentType = "com.amodrono.findle.assignment-summary"
+    public static let quizType = "com.amodrono.findle.quiz-summary"
 
     public static func summaryID(for kind: Kind, siteID: String, courseID: Int, moduleID: Int) -> String {
         "\(kind == .assignment ? "assignsum" : "quizsum")-\(siteID)-\(courseID)-\(moduleID)"

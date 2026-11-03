@@ -38,8 +38,8 @@ public struct UnsupportedDatabaseSchemaError: Error, LocalizedError, Sendable {
 public final class Database: @unchecked Sendable {
     private static let appGroupIdentifier = BundleIdentifiers.appGroup
     private var db: OpaquePointer?
-    private let queue = DispatchQueue(label: "es.amodrono.findle.persistence.db", qos: .userInitiated)
-    private let logger = Logger(subsystem: "es.amodrono.findle.persistence", category: "Database")
+    private let queue = DispatchQueue(label: "com.amodrono.findle.persistence.db", qos: .userInitiated)
+    private let logger = Logger(subsystem: "com.amodrono.findle.persistence", category: "Database")
     private let path: String
     public var filePath: String { path }
 
@@ -113,7 +113,7 @@ public final class Database: @unchecked Sendable {
                     dbDir = groupDBDir
                 } catch {
                     if error is UnsupportedDatabaseSchemaError || error is FindleError { throw error }
-                    Logger(subsystem: "es.amodrono.findle.persistence", category: "Database")
+                    Logger(subsystem: "com.amodrono.findle.persistence", category: "Database")
                         .error("App Group container unusable, using the app container instead: \(DiagnosticFailure(error).summary, privacy: .public)")
                 }
             }

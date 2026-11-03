@@ -14,7 +14,7 @@ import OSLog
 /// Uses URLSession's callback API so File Provider completion handlers stay in the
 /// framework's callback world instead of crossing Swift concurrency executors.
 enum FileDownloader {
-    private static let logger = Logger(subsystem: "es.amodrono.findle.file-provider", category: "Download")
+    private static let logger = Logger(subsystem: "com.amodrono.findle.file-provider", category: "Download")
 
     /// Reset an item to `.placeholder` after a failed download so the next
     /// fetch retries cleanly. A failure here would otherwise strand the item in
@@ -205,7 +205,7 @@ final class DownloadCoordinator: NSObject, URLSessionDownloadDelegate, @unchecke
         }
     }
 
-    private let logger = Logger(subsystem: "es.amodrono.findle.file-provider", category: "Download")
+    private let logger = Logger(subsystem: "com.amodrono.findle.file-provider", category: "Download")
     private let lock = NSLock()
     private var contexts: [Int: Context] = [:]
 

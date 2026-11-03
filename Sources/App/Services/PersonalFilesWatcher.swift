@@ -24,10 +24,10 @@ final class PersonalFilesWatcher: @unchecked Sendable {
 
     private let rootURL: URL
     private let onChange: @Sendable () -> Void
-    private let queue = DispatchQueue(label: "es.amodrono.findle.personal-files-watcher", qos: .utility)
+    private let queue = DispatchQueue(label: "com.amodrono.findle.personal-files-watcher", qos: .utility)
     /// Marks `queue` so `stop()` can tell when it is already running on it.
     private let queueKey = DispatchSpecificKey<Void>()
-    private let logger = Logger(subsystem: "es.amodrono.findle", category: "PersonalFilesWatcher")
+    private let logger = Logger(subsystem: "com.amodrono.findle", category: "PersonalFilesWatcher")
 
     // Confined to `queue`.
     private var stream: FSEventStreamRef?

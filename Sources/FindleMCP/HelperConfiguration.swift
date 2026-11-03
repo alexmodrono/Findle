@@ -8,7 +8,7 @@ struct HelperConfiguration: Sendable {
     enum Channel: String, Sendable {
         case release, nightly
 
-        var bundleIdentifier: String { "es.amodrono.findle" + (self == .nightly ? ".nightly" : "") }
+        var bundleIdentifier: String { "com.amodrono.findle" + (self == .nightly ? ".nightly" : "") }
         var port: UInt16 { self == .nightly ? 8766 : 8765 }
     }
 

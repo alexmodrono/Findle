@@ -11,7 +11,7 @@ import CommonCrypto
 /// Native Moodle web services client implementing the LMSProvider protocol.
 public final class MoodleClient: LMSProvider, Sendable {
     private let session: URLSession
-    private let logger = Logger(subsystem: "es.amodrono.findle.networking", category: "MoodleClient")
+    private let logger = Logger(subsystem: "com.amodrono.findle.networking", category: "MoodleClient")
 
     public init(session: URLSession = .shared) {
         self.session = session

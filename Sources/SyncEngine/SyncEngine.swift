@@ -14,7 +14,7 @@ import FindlePersistence
 public actor SyncEngine {
     private let provider: LMSProvider
     private let database: Database
-    private let logger = Logger(subsystem: "es.amodrono.findle.sync", category: "SyncEngine")
+    private let logger = Logger(subsystem: "com.amodrono.findle.sync", category: "SyncEngine")
 
     private var activeTasks: [Int: Task<Date?, Error>] = [:]
     private var syncProgress: [Int: SyncProgress] = [:]

@@ -165,7 +165,7 @@ final class CourseDataServiceTests: XCTestCase {
     }
 
     func testBuildsWithoutATeamAdmitNobody() {
-        let connection = NSXPCConnection(serviceName: "es.amodrono.findle.unused")
+        let connection = NSXPCConnection(serviceName: "com.amodrono.findle.unused")
         defer { connection.invalidate() }
         XCTAssertFalse(CourseDataServiceSource.sameTeamAdmission(teamID: nil)(connection))
         XCTAssertFalse(CourseDataServiceSource.sameTeamAdmission(teamID: "BAD\" or true")(connection),

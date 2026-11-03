@@ -15,8 +15,8 @@
 			<string>Owner</string>
 			<key>LSItemContentTypes</key>
 			<array>
-				<string>es.amodrono.findle.assignment-summary</string>
-				<string>es.amodrono.findle.quiz-summary</string>
+				<string>com.amodrono.findle.assignment-summary</string>
+				<string>com.amodrono.findle.quiz-summary</string>
 			</array>
 		</dict>
 	</array>
@@ -38,7 +38,7 @@
 			<key>CFBundleTypeRole</key>
 			<string>Viewer</string>
 			<key>CFBundleURLName</key>
-			<string>es.amodrono.findle.sso-callback</string>
+			<string>com.amodrono.findle.sso-callback</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>findle</string>
@@ -76,7 +76,7 @@
 			<key>UTTypeDescription</key>
 			<string>SCORM Package</string>
 			<key>UTTypeIdentifier</key>
-			<string>es.amodrono.findle.scorm-package</string>
+			<string>com.amodrono.findle.scorm-package</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
@@ -94,7 +94,7 @@
 			<key>UTTypeDescription</key>
 			<string>Findle Assignment</string>
 			<key>UTTypeIdentifier</key>
-			<string>es.amodrono.findle.assignment-summary</string>
+			<string>com.amodrono.findle.assignment-summary</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
@@ -112,7 +112,7 @@
 			<key>UTTypeDescription</key>
 			<string>Findle Quiz</string>
 			<key>UTTypeIdentifier</key>
-			<string>es.amodrono.findle.quiz-summary</string>
+			<string>com.amodrono.findle.quiz-summary</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>

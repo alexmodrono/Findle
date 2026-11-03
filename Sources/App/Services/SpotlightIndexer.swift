@@ -13,7 +13,7 @@ import OSLog
 final class SpotlightIndexer: @unchecked Sendable {
     private static let domainPrefix = BundleIdentifiers.spotlightPrefix
     private static let lastIndexedDomainsKey = "spotlightLastIndexedDomains"
-    private let logger = Logger(subsystem: "es.amodrono.findle", category: "SpotlightIndexer")
+    private let logger = Logger(subsystem: "com.amodrono.findle", category: "SpotlightIndexer")
 
     static let shared = SpotlightIndexer()
 

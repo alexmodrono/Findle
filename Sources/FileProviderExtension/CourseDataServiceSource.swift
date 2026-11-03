@@ -24,7 +24,7 @@ final class CourseDataServiceSource: NSObject, NSFileProviderServiceSource, NSXP
     /// Keeps a course downloaded or lets it go, as Finder's action does.
     private let keep: @Sendable (Int, Bool) throws -> Void
     private let admits: Admission
-    private let logger = Logger(subsystem: "es.amodrono.findle.file-provider", category: "CourseData")
+    private let logger = Logger(subsystem: "com.amodrono.findle.file-provider", category: "CourseData")
 
     /// `source` is read on every request, so a reopened database is picked up.
     init(source: @escaping @Sendable () -> (database: Database, siteID: String)?,

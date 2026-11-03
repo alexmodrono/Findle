@@ -20,7 +20,7 @@ struct TokenResponse: Decodable {
 /// before treating the decoded elements as a complete remote snapshot.
 struct LossyArray<Element: Decodable>: Decodable {
     private static var logger: Logger {
-        Logger(subsystem: "es.amodrono.findle.networking", category: "MoodleResponses")
+        Logger(subsystem: "com.amodrono.findle.networking", category: "MoodleResponses")
     }
 
     let elements: [Element]

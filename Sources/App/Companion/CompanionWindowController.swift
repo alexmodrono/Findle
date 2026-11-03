@@ -21,7 +21,7 @@ final class CompanionWindowController: NSWindowController {
     private let frameAnimator = CompanionFrameAnimator()
     private var pendingModeAnimation = false
     private var preferredMode: FinderPanelPlacement.Mode = UserDefaults.standard.bool(forKey: "finderCompanionCollapsed") ? .compact : .expanded
-    private let logger = Logger(subsystem: "es.amodrono.findle", category: "FinderCompanion")
+    private let logger = Logger(subsystem: "com.amodrono.findle", category: "FinderCompanion")
     private var lastDiagnostic: String?
     /// The folder last recorded as opened, so each visit is recorded once.
     private var recordedFolder: URL?

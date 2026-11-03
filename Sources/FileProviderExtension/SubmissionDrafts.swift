@@ -19,7 +19,7 @@ import FindleSyncEngine
 /// Assignment Details.
 actor SubmissionDrafts {
     static let shared = SubmissionDrafts()
-    private let logger = Logger(subsystem: "es.amodrono.findle.file-provider", category: "Submission")
+    private let logger = Logger(subsystem: "com.amodrono.findle.file-provider", category: "Submission")
     private var running: Set<String> = []
     private var dirty: Set<String> = []
 
