@@ -2240,7 +2240,9 @@ final class AppState: ObservableObject {
         let logger = self.logger
         let siteID = site.id
         for item in items where item.siteID == siteID {
+            guard !Task.isCancelled else { return }
             guard let url = await Self.userVisibleFileProviderURL(using: manager, for: NSFileProviderItemIdentifier(item.id)).url else { continue }
+            guard !Task.isCancelled else { return }
             // A coordinated read of a large file must not hold up the main actor.
             await Task.detached(priority: .utility) {
                 Self.keepPreviousVersion(of: item, at: url, in: directory, siteID: siteID, database: database, logger: logger)
@@ -2292,6 +2294,13 @@ final class AppState: ObservableObject {
     }
 
     /// Discard Previous Version: removes the kept copy and the Updated badge.
+    /// The name of the file whose previous version is kept, for confirming a discard.
+    func previousVersionFilename(itemID: String) -> String? {
+        guard let database, let site = currentSite, (try? database.previousVersionPath(itemID: itemID)) != nil,
+              let item = try? database.fetchItem(id: itemID), item.siteID == site.id else { return nil }
+        return item.filename
+    }
+
     func discardPreviousVersion(itemID: String) {
         guard let database, let site = currentSite else { return }
         do {
@@ -2323,25 +2332,12 @@ final class AppState: ObservableObject {
         guard let database, let site = currentSite, let token = currentToken else { throw SharedSubmissionError.notReady }
         let directory = try personalFileStore.directory(forParentID: assignment.submitFolderID, siteID: site.id,
                                                         siteName: site.displayName, database: database)
-        // A file already in the Submit folder with the same contents is reused, so
-        // sharing again after a failure never uploads it twice.
-        var inFolder: [URL] = []
-        var created: [URL] = []
-        func removeCreated() { for url in created { try? FileManager.default.removeItem(at: url) } }
+        // Comparing and copying large files must not hold up the main actor.
+        let store = personalFileStore
+        let (inFolder, created) = try await Task.detached(priority: .userInitiated) {
+            try Self.stageSharedFiles(files, in: directory, store: store)
+        }.value
         do {
-            for file in files {
-                let access = file.startAccessingSecurityScopedResource()
-                defer { if access { file.stopAccessingSecurityScopedResource() } }
-                let existing = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
-                if let same = existing.first(where: { FileManager.default.contentsEqual(atPath: $0.path, andPath: file.path) }) {
-                    inFolder.append(same)
-                    continue
-                }
-                let destination = personalFileStore.uniqueURL(for: file.lastPathComponent, in: directory)
-                try FileManager.default.copyItem(at: file, to: destination)
-                created.append(destination)
-                inFolder.append(destination)
-            }
             // The reconciler turns the copies into personal files in the Submit folder.
             await reconcilePersonalFiles()
             await personalFilesReconcileTask?.value
@@ -2353,7 +2349,7 @@ final class AppState: ObservableObject {
             try await SubmissionUploader.saveDraft(folderID: assignment.submitFolderID, database: database, client: moodleClient, token: token)
         } catch {
             // Nothing reached Moodle: take back only the copies this attempt made.
-            removeCreated()
+            for url in created { try? FileManager.default.removeItem(at: url) }
             if !created.isEmpty { await reconcilePersonalFiles() }
             throw error
         }
@@ -2367,6 +2363,35 @@ final class AppState: ObservableObject {
         if forGrading {
             try await moodleClient.submitForGrading(site: site, token: token, assignmentID: assignment.id, acceptStatement: acceptStatement)
         }
+    }
+
+    /// Copies shared files into the Submit folder. A file already there with the
+    /// same contents is reused, so sharing again after a failure never uploads it
+    /// twice. If a copy fails, the copies made so far are removed.
+    private nonisolated static func stageSharedFiles(_ files: [URL], in directory: URL,
+                                                     store: PersonalFileStore) throws -> (inFolder: [URL], created: [URL]) {
+        var inFolder: [URL] = []
+        var created: [URL] = []
+        do {
+            for file in files {
+                let access = file.startAccessingSecurityScopedResource()
+                defer { if access { file.stopAccessingSecurityScopedResource() } }
+                let existing = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+                if let same = existing.first(where: { FileManager.default.contentsEqual(atPath: $0.path, andPath: file.path) }) {
+                    inFolder.append(same)
+                    continue
+                }
+                let destination = store.uniqueURL(for: file.lastPathComponent, in: directory)
+                // copyItem can fail after it creates the destination, so track it first.
+                created.append(destination)
+                try FileManager.default.copyItem(at: file, to: destination)
+                inFolder.append(destination)
+            }
+        } catch {
+            for url in created { try? FileManager.default.removeItem(at: url) }
+            throw error
+        }
+        return (inFolder, created)
     }
 
     /// The course's assignments and quizzes not yet due, for the companion.

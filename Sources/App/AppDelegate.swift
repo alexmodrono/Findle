@@ -12,7 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private lazy var updates = UpdateController()
     private var companion: CompanionWindowController?
     private var settings: SettingsWindowController?
-    private var submission: SubmitWindowController?
+    private var submissions: [SubmitWindowController] = []
     private var onboarding: AirlockWindowController?
     private var subscription: AnyCancellable?
     #if DEBUG
@@ -101,11 +101,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             let controller = SubmitWindowController(state: state, files: shared)
             controller.onClose = { [weak self, weak controller] in
                 guard let self else { return }
-                // A later share may have opened another window meanwhile.
-                if self.submission === controller { self.submission = nil }
+                self.submissions.removeAll { $0 === controller }
                 self.updateActivationPolicy()
             }
-            submission = controller
+            submissions.append(controller)
             controller.present()
         }
         if let courseID = urls.lazy.compactMap(FindleLinks.shownCourse(in:)).last {
@@ -121,7 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
         }
         for request in urls.compactMap(FindleLinks.previousVersionRequest(in:)) {
-            if request.discard { state.discardPreviousVersion(itemID: request.itemID) } else { state.openPreviousVersion(itemID: request.itemID) }
+            if request.discard { confirmDiscardingPreviousVersion(itemID: request.itemID) } else { state.openPreviousVersion(itemID: request.itemID) }
         }
         if urls.contains(FindleLinks.settings) { showSettings() }
         if urls.contains(FindleLinks.reconnect) { showSetup() }
@@ -192,6 +191,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     /// Show in Findle: Settings, with the course selected in Courses.
+    /// Any process can open a findle:// link, so a discard waits for the user.
+    private func confirmDiscardingPreviousVersion(itemID: String) {
+        guard let filename = state.previousVersionFilename(itemID: itemID) else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Discard the previous version of \u{201C}\(filename)\u{201D}?"
+        alert.informativeText = "Findle keeps it since Moodle replaced the file. You can't undo this."
+        alert.addButton(withTitle: "Discard")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+        NSApp.activate()
+        if alert.runModal() == .alertFirstButtonReturn { state.discardPreviousVersion(itemID: itemID) }
+    }
+
     private func showCourse(_ courseID: Int) {
         showSettings()
         Task {

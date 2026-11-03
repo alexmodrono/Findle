@@ -75,7 +75,7 @@ final class PackageSummaryTests: XCTestCase {
     }
 
     func testADeflatedEntryWithoutCompressedBytesThrows() throws {
-        // A hand-built archive whose h5p.json claims 10 deflated bytes but stores none.
+        // A hand-built archive whose h5p.json is deflated, declares 10 uncompressed bytes, and stores none.
         func le16(_ v: Int) -> [UInt8] { [UInt8(v & 0xFF), UInt8(v >> 8 & 0xFF)] }
         func le32(_ v: Int) -> [UInt8] { le16(v & 0xFFFF) + le16(v >> 16 & 0xFFFF) }
         let name = Array("h5p.json".utf8)
@@ -86,7 +86,9 @@ final class PackageSummaryTests: XCTestCase {
             + le16(name.count) + le16(0) + le16(0) + le16(0) + le16(0) + le32(0) + le32(0) + name
         let size = data.count - central
         data += le32(0x0605_4B50) + le16(0) + le16(0) + le16(1) + le16(1) + le32(size) + le32(central) + le16(0)
-        XCTAssertThrowsError(try PackageSummary.read(Data(data)), "A damaged archive throws instead of crashing Quick Look")
+        XCTAssertThrowsError(try PackageSummary.read(Data(data)), "A damaged archive throws instead of crashing Quick Look") {
+            XCTAssertEqual($0 as? ZipReader.Failure, .damaged)
+        }
     }
 
         func testLibraryNamesReadLikeTheirActivity() {

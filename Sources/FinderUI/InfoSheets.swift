@@ -83,6 +83,9 @@ final class AssignmentDetailsModel {
     let itemID: String
     var details: CourseDataService.AssignmentDetails?
     var error: String?
+    /// The outcome of a submission, shown in the loaded form.
+    var notice: String?
+    var submitted = false
     var submitting = false
 
     init(client: CourseDataClient, itemID: String) {
@@ -98,17 +101,20 @@ final class AssignmentDetailsModel {
     func submit(acceptStatement: Bool) async {
         submitting = true
         defer { submitting = false }
+        notice = nil
         do {
             try await client.submit(itemID: itemID, acceptStatement: acceptStatement)
+            submitted = true
         } catch {
-            self.error = "Moodle didn't accept the submission: \(error.localizedDescription)"
+            notice = "Findle couldn't submit the assignment: \(error.localizedDescription)"
+            if let refreshed = try? await client.assignmentDetails(itemID: itemID) { details = refreshed }
             return
         }
         // The submission went through; only showing its new state may fail.
         do {
             details = try await client.assignmentDetails(itemID: itemID)
         } catch {
-            self.error = "Submitted. Findle couldn't show the new status; check it on Moodle."
+            notice = "Submitted. Findle couldn't show the new status; check it on Moodle."
         }
     }
 }
@@ -120,10 +126,13 @@ struct AssignmentDetailsView: View {
     @State private var acceptsStatement = false
 
     var body: some View {
-        SheetFrame(title: model.details?.name ?? "Assignment Details", error: model.error, loading: model.details == nil,
-                   done: done) {
+        SheetFrame(title: model.details?.name ?? "Assignment Details", error: model.details == nil ? model.error : nil,
+                   loading: model.details == nil, done: done) {
             if let details = model.details {
                 Form {
+                    if let notice = model.notice {
+                        Section { Text(notice).textSelection(.enabled) }
+                    }
                     Section {
                         LabeledContent("Course", value: details.courseName)
                         LabeledContent("Due", value: details.due?.formatted(date: .abbreviated, time: .shortened) ?? "No due date")
@@ -140,7 +149,7 @@ struct AssignmentDetailsView: View {
                                     Toggle("I accept this site's submission statement", isOn: $acceptsStatement)
                                 }
                                 Button("Submit for Grading…") { confirming = true }
-                                    .disabled(model.submitting || (details.requiresStatement && !acceptsStatement))
+                                    .disabled(model.submitting || model.submitted || (details.requiresStatement && !acceptsStatement))
                             }
                         } header: {
                             Text("Draft")

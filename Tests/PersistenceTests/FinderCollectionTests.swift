@@ -1,4 +1,5 @@
 import XCTest
+import SQLite3
 @testable import FindlePersistence
 @testable import SharedDomain
 
@@ -111,11 +112,15 @@ final class SiteDataCleanupTests: XCTestCase {
             try database.commitCourseSync(items: items, deletingItemIDs: [],
                                           cursor: SyncCursor(courseID: 1, siteID: "s", lastSyncDate: Date(), itemCount: 2),
                                           outline: CourseOutlineSnapshot(courseID: 1, capturedAt: Date(), sections: []),
-                                          generatedContents: ["f": Data("x".utf8)])
-            try database.markItemOpened(id: "f", at: Date())
+                                          arrivedItemIDs: ["f"], generatedContents: ["f": Data("x".utf8)])
             try database.saveActivityCompletion([ActivityCompletion(moduleID: 2, courseID: 1, isManual: true, isComplete: true)],
                                                 courseID: 1, siteID: "s")
             try database.savePreviousVersion(itemID: "f", siteID: "s", courseID: 1, path: "/tmp/f (previous).pdf", size: 1)
+            XCTAssertNotNil(try database.previousVersionPath(itemID: "f"))
+            XCTAssertNotNil(try database.fetchGeneratedContent(itemID: "f"))
+            XCTAssertEqual(try database.fetchNewItems(courseID: 1, siteID: "s").map(\.id), ["f"])
+            XCTAssertEqual(try rows(in: "item_activity", at: path), 1)
+            XCTAssertEqual(try rows(in: "activity_completion", at: path), 1)
 
             if wipeAll { try database.deleteAllData() } else { try database.deleteAccount(id: "acct") }
 
@@ -123,6 +128,22 @@ final class SiteDataCleanupTests: XCTestCase {
             XCTAssertNil(try database.fetchGeneratedContent(itemID: "f"), "wipeAll: \(wipeAll)")
             XCTAssertEqual(try database.previousVersionBytes(courseID: 1, siteID: "s"), 0, "wipeAll: \(wipeAll)")
             XCTAssertEqual(try database.fetchNewItems(courseID: 1, siteID: "s"), [], "wipeAll: \(wipeAll)")
+            XCTAssertEqual(try rows(in: "item_activity", at: path), 0, "wipeAll: \(wipeAll)")
+            XCTAssertEqual(try rows(in: "activity_completion", at: path), 0, "wipeAll: \(wipeAll)")
         }
+    }
+
+    /// Counts a table's rows directly, for tables the database has no reader for.
+    private func rows(in table: String, at path: String) throws -> Int64 {
+        var connection: OpaquePointer?
+        guard sqlite3_open_v2(path, &connection, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else { throw CocoaError(.fileReadUnknown) }
+        defer { sqlite3_close(connection) }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(connection, "SELECT COUNT(*) FROM \(table)", -1, &statement, nil) == SQLITE_OK else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else { throw CocoaError(.fileReadUnknown) }
+        return sqlite3_column_int64(statement, 0)
     }
 }

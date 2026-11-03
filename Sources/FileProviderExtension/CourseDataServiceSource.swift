@@ -9,6 +9,7 @@ import Security
 import SharedDomain
 import FindlePersistence
 import FindleNetworking
+import FindleSyncEngine
 
 /// Vends `CourseDataService` from the File Provider extension, which is the only
 /// process that can open the database. Read-only: it never writes.
@@ -151,8 +152,12 @@ private final class CourseDataExport: NSObject, CourseDataSheetsProtocol, @unche
             reply(NSFileProviderError(.notAuthenticated) as NSError)
             return
         }
+        let draftFolderID = SubmissionUploader.submitFolderID(siteID: siteID, courseID: folder.courseID, moduleID: folder.remoteID)
         Task {
             do {
+                // The draft upload after a change runs in the background. Save the
+                // Submit folder now so grading submits the files the user sees.
+                try await SubmissionUploader.saveDraft(folderID: draftFolderID, database: database, token: AuthToken(token: token))
                 try await MoodleClient().submitForGrading(site: site, token: AuthToken(token: token), assignmentID: assignment.id,
                                                           acceptStatement: acceptStatement)
                 reply(nil)
