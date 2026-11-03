@@ -134,8 +134,8 @@ final class CourseSelectionView: NSView, NSTableViewDataSource, NSTableViewDeleg
         toggle.lineBreakMode = .byTruncatingTail
         toggle.toolTip = course.displayName
         toggle.setAccessibilityLabel("Sync \(course.displayName)")
-        // Once renamed, the Moodle name is the useful secondary line.
-        let subtitle = course.hasCustomName ? "\(course.shortName) · \(course.fullName)" : course.shortName
+        // Once renamed, the Moodle name is what identifies the course.
+        let subtitle = course.hasCustomName ? course.fullName : course.shortName
         let code = NativeUI.label(subtitle, secondary: true, size: 11)
         code.toolTip = subtitle
         code.lineBreakMode = .byTruncatingTail

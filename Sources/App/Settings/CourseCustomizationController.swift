@@ -202,9 +202,9 @@ final class CourseCustomizationController: NSObject, NSTextFieldDelegate, Course
     }
 
     private static let finderUnavailableText =
-        "Findle isn’t connected to Finder yet, so the change couldn’t be saved where Finder can see it. Try again in a moment, or open Diagnostics if this keeps happening."
+        "Findle isn’t connected to Finder yet. Try again in a moment, or check Diagnostics in Settings if this keeps happening."
 
-    private static let renameHint = "The course folder in Finder is renamed too. Leave the name empty to use the Moodle name."
+    private static let renameHint = "Also renames the Finder folder."
 
     /// Enable "Rename" and "Use Moodle Name" only when their names don't
     /// collide with another course's folder. The visible hint names the
@@ -241,7 +241,6 @@ final class CourseCustomizationController: NSObject, NSTextFieldDelegate, Course
 
         let alert = NSAlert()
         alert.messageText = "Add a Tag to “\(course.displayName)”"
-        alert.informativeText = "Typing the name of a tag you already use adds that tag, with its color."
         alert.addButton(withTitle: "Add")
         alert.addButton(withTitle: "Cancel")
 

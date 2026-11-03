@@ -31,7 +31,7 @@ final class CoursesSettingsController: NSViewController {
         let spacer = NSView()
         spacer.setContentHuggingPriority(.init(1), for: .horizontal)
         let actions = NativeUI.stack([refresh, spacer, open, sync], spacing: 8, horizontal: true)
-        let hint = NativeUI.label("Control-click a course to rename it or add tags. Changes also apply in Finder.", secondary: true, size: 11)
+        let hint = NativeUI.label("Control-click a course to rename or tag it.", secondary: true, size: 11)
         let stack = NativeUI.stack([status, courses, hint, actions], spacing: 16)
         stack.setCustomSpacing(10, after: status)
         stack.setCustomSpacing(6, after: courses)
