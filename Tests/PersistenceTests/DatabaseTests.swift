@@ -593,6 +593,32 @@ final class DatabaseTests: XCTestCase {
         XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.tagData, FinderTag.tagData(from: newTags))
     }
 
+    func testCourseCommitKeepsTagEditMadeDuringSync() throws {
+        let course = MoodleCourse(id: 1, shortName: "OS", fullName: "Operating Systems", siteID: "site-1")
+        try database.saveCourses([course])
+        let oldTags = [FinderTag(name: "Exams", color: .red)]
+        // The sync read the root's tags before its network round trips...
+        let staleRoot = LocalItem(id: course.rootItemID, siteID: "site-1", courseID: 1, remoteID: 1,
+                                  filename: course.effectiveFolderName, isDirectory: true,
+                                  tagData: FinderTag.tagData(from: oldTags))
+        // ...and the user retagged the course (new root row, so the UPDATE missed) before it committed.
+        let newTags = [FinderTag(name: "Labs", color: .green), FinderTag(name: "Exams", color: .red)]
+        try database.setCourseTags(newTags, courseID: 1, siteID: "site-1")
+
+        let cursor = SyncCursor(courseID: 1, siteID: "site-1", lastSyncDate: Date(), itemCount: 1)
+        try database.commitCourseSync(items: [staleRoot], deletingItemIDs: [], cursor: cursor,
+                                      outline: CourseOutlineSnapshot(courseID: 1, capturedAt: cursor.lastSyncDate, sections: [CourseOutlineSection]()))
+
+        let stored = try database.fetchCourseTags(courseID: 1, siteID: "site-1")
+        XCTAssertEqual(Set(stored), Set(newTags))
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.tagData, FinderTag.tagData(from: stored))
+
+        // Already in step: re-saving the same tags doesn't touch the root.
+        let anchor = try database.currentChangeCounter()
+        try database.setCourseTags(newTags, courseID: 1, siteID: "site-1")
+        XCTAssertEqual(try database.currentChangeCounter(), anchor)
+    }
+
     func testFetchCourseReturnsStoredCustomization() throws {
         try database.saveCourses([
             MoodleCourse(id: 101, shortName: "CS101", fullName: "Intro to CS", siteID: "site-1"),

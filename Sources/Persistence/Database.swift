@@ -1560,6 +1560,9 @@ extension Database {
                 // the user may have renamed the course since. Re-derive the name
                 // inside this write transaction so the latest rename wins.
                 try reconcileCourseRootFilenameUnsafe(courseID: cursor.courseID, siteID: cursor.siteID)
+                // Likewise for tags: the root's blob was read before the network
+                // round trips, so a tag edit may have landed since.
+                try reconcileCourseRootTagDataUnsafe(courseID: cursor.courseID, siteID: cursor.siteID)
                 try deleteItemsWithTombstoneUnsafe(ids: deletingItemIDs)
                 try saveSyncCursorUnsafe(cursor)
                 try saveCourseOutlineUnsafe(courseID: outline.courseID, siteID: cursor.siteID, payload: payload)
@@ -1693,20 +1696,50 @@ extension Database {
 
     /// Store a course's tags and write them to its root folder item in one
     /// transaction, so the app's tag list and the tags Finder shows can't
-    /// disagree after a failure. Returns the root's tag data as written.
-    @discardableResult
-    public func setCourseTags(_ tags: [FinderTag], courseID: Int, siteID: String) throws -> Data? {
-        let tagData = FinderTag.tagData(from: tags)
+    /// disagree after a failure.
+    public func setCourseTags(_ tags: [FinderTag], courseID: Int, siteID: String) throws {
         try queue.sync {
             try transactionUnsafe {
                 try saveCourseTagsUnsafe(tags, courseID: courseID, siteID: siteID)
-                try updateItemTagDataUnsafe(
-                    id: MoodleCourse.rootItemID(siteID: siteID, courseID: courseID),
-                    tagData: tagData
-                )
+                try reconcileCourseRootTagDataUnsafe(courseID: courseID, siteID: siteID)
             }
         }
-        return tagData
+    }
+
+    /// A course's stored tags, in the same order `fetchCourseTags` returns.
+    /// The caller must hold `queue`.
+    private func courseTagsUnsafe(courseID: Int, siteID: String) throws -> [FinderTag] {
+        let stmt = try prepareStatement(
+            "SELECT tag_name, tag_color FROM course_tags WHERE course_id = ? AND site_id = ? ORDER BY tag_name"
+        )
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int64(stmt, 1, Int64(courseID))
+        sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        var tags: [FinderTag] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let name = sqlite3_column_text(stmt, 0) else { continue }
+            let color = FinderTag.Color(rawValue: Int(sqlite3_column_int(stmt, 1))) ?? .none
+            tags.append(FinderTag(name: String(cString: name), color: color))
+        }
+        return tags
+    }
+
+    /// Point the course root's tag data at the course's stored tags. Writes
+    /// nothing when the root already matches or doesn't exist, so syncs don't
+    /// bump its metadata version needlessly. The caller must hold `queue`.
+    private func reconcileCourseRootTagDataUnsafe(courseID: Int, siteID: String) throws {
+        let tagData = FinderTag.tagData(from: try courseTagsUnsafe(courseID: courseID, siteID: siteID))
+        let rootID = MoodleCourse.rootItemID(siteID: siteID, courseID: courseID)
+
+        let select = try prepareStatement("SELECT tag_data FROM items WHERE id = ?")
+        defer { sqlite3_finalize(select) }
+        sqlite3_bind_text(select, 1, (rootID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(select) == SQLITE_ROW else { return }
+        let current: Data? = sqlite3_column_blob(select, 0).map {
+            Data(bytes: $0, count: Int(sqlite3_column_bytes(select, 0)))
+        }
+        guard current != tagData else { return }
+        try updateItemTagDataUnsafe(id: rootID, tagData: tagData)
     }
 
     /// The caller must hold `queue`.
@@ -1734,21 +1767,8 @@ extension Database {
     }
 
     public func fetchCourseTags(courseID: Int, siteID: String) throws -> [FinderTag] {
-        let sql = "SELECT tag_name, tag_color FROM course_tags WHERE course_id = ? AND site_id = ? ORDER BY tag_name"
-        return try queue.sync {
-            let stmt = try prepareStatement(sql)
-            defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_int64(stmt, 1, Int64(courseID))
-            sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
-
-            var tags: [FinderTag] = []
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                let name = String(cString: sqlite3_column_text(stmt, 0))
-                let colorRaw = Int(sqlite3_column_int(stmt, 1))
-                let color = FinderTag.Color(rawValue: colorRaw) ?? .none
-                tags.append(FinderTag(name: name, color: color))
-            }
-            return tags
+        try queue.sync {
+            try courseTagsUnsafe(courseID: courseID, siteID: siteID)
         }
     }
 
