@@ -1182,6 +1182,9 @@ final class AppState: ObservableObject {
     func updateCustomFolderName(for course: MoodleCourse, name: String?) {
         guard !isDatabaseTransitioning, let db = database, let site = currentSite,
               course.siteID == site.id else { return }
+        // Callers may hold a copy from before a Finder rename; compare against
+        // the course as it is now, and skip it if it's gone (site switch, logout).
+        guard let course = currentCourse(matching: course) else { return }
         let normalized = course.normalizedCustomName(name)
         guard normalized != course.customFolderName else { return }
         if let conflict = folderNameConflict(for: course, proposedName: name ?? "") {
@@ -1204,7 +1207,13 @@ final class AppState: ObservableObject {
     /// The other course whose Finder folder `course` would collide with if it
     /// were renamed to `proposedName`, if any.
     func folderNameConflict(for course: MoodleCourse, proposedName: String) -> MoodleCourse? {
-        course.folderNameConflict(forProposedName: proposedName, among: courses)
+        (currentCourse(matching: course) ?? course).folderNameConflict(forProposedName: proposedName, among: courses)
+    }
+
+    /// The loaded copy of `course`, reflecting renames made since the caller
+    /// took its snapshot; `nil` when the course is no longer loaded.
+    func currentCourse(matching course: MoodleCourse) -> MoodleCourse? {
+        courses.first { $0.id == course.id && $0.siteID == course.siteID }
     }
 
     /// Re-read course customizations (names, icons, tags) from the database.

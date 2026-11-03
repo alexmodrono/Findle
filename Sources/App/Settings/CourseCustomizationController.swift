@@ -133,16 +133,19 @@ final class CourseCustomizationController: NSObject, NSTextFieldDelegate, Course
             case .alertThirdButtonReturn: proposedName = nil
             default: return
             }
+            // The course may have been renamed (e.g. in Finder) while the sheet
+            // was open, or unloaded entirely; act on its current state.
+            guard let current = self.state.currentCourse(matching: course) else { return }
             // A course may have been renamed onto this name in the moment
             // between the last check and the click; say so rather than
             // closing as if the rename worked.
-            if let conflict = self.state.folderNameConflict(for: course, proposedName: proposedName ?? "") {
+            if let conflict = self.state.folderNameConflict(for: current, proposedName: proposedName ?? "") {
                 Task { @MainActor [weak self] in
-                    self?.presentRenameConflict(for: course, conflict: conflict, in: window)
+                    self?.presentRenameConflict(for: current, conflict: conflict, in: window)
                 }
                 return
             }
-            self.state.updateCustomFolderName(for: course, name: proposedName)
+            self.state.updateCustomFolderName(for: current, name: proposedName)
             self.onChange?()
         }
     }
@@ -164,7 +167,8 @@ final class CourseCustomizationController: NSObject, NSTextFieldDelegate, Course
     /// collide with another course's folder. The visible hint names the
     /// course in the way, so the reason doesn't live only in a tooltip.
     private func validateRename() {
-        guard let course = renameCourse, let field = renameField else { return }
+        guard let snapshot = renameCourse, let field = renameField else { return }
+        let course = state.currentCourse(matching: snapshot) ?? snapshot
         let typedConflict = state.folderNameConflict(for: course, proposedName: field.stringValue)
         renameAlert?.buttons.first?.isEnabled = typedConflict == nil
 
