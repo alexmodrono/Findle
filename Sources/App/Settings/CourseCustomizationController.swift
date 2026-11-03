@@ -23,6 +23,10 @@ final class CourseCustomizationController: NSObject, NSTextFieldDelegate, Course
     private weak var renameAlert: NSAlert?
     private weak var renameField: NSTextField?
     private weak var renameHint: NSTextField?
+    private weak var renameResetButton: NSButton?
+    /// Re-validates the open rename sheet when courses change underneath it,
+    /// e.g. another course renamed in Finder.
+    private var renameCoursesSubscription: AnyCancellable?
 
     // The new-tag sheet currently on screen.
     private weak var tagField: NSTextField?
@@ -92,14 +96,7 @@ final class CourseCustomizationController: NSObject, NSTextFieldDelegate, Course
         alert.informativeText = "Moodle name: \(course.fullName)"
         alert.addButton(withTitle: "Rename")
         alert.addButton(withTitle: "Cancel")
-        if course.hasCustomName {
-            let reset = alert.addButton(withTitle: "Use Moodle Name")
-            // Another course may have been renamed to this course's Moodle name.
-            if let conflict = state.folderNameConflict(for: course, proposedName: "") {
-                reset.isEnabled = false
-                reset.toolTip = "“\(conflict.displayName)” already uses the Moodle name."
-            }
-        }
+        let reset = course.hasCustomName ? alert.addButton(withTitle: "Use Moodle Name") : nil
 
         let field = NSTextField(string: course.displayName)
         field.placeholderString = course.fullName
@@ -108,45 +105,78 @@ final class CourseCustomizationController: NSObject, NSTextFieldDelegate, Course
         let hint = NativeUI.label(Self.renameHint, secondary: true, size: 11)
         hint.preferredMaxLayoutWidth = 300
         let accessory = NativeUI.stack([field, hint], spacing: 6)
-        accessory.frame = NSRect(x: 0, y: 0, width: 300, height: 60)
+        // Room for a three-line hint (the conflict messages are longer).
+        accessory.frame = NSRect(x: 0, y: 0, width: 300, height: 76)
         field.widthAnchor.constraint(equalToConstant: 300).isActive = true
         hint.widthAnchor.constraint(equalToConstant: 300).isActive = true
         alert.accessoryView = accessory
-        alert.layout()
 
         renameCourse = course
         renameAlert = alert
         renameField = field
         renameHint = hint
+        renameResetButton = reset
         alert.window.initialFirstResponder = field
+        validateRename()
+        alert.layout()
+        renameCoursesSubscription = state.$courses.dropFirst().sink { [weak self] _ in
+            Task { @MainActor [weak self] in self?.validateRename() }
+        }
 
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self else { return }
-            defer { self.renameCourse = nil }
+            self.renameCourse = nil
+            self.renameCoursesSubscription = nil
+            let proposedName: String?
             switch response {
-            case .alertFirstButtonReturn:
-                guard self.state.folderNameConflict(for: course, proposedName: field.stringValue) == nil else { return }
-                self.state.updateCustomFolderName(for: course, name: field.stringValue)
-            case .alertThirdButtonReturn:
-                guard self.state.folderNameConflict(for: course, proposedName: "") == nil else { return }
-                self.state.updateCustomFolderName(for: course, name: nil)
-            default:
+            case .alertFirstButtonReturn: proposedName = field.stringValue
+            case .alertThirdButtonReturn: proposedName = nil
+            default: return
+            }
+            // A course may have been renamed onto this name in the moment
+            // between the last check and the click; say so rather than
+            // closing as if the rename worked.
+            if let conflict = self.state.folderNameConflict(for: course, proposedName: proposedName ?? "") {
+                Task { @MainActor [weak self] in
+                    self?.presentRenameConflict(for: course, conflict: conflict, in: window)
+                }
                 return
             }
+            self.state.updateCustomFolderName(for: course, name: proposedName)
             self.onChange?()
         }
     }
 
+    /// Explain that a rename couldn't be saved because `conflict` already uses
+    /// the folder name, and how to recover.
+    private func presentRenameConflict(for course: MoodleCourse, conflict: MoodleCourse, in window: NSWindow) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "“\(course.displayName)” wasn’t renamed"
+        alert.informativeText = "“\(conflict.displayName)” already uses that folder name. Choose a different name, or rename “\(conflict.displayName)” first."
+        alert.addButton(withTitle: "OK")
+        alert.beginSheetModal(for: window)
+    }
+
     private static let renameHint = "The course folder in Finder is renamed too. Leave the name empty to use the Moodle name."
 
-    /// Enable "Rename" only when the typed name doesn't collide with another
-    /// course's folder, and swap the hint for a warning naming that course.
+    /// Enable "Rename" and "Use Moodle Name" only when their names don't
+    /// collide with another course's folder. The visible hint names the
+    /// course in the way, so the reason doesn't live only in a tooltip.
     private func validateRename() {
         guard let course = renameCourse, let field = renameField else { return }
-        let conflict = state.folderNameConflict(for: course, proposedName: field.stringValue)
-        renameAlert?.buttons.first?.isEnabled = conflict == nil
-        if let conflict {
-            renameHint?.stringValue = "“\(conflict.displayName)” already uses this folder name."
+        let typedConflict = state.folderNameConflict(for: course, proposedName: field.stringValue)
+        renameAlert?.buttons.first?.isEnabled = typedConflict == nil
+
+        let resetConflict = renameResetButton == nil ? nil : state.folderNameConflict(for: course, proposedName: "")
+        renameResetButton?.isEnabled = resetConflict == nil
+        renameResetButton?.toolTip = resetConflict.map { "“\($0.displayName)” already uses the Moodle name." }
+
+        if let typedConflict {
+            renameHint?.stringValue = "“\(typedConflict.displayName)” already uses this folder name."
+            renameHint?.textColor = .systemOrange
+        } else if let resetConflict {
+            renameHint?.stringValue = "The Moodle name can’t be restored because “\(resetConflict.displayName)” already uses it."
             renameHint?.textColor = .systemOrange
         } else {
             renameHint?.stringValue = Self.renameHint
