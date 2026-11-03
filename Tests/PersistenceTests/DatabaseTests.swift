@@ -618,6 +618,29 @@ final class DatabaseTests: XCTestCase {
         XCTAssertEqual(try database.currentChangeCounter(), anchor)
     }
 
+    func testCourseCommitKeepsTagEditOnExistingRootMadeDuringSync() throws {
+        let course = MoodleCourse(id: 1, shortName: "OS", fullName: "Operating Systems", siteID: "site-1")
+        try database.saveCourses([course])
+        let oldTags = [FinderTag(name: "Exams", color: .red)]
+        try database.setCourseTags(oldTags, courseID: 1, siteID: "site-1")
+        // The root exists with the old tags, and the sync reads it as-is...
+        let staleRoot = LocalItem(id: course.rootItemID, siteID: "site-1", courseID: 1, remoteID: 1,
+                                  filename: course.effectiveFolderName, isDirectory: true,
+                                  tagData: FinderTag.tagData(from: oldTags))
+        try database.saveItems([staleRoot])
+        // ...then the user retags the course, updating that existing root, before the sync commits.
+        let newTags = [FinderTag(name: "Labs", color: .green)]
+        try database.setCourseTags(newTags, courseID: 1, siteID: "site-1")
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.tagData, FinderTag.tagData(from: newTags))
+
+        let cursor = SyncCursor(courseID: 1, siteID: "site-1", lastSyncDate: Date(), itemCount: 1)
+        try database.commitCourseSync(items: [staleRoot], deletingItemIDs: [], cursor: cursor,
+                                      outline: CourseOutlineSnapshot(courseID: 1, capturedAt: cursor.lastSyncDate, sections: [CourseOutlineSection]()))
+
+        XCTAssertEqual(try database.fetchCourseTags(courseID: 1, siteID: "site-1"), newTags)
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.tagData, FinderTag.tagData(from: newTags))
+    }
+
     func testFetchCourseReturnsStoredCustomization() throws {
         try database.saveCourses([
             MoodleCourse(id: 101, shortName: "CS101", fullName: "Intro to CS", siteID: "site-1"),
