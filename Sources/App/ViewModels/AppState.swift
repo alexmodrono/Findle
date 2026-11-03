@@ -1176,20 +1176,32 @@ final class AppState: ObservableObject {
 
     // MARK: - Course Customization
 
+    /// What happened to a rename request.
+    enum CourseRenameResult: Equatable {
+        /// Saved, or the course already had that name.
+        case saved
+        /// Refused: the item named here already uses the folder name.
+        case conflict(holderName: String)
+        /// Not saved for another reason (no database, course unloaded, write error).
+        case failed
+    }
+
     /// Rename `course` in the app and in Finder. Passing `nil`, an empty
     /// string, or the Moodle name restores the Moodle name. A name that would
-    /// collide with another course's folder is refused, matching Finder.
-    func updateCustomFolderName(for course: MoodleCourse, name: String?) {
+    /// collide with another course's folder, or another top-level item, is
+    /// refused, matching Finder.
+    @discardableResult
+    func updateCustomFolderName(for course: MoodleCourse, name: String?) -> CourseRenameResult {
         guard !isDatabaseTransitioning, let db = database, let site = currentSite,
-              course.siteID == site.id else { return }
+              course.siteID == site.id else { return .failed }
         // Callers may hold a copy from before a Finder rename; compare against
         // the course as it is now, and skip it if it's gone (site switch, logout).
-        guard let course = currentCourse(matching: course) else { return }
+        guard let course = currentCourse(matching: course) else { return .failed }
         let normalized = course.normalizedCustomName(name)
-        guard normalized != course.customFolderName else { return }
+        guard normalized != course.customFolderName else { return .saved }
         if let conflict = folderNameConflict(for: course, proposedName: name ?? "") {
             logger.error("Refused rename of course \(course.id, privacy: .public): folder name already used by course \(conflict.id, privacy: .public)")
-            return
+            return .conflict(holderName: conflict.displayName)
         }
         do {
             // One transaction updates the course and its root folder item, so
@@ -1199,13 +1211,20 @@ final class AppState: ObservableObject {
                 courses[index].customFolderName = normalized
             }
             signalFileProviderChanges()
+            return .saved
         } catch let conflict as CourseFolderNameConflictError {
-            // Another course took the name after our list was loaded (e.g. a
-            // Finder rename whose notification hasn't arrived); catch up.
+            // Something took the name after our list was loaded (e.g. a Finder
+            // rename whose notification hasn't arrived); catch up, then report it.
             logger.error("Refused rename of course \(conflict.courseID, privacy: .public): \(conflict.conflictingItemID ?? "course \(conflict.conflictingCourseID.map(String.init) ?? "?")", privacy: .public) already uses that folder name")
             refreshCourseCustomizationsFromDatabase()
+            let holder = conflict.conflictingCourseID
+                .flatMap { id in courses.first { $0.id == id && $0.siteID == course.siteID }?.displayName }
+                ?? conflict.conflictingItemID.flatMap { try? db.fetchItem(id: $0)?.filename }
+                ?? "Another item"
+            return .conflict(holderName: holder)
         } catch {
             logger.error("Failed to update custom folder name: \(DiagnosticFailure(error).summary, privacy: .public)")
+            return .failed
         }
     }
 

@@ -139,24 +139,42 @@ final class CourseCustomizationController: NSObject, NSTextFieldDelegate, Course
             // A course may have been renamed onto this name in the moment
             // between the last check and the click; say so rather than
             // closing as if the rename worked.
+            let result: AppState.CourseRenameResult
             if let conflict = self.state.folderNameConflict(for: current, proposedName: proposedName ?? "") {
-                Task { @MainActor [weak self] in
-                    self?.presentRenameConflict(for: current, conflict: conflict, in: window)
-                }
-                return
+                result = .conflict(holderName: conflict.displayName)
+            } else {
+                // The database re-checks inside its transaction and can still
+                // refuse, e.g. when a Finder rename hasn't reached us yet.
+                result = self.state.updateCustomFolderName(for: current, name: proposedName)
             }
-            self.state.updateCustomFolderName(for: current, name: proposedName)
-            self.onChange?()
+            switch result {
+            case .saved:
+                self.onChange?()
+            case .conflict, .failed:
+                // Never close as if the rename worked.
+                self.onChange?()
+                Task { @MainActor [weak self] in
+                    self?.presentRenameFailure(for: current, result: result, in: window)
+                }
+            }
         }
     }
 
-    /// Explain that a rename couldn't be saved because `conflict` already uses
-    /// the folder name, and how to recover.
-    private func presentRenameConflict(for course: MoodleCourse, conflict: MoodleCourse, in window: NSWindow) {
+    /// Explain why a rename wasn't saved and how to recover.
+    private func presentRenameFailure(
+        for course: MoodleCourse,
+        result: AppState.CourseRenameResult,
+        in window: NSWindow
+    ) {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "“\(course.displayName)” wasn’t renamed"
-        alert.informativeText = "“\(conflict.displayName)” already uses that folder name. Choose a different name, or rename “\(conflict.displayName)” first."
+        switch result {
+        case .conflict(let holder):
+            alert.informativeText = "“\(holder)” already uses that folder name. Choose a different name, or rename “\(holder)” first."
+        default:
+            alert.informativeText = "Findle couldn’t save the new name. Try again in a moment."
+        }
         alert.addButton(withTitle: "OK")
         alert.beginSheetModal(for: window)
     }
