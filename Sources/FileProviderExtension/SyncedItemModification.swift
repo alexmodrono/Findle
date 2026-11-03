@@ -53,8 +53,7 @@ enum SyncedItemModification {
         let parts = localItem.id.split(separator: "-")
         if parts.first == "course", let courseID = parts.last.flatMap({ Int($0) }), let siteID {
             let tags = tagData.map { FinderTag.parseTags(from: $0) } ?? []
-            try database.saveCourseTags(tags, courseID: courseID, siteID: siteID)
-            try database.updateItemTagData(id: localItem.id, tagData: FinderTag.tagData(from: tags))
+            try database.setCourseTags(tags, courseID: courseID, siteID: siteID)
         } else {
             try database.updateItemTagData(id: localItem.id, tagData: tagData)
         }

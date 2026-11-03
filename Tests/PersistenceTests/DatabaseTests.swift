@@ -547,8 +547,9 @@ final class DatabaseTests: XCTestCase {
         let oldCursor = SyncCursor(courseID: 1, siteID: "site-1", lastSyncDate: Date(timeIntervalSince1970: 100), itemCount: 1)
         let oldOutline = CourseOutlineSnapshot(courseID: 1, capturedAt: oldCursor.lastSyncDate, sections: [CourseOutlineSection]())
         try database.commitCourseSync(items: [staleRoot], deletingItemIDs: [], cursor: oldCursor, outline: oldOutline)
-        // Renamed after the sync built its root, but before it committed.
-        try database.updateCourseCustomFolderName(courseID: 1, siteID: "site-1", customName: "Kernels")
+        // Renamed after the sync built its root, but before it committed. A real
+        // rename moves the root too, so a leaked stale write would be visible.
+        try database.renameCourse(courseID: 1, siteID: "site-1", customName: "Kernels")
 
         // Fail only the reconcile step's write (the item upsert keeps the old
         // name), so this exercises the rollback of everything written before it.
@@ -559,7 +560,7 @@ final class DatabaseTests: XCTestCase {
                                                 sections: [CourseOutlineSection(id: 20, name: "After", sectionNumber: 1)])
 
         XCTAssertThrowsError(try database.commitCourseSync(items: [staleRoot], deletingItemIDs: [], cursor: nextCursor, outline: nextOutline))
-        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.filename, "Operating Systems")
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.filename, "Kernels")
         XCTAssertEqual(try database.fetchSyncCursor(courseID: 1, siteID: "site-1"), oldCursor)
         XCTAssertEqual(try database.fetchCourseOutline(courseID: 1, siteID: "site-1"), oldOutline)
         XCTAssertEqual(try database.currentChangeCounter(), anchor)
@@ -568,6 +569,28 @@ final class DatabaseTests: XCTestCase {
         try database.commitCourseSync(items: [staleRoot], deletingItemIDs: [], cursor: nextCursor, outline: nextOutline)
         XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.filename, "Kernels")
         XCTAssertEqual(try database.fetchSyncCursor(courseID: 1, siteID: "site-1"), nextCursor)
+    }
+
+    func testSetCourseTagsLeavesBothStoresUnchangedWhenRootUpdateFails() throws {
+        let course = MoodleCourse(id: 1, shortName: "OS", fullName: "Operating Systems", siteID: "site-1")
+        try database.saveCourses([course])
+        try database.saveItems([LocalItem(id: course.rootItemID, siteID: "site-1", courseID: 1, remoteID: 1,
+                                          filename: course.effectiveFolderName, isDirectory: true)])
+        let oldTags = [FinderTag(name: "Exams", color: .red)]
+        try database.setCourseTags(oldTags, courseID: 1, siteID: "site-1")
+        let oldRoot = try XCTUnwrap(database.fetchItem(id: course.rootItemID))
+        XCTAssertEqual(oldRoot.tagData, FinderTag.tagData(from: oldTags))
+
+        try database.execute("CREATE TRIGGER reject_root_tags BEFORE UPDATE OF tag_data ON items BEGIN SELECT RAISE(ABORT, 'injected failure'); END")
+        let newTags = [FinderTag(name: "Labs", color: .green)]
+        XCTAssertThrowsError(try database.setCourseTags(newTags, courseID: 1, siteID: "site-1"))
+        XCTAssertEqual(try database.fetchCourseTags(courseID: 1, siteID: "site-1"), oldTags)
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID), oldRoot)
+
+        try database.execute("DROP TRIGGER reject_root_tags")
+        try database.setCourseTags(newTags, courseID: 1, siteID: "site-1")
+        XCTAssertEqual(try database.fetchCourseTags(courseID: 1, siteID: "site-1"), newTags)
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.tagData, FinderTag.tagData(from: newTags))
     }
 
     func testFetchCourseReturnsStoredCustomization() throws {

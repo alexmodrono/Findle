@@ -1685,34 +1685,50 @@ extension Database {
 extension Database {
     public func saveCourseTags(_ tags: [FinderTag], courseID: Int, siteID: String) throws {
         try queue.sync {
-            try executeUnsafe("BEGIN IMMEDIATE TRANSACTION")
-            do {
-                let deleteSQL = "DELETE FROM course_tags WHERE course_id = ? AND site_id = ?"
-                let deleteStmt = try prepareStatement(deleteSQL)
-                defer { sqlite3_finalize(deleteStmt) }
-                sqlite3_bind_int64(deleteStmt, 1, Int64(courseID))
-                sqlite3_bind_text(deleteStmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                guard sqlite3_step(deleteStmt) == SQLITE_DONE else {
-                    throw FindleError.databaseError(detail: "saveCourseTags delete failed: \(String(cString: sqlite3_errmsg(db)))")
-                }
+            try transactionUnsafe {
+                try saveCourseTagsUnsafe(tags, courseID: courseID, siteID: siteID)
+            }
+        }
+    }
 
-                let insertSQL = "INSERT INTO course_tags (course_id, site_id, tag_name, tag_color) VALUES (?, ?, ?, ?)"
-                for tag in tags {
-                    let stmt = try prepareStatement(insertSQL)
-                    defer { sqlite3_finalize(stmt) }
-                    sqlite3_bind_int64(stmt, 1, Int64(courseID))
-                    sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                    sqlite3_bind_text(stmt, 3, (tag.name as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                    sqlite3_bind_int(stmt, 4, Int32(tag.color.rawValue))
-                    guard sqlite3_step(stmt) == SQLITE_DONE else {
-                        throw FindleError.databaseError(detail: "saveCourseTags insert failed: \(String(cString: sqlite3_errmsg(db)))")
-                    }
-                }
+    /// Store a course's tags and write them to its root folder item in one
+    /// transaction, so the app's tag list and the tags Finder shows can't
+    /// disagree after a failure. Returns the root's tag data as written.
+    @discardableResult
+    public func setCourseTags(_ tags: [FinderTag], courseID: Int, siteID: String) throws -> Data? {
+        let tagData = FinderTag.tagData(from: tags)
+        try queue.sync {
+            try transactionUnsafe {
+                try saveCourseTagsUnsafe(tags, courseID: courseID, siteID: siteID)
+                try updateItemTagDataUnsafe(
+                    id: MoodleCourse.rootItemID(siteID: siteID, courseID: courseID),
+                    tagData: tagData
+                )
+            }
+        }
+        return tagData
+    }
 
-                try executeUnsafe("COMMIT")
-            } catch {
-                try? executeUnsafe("ROLLBACK")
-                throw error
+    /// The caller must hold `queue`.
+    private func saveCourseTagsUnsafe(_ tags: [FinderTag], courseID: Int, siteID: String) throws {
+        let deleteStmt = try prepareStatement("DELETE FROM course_tags WHERE course_id = ? AND site_id = ?")
+        defer { sqlite3_finalize(deleteStmt) }
+        sqlite3_bind_int64(deleteStmt, 1, Int64(courseID))
+        sqlite3_bind_text(deleteStmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(deleteStmt) == SQLITE_DONE else {
+            throw FindleError.databaseError(detail: "saveCourseTags delete failed: \(String(cString: sqlite3_errmsg(db)))")
+        }
+
+        let insertSQL = "INSERT INTO course_tags (course_id, site_id, tag_name, tag_color) VALUES (?, ?, ?, ?)"
+        for tag in tags {
+            let stmt = try prepareStatement(insertSQL)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int64(stmt, 1, Int64(courseID))
+            sqlite3_bind_text(stmt, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 3, (tag.name as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_int(stmt, 4, Int32(tag.color.rawValue))
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw FindleError.databaseError(detail: "saveCourseTags insert failed: \(String(cString: sqlite3_errmsg(db)))")
             }
         }
     }
@@ -1956,21 +1972,24 @@ extension Database {
     }
 
     public func updateItemTagData(id: String, tagData: Data?) throws {
-        let sql = "UPDATE items SET tag_data = ?, modification_date = ? WHERE id = ?"
         try queue.sync {
-            let stmt = try prepareStatement(sql)
-            defer { sqlite3_finalize(stmt) }
-            if let td = tagData {
-                sqlite3_bind_blob(stmt, 1, (td as NSData).bytes, Int32(td.count), SQLITE_TRANSIENT)
-            } else {
-                sqlite3_bind_null(stmt, 1)
-            }
-            sqlite3_bind_double(stmt, 2, Date().timeIntervalSince1970)
-            sqlite3_bind_text(stmt, 3, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
-            let status = sqlite3_step(stmt)
-            guard status == SQLITE_DONE else {
-                throw FindleError.databaseError(detail: "Failed to update item tag data")
-            }
+            try updateItemTagDataUnsafe(id: id, tagData: tagData)
+        }
+    }
+
+    /// The caller must hold `queue`.
+    private func updateItemTagDataUnsafe(id: String, tagData: Data?) throws {
+        let stmt = try prepareStatement("UPDATE items SET tag_data = ?, modification_date = ? WHERE id = ?")
+        defer { sqlite3_finalize(stmt) }
+        if let td = tagData {
+            sqlite3_bind_blob(stmt, 1, (td as NSData).bytes, Int32(td.count), SQLITE_TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, 1)
+        }
+        sqlite3_bind_double(stmt, 2, Date().timeIntervalSince1970)
+        sqlite3_bind_text(stmt, 3, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw FindleError.databaseError(detail: "Failed to update item tag data")
         }
     }
 

@@ -1411,12 +1411,10 @@ final class AppState: ObservableObject {
             return false
         }
         do {
-            try db.saveCourseTags(tags, courseID: course.id, siteID: course.siteID)
+            // One transaction updates the tag list and the root item Finder
+            // reads, so a failure leaves both unchanged; publish only after.
+            try db.setCourseTags(tags, courseID: course.id, siteID: course.siteID)
             courseTags[course.id] = tags.isEmpty ? nil : tags
-
-            // Update the course root item's tag data so the File Provider sees it
-            let tagData = FinderTag.tagData(from: tags)
-            try db.updateItemTagData(id: course.rootItemID, tagData: tagData)
             signalFileProviderChanges()
             return true
         } catch {
