@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Findle</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>XPC!</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionFileProviderActions</key>
+		<array>
+			<dict>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.kind == "course" AND $item.userInfo.moodle == YES).@count == 1</string>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).action.course-info</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Course Info</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.assignment == YES).@count == 1</string>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>$(FINDLE_BUNDLE_PREFIX).action.assignment-details</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Assignment Details</string>
+			</dict>
+		</array>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.fileprovider-actionsui</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).FinderSheetController</string>
+	</dict>
+</dict>
+</plist>

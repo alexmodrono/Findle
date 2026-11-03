@@ -27,8 +27,8 @@ final class HTTPServer: @unchecked Sendable {
     private let token: String
     private let limits: Limits
     private let handler: @Sendable (Data) -> Data?
-    private let queue = DispatchQueue(label: "es.amodrono.findle.mcp.http")
-    private let handlerQueue = DispatchQueue(label: "es.amodrono.findle.mcp.http.handlers", attributes: .concurrent)
+    private let queue = DispatchQueue(label: "com.amodrono.findle.mcp.http")
+    private let handlerQueue = DispatchQueue(label: "com.amodrono.findle.mcp.http.handlers", attributes: .concurrent)
     private var listener: NWListener?
     private var connections: [UUID: Connection] = [:]
 

@@ -309,7 +309,32 @@ final class PersonalFileStoreTests: XCTestCase {
         return (url, id)
     }
 
-    func testProviderRecoveryPreservesLateWritesToOriginalInodeAndUnindexedChildren() throws {
+    func testATrashedPersonalFileSurvivesReconciliationUntilTheTrashIsEmptied() throws {
+        let store = makeStore()
+        let site = try store.siteDirectory(siteID: siteID, siteName: siteName)
+        let original = site.appendingPathComponent("notes.txt")
+        try writeFile("my notes", to: original)
+        try PersonalFileStore.setItemID("local-notes", at: original)
+        try database.saveItems([LocalItem(id: "local-notes", siteID: siteID, courseID: 0, remoteID: 0, filename: "notes.txt",
+                                          localPath: original.path, isLocal: true)])
+
+        // What the extension does when Finder moves the file to the Trash.
+        let trash = try store.trashDirectory(siteID: siteID, siteName: siteName)
+        XCTAssertEqual(try store.directory(forParentID: PersonalFileStore.trashParentID, siteID: siteID, siteName: siteName,
+                                           database: database), trash)
+        let trashed = trash.appendingPathComponent("notes.txt")
+        try FileManager.default.moveItem(at: original, to: trashed)
+        try database.saveItems([LocalItem(id: "local-notes", parentID: PersonalFileStore.trashParentID, siteID: siteID, courseID: 0,
+                                          remoteID: 0, filename: "notes.txt", localPath: trashed.path, isLocal: true)])
+
+        _ = try reconcile()
+        let rows = try database.fetchLocalItems(siteID: siteID).filter { $0.id.hasPrefix("local-") }
+        XCTAssertEqual(rows.map(\.id), ["local-notes"], "The trashed row stays, and its file isn't imported a second time")
+        XCTAssertEqual(rows.first?.parentID, PersonalFileStore.trashParentID)
+        XCTAssertEqual(try String(contentsOf: trashed, encoding: .utf8), "my notes")
+    }
+
+        func testProviderRecoveryPreservesLateWritesToOriginalInodeAndUnindexedChildren() throws {
         let provider = tempRoot.appendingPathComponent("Provider", isDirectory: true)
         let legacy = provider.appendingPathComponent(".FindleState/LocalContent", isDirectory: true)
         let original = legacy.appendingPathComponent("notes.txt")

@@ -13,10 +13,22 @@ public struct MoodleAssignment: Sendable, Codable, Equatable, Identifiable {
     public let name: String
     public let dueDate: Date?
     public let cutoffDate: Date?
+    /// The course module, which names the assignment's folder in Finder.
+    public let moduleID: Int?
     /// Submission lifecycle, filled from `mod_assign_get_submission_status`.
     public var submitted: Bool
     public var graded: Bool
     public var grade: String?
+    /// What submitting through Finder needs (FX-06): the site and assignment
+    /// take uploaded files, the user can change the submission now, can submit
+    /// it for grading, and must accept the site's statement to do so.
+    public var takesFiles = false
+    public var canEdit = false
+    public var canSubmit = false
+    public var requiresStatement = false
+
+    /// An open assignment the user can hand files in for.
+    public var acceptsFilesFromFinder: Bool { takesFiles && canEdit }
 
     public init(
         id: Int,
@@ -24,6 +36,7 @@ public struct MoodleAssignment: Sendable, Codable, Equatable, Identifiable {
         name: String,
         dueDate: Date? = nil,
         cutoffDate: Date? = nil,
+        moduleID: Int? = nil,
         submitted: Bool = false,
         graded: Bool = false,
         grade: String? = nil
@@ -33,9 +46,30 @@ public struct MoodleAssignment: Sendable, Codable, Equatable, Identifiable {
         self.name = name
         self.dueDate = dueDate
         self.cutoffDate = cutoffDate
+        self.moduleID = moduleID
         self.submitted = submitted
         self.graded = graded
         self.grade = grade
+    }
+}
+
+/// What Finder shows inside an assignment's folder: its brief and the files
+/// attached to it. `moduleID` is the course module, as in the course contents.
+public struct MoodleAssignmentBrief: Sendable, Equatable {
+    public let moduleID: Int
+    public let name: String
+    /// The brief as Moodle stores it (HTML).
+    public let intro: String?
+    public let dueDate: Date?
+    public let attachments: [MoodleFileContent]
+
+    public init(moduleID: Int, name: String, intro: String? = nil, dueDate: Date? = nil,
+                attachments: [MoodleFileContent] = []) {
+        self.moduleID = moduleID
+        self.name = name
+        self.intro = intro
+        self.dueDate = dueDate
+        self.attachments = attachments
     }
 }
 
@@ -73,6 +107,8 @@ public struct MoodleQuiz: Sendable, Codable, Equatable, Identifiable {
     public let openDate: Date?
     public let closeDate: Date?
     public let timeLimit: Int?
+    /// The course module, which names its summary file in Finder.
+    public let moduleID: Int?
 
     public init(
         id: Int,
@@ -80,7 +116,8 @@ public struct MoodleQuiz: Sendable, Codable, Equatable, Identifiable {
         name: String,
         openDate: Date? = nil,
         closeDate: Date? = nil,
-        timeLimit: Int? = nil
+        timeLimit: Int? = nil,
+        moduleID: Int? = nil
     ) {
         self.id = id
         self.courseID = courseID
@@ -88,6 +125,7 @@ public struct MoodleQuiz: Sendable, Codable, Equatable, Identifiable {
         self.openDate = openDate
         self.closeDate = closeDate
         self.timeLimit = timeLimit
+        self.moduleID = moduleID
     }
 }
 
@@ -117,5 +155,21 @@ public struct MoodleQuizAttempt: Sendable, Codable, Equatable, Identifiable {
         self.sumGrades = sumGrades
         self.startTime = startTime
         self.finishTime = finishTime
+    }
+}
+
+/// Whether the user has completed a course activity, and whether they can
+/// tick it off themselves (manual completion) or Moodle decides.
+public struct ActivityCompletion: Sendable, Codable, Equatable {
+    public let moduleID: Int
+    public let courseID: Int
+    public let isManual: Bool
+    public let isComplete: Bool
+
+    public init(moduleID: Int, courseID: Int, isManual: Bool, isComplete: Bool) {
+        self.moduleID = moduleID
+        self.courseID = courseID
+        self.isManual = isManual
+        self.isComplete = isComplete
     }
 }

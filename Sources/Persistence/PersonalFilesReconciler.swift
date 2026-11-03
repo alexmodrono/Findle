@@ -14,7 +14,7 @@ import UniformTypeIdentifiers
 /// that can be rebuilt from it, and stand-in rows recreate Moodle directories so user
 /// files stay visible when their course is not synced.
 public struct PersonalFilesReconciler {
-    private static let logger = Logger(subsystem: "es.amodrono.findle.persistence", category: "PersonalFiles")
+    private static let logger = Logger(subsystem: "com.amodrono.findle.persistence", category: "PersonalFiles")
     private static let localPrefix = "local-"
 
     private let store: PersonalFileStore

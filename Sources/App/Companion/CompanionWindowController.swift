@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import FileProvider
 import OSLog
 import SharedDomain
 
@@ -20,8 +21,25 @@ final class CompanionWindowController: NSWindowController {
     private let frameAnimator = CompanionFrameAnimator()
     private var pendingModeAnimation = false
     private var preferredMode: FinderPanelPlacement.Mode = UserDefaults.standard.bool(forKey: "finderCompanionCollapsed") ? .compact : .expanded
-    private let logger = Logger(subsystem: "es.amodrono.findle", category: "FinderCompanion")
+    private let logger = Logger(subsystem: "com.amodrono.findle", category: "FinderCompanion")
     private var lastDiagnostic: String?
+    /// The folder last recorded as opened, so each visit is recorded once.
+    private var recordedFolder: URL?
+    /// The File Provider identity of the folder Finder shows, looked up once per folder.
+    private var resolvedFolder: (url: URL, siteID: String, identity: FolderIdentity)?
+    private var resolvingFolder: URL?
+    private var resolvingFolderTask: Task<Void, Never>?
+    /// The same for the single item selected in Finder.
+    private var resolvedSelection: (url: URL, identity: FolderIdentity)?
+    private var resolvingSelection: URL?
+    private var resolvingSelectionTask: Task<Void, Never>?
+
+    enum FolderIdentity: Sendable, Equatable {
+        case root
+        case item(String)
+        /// Not an item of the domain, or the system couldn't say.
+        case unknown
+    }
 
     init(state: AppState, openSettings: @escaping @MainActor () -> Void) {
         self.state = state
@@ -74,6 +92,14 @@ final class CompanionWindowController: NSWindowController {
         refresh = nil
         resolvingRoot?.cancel()
         resolvingRoot = nil
+        resolvingFolderTask?.cancel()
+        resolvingFolderTask = nil
+        resolvingFolder = nil
+        resolvedFolder = nil
+        resolvingSelectionTask?.cancel()
+        resolvingSelectionTask = nil
+        resolvingSelection = nil
+        resolvedSelection = nil
         rootURL = nil
         rootSiteID = nil
         observer.locationRootURL = nil
@@ -144,8 +170,23 @@ final class CompanionWindowController: NSWindowController {
             diagnose("Finder folder is outside the Findle location")
             hide(); return
         }
-        let course = parts.first.flatMap { name in
-            FinderFolderResolver.course(folderName: name, siteID: siteID, in: state.courses)
+        // The folder's File Provider identity names its course even after a
+        // rename; its name stands in only until the system answers.
+        var folderIdentity: FolderIdentity?
+        if let siteID { folderIdentity = self.identity(of: snapshot.folderURL, siteID: siteID) }
+        var location: CompanionLocation?
+        if let siteID, case .item(let itemID)? = folderIdentity {
+            location = state.companionLocation(itemID: itemID, siteID: siteID)
+        }
+        let course: MoodleCourse?
+        if let location {
+            course = location.course
+        } else if folderIdentity == .root {
+            course = nil
+        } else {
+            course = parts.first.flatMap { name in
+                FinderFolderResolver.course(folderName: name, siteID: siteID, in: state.courses)
+            }
         }
         // Unknown subfolders must not inherit context from the previously visited course.
         guard parts.isEmpty || course != nil else {
@@ -169,7 +210,18 @@ final class CompanionWindowController: NSWindowController {
             && FinderPanelPlacement.canAnimateTransition(from: window.frame, to: frame, beside: snapshot.frame)
         content.setMode(layout.mode, canExpand: canExpand, attachedOnRight: frame.minX >= snapshot.frame.maxX,
                         width: frame.width, animated: animate)
-        content.show(course: course)
+        content.show(course: course, folderIDs: location?.folderIDs ?? [])
+        var selected: CompanionSelection?
+        if let siteID { selected = self.selection(in: snapshot, siteID: siteID) }
+        content.showSelection(selected)
+        if let course, recordedFolder != snapshot.folderURL {
+            recordedFolder = snapshot.folderURL
+            if let folderID = location?.folderIDs.first, let siteID {
+                state.recordItemOpened(id: folderID, siteID: siteID)
+            } else {
+                state.recordFolderOpened(course: course, subpath: Array(parts.dropFirst()))
+            }
+        }
         frameAnimator.setFrame(frame, of: window,
                                animated: animate && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         guard !isShowing else { return }
@@ -184,6 +236,61 @@ final class CompanionWindowController: NSWindowController {
         }
     }
 
+    /// The identity of `folderURL`, or nil while the system looks it up.
+    private func identity(of folderURL: URL, siteID: String) -> FolderIdentity? {
+        if let resolvedFolder, resolvedFolder.url == folderURL, resolvedFolder.siteID == siteID {
+            return resolvedFolder.identity
+        }
+        guard resolvingFolder != folderURL else { return nil }
+        resolvingFolderTask?.cancel()
+        resolvingFolder = folderURL
+        let domainID = BundleIdentifiers.fileProviderDomainID(siteID: siteID)
+        resolvingFolderTask = Task { [weak self] in
+            let identity = await Self.lookUpIdentity(of: folderURL, domainID: domainID)
+            guard let self, !Task.isCancelled, self.resolvingFolder == folderURL else { return }
+            self.resolvingFolder = nil
+            self.resolvedFolder = (folderURL, siteID, identity)
+            if identity == .unknown { self.diagnose("Finder folder has no File Provider identity; matching by name") }
+            self.scheduleRefresh()
+        }
+        return nil
+    }
+
+    /// The Findle item selected in Finder, when exactly one is. Nothing or
+    /// several selected falls back to the course view.
+    private func selection(in snapshot: FinderWindowObserver.Snapshot, siteID: String) -> CompanionSelection? {
+        guard snapshot.selectionCount == 1, let url = snapshot.selectedURL else { return nil }
+        if let resolvedSelection, resolvedSelection.url == url {
+            guard case .item(let id) = resolvedSelection.identity else { return nil }
+            return state.companionSelection(itemID: id, url: url)
+        }
+        guard resolvingSelection != url else { return nil }
+        resolvingSelectionTask?.cancel()
+        resolvingSelection = url
+        let domainID = BundleIdentifiers.fileProviderDomainID(siteID: siteID)
+        resolvingSelectionTask = Task { [weak self] in
+            let identity = await Self.lookUpIdentity(of: url, domainID: domainID)
+            guard let self, !Task.isCancelled, self.resolvingSelection == url else { return }
+            self.resolvingSelection = nil
+            self.resolvedSelection = (url, identity)
+            self.scheduleRefresh()
+        }
+        return nil
+    }
+
+    // The system answers on a background queue, so this must not be main-actor isolated.
+    private nonisolated static func lookUpIdentity(of url: URL, domainID: String) async -> FolderIdentity {
+        await withCheckedContinuation { continuation in
+            NSFileProviderManager.getIdentifierForUserVisibleFile(at: url) { item, domain, _ in
+                guard let item, domain?.rawValue == domainID else {
+                    continuation.resume(returning: .unknown)
+                    return
+                }
+                continuation.resume(returning: item == .rootContainer ? .root : .item(item.rawValue))
+            }
+        }
+    }
+
     private func diagnose(_ message: String) {
         guard message != lastDiagnostic else { return }
         lastDiagnostic = message
@@ -191,6 +298,8 @@ final class CompanionWindowController: NSWindowController {
     }
 
     private func hide() {
+        // Coming back to the same folder later is another visit.
+        recordedFolder = nil
         guard let window, isShowing else { return }
         isShowing = false
         visibilityGeneration = UUID()

@@ -188,7 +188,7 @@ Use a new output directory per run. The script isolates DerivedData, products,
 objects, precompiled headers and packages, so machine-specific Xcode output
 settings cannot redirect the build. It never installs an app, registers a File
 Provider domain or uses a real account. These jobs do not replace signed File
-Provider testing, institution SSO qualification or the 48-hour soak.
+Provider testing, institution SSO qualification or the release candidate's use period (RR-04).
 
 ## Swift dependency proposals
 

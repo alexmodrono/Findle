@@ -182,12 +182,12 @@ final class HelperSessionTests: XCTestCase {
         let app = f.directory.appendingPathComponent("Findle Nightly.app")
         let contents = app.appendingPathComponent("Contents")
         try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
-        try PropertyListSerialization.data(fromPropertyList: ["CFBundleIdentifier": "es.amodrono.findle.nightly", "CFBundlePackageType": "APPL"], format: .xml, options: 0).write(to: contents.appendingPathComponent("Info.plist"))
+        try PropertyListSerialization.data(fromPropertyList: ["CFBundleIdentifier": "com.amodrono.findle.nightly", "CFBundlePackageType": "APPL"], format: .xml, options: 0).write(to: contents.appendingPathComponent("Info.plist"))
         let executable = contents.appendingPathComponent("MacOS/FindleMCP")
         let config = try HelperConfiguration(arguments: ["helper"], environment: [:], executableURL: executable, homeDirectory: f.directory)
         XCTAssertEqual(config.channel, .nightly)
         XCTAssertEqual(config.applicationURL?.path, app.path)
-        XCTAssertTrue(config.databasePath.contains("group.es.amodrono.findle.nightly"))
+        XCTAssertTrue(config.databasePath.contains("group.com.amodrono.findle.nightly"))
         XCTAssertThrowsError(try HelperConfiguration(arguments: ["helper", "--channel", "release"], environment: [:], executableURL: executable, homeDirectory: f.directory))
     }
 }

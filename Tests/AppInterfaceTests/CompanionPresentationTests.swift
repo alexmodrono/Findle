@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @MainActor
@@ -20,7 +21,30 @@ struct CompanionPresentationTests {
         #expect(model.selectedID == refreshedLeaf.persistentID)
     }
 
-    @Test func changingCoursesClearsStaleNavigation() {
+    @Test func aNewFileListedTwiceHasTwoRows() {
+        let model = CompanionPresentation()
+        let added = CompanionNode("Added Recently", children: [CompanionNode("Lab.pdf", destination: .item("lab"), isNew: true, scope: "recent")],
+                                  symbol: "sparkles")
+        let week = section("week-1", children: [CompanionNode("Lab.pdf", destination: .item("lab"), isNew: true)])
+        model.replaceNodes([added, week], contextID: "site/course")
+        model.toggleExpansion(week)
+        let ids = model.visibleRows.map(\.id)
+        #expect(ids == ["label:Added Recently", "recent/item:lab", "item:week-1", "item:lab"])
+        #expect(Set(ids).count == ids.count, "Each row needs its own identity in the list")
+        #expect(added.symbolName == "sparkles")
+        model.reveal(["item:lab"])
+        #expect(model.selectedID == "item:lab", "Following Finder selects the file where it lives")
+    }
+
+    @Test func onlyItemRowsCanBeDraggedPreviewedAndKept() {
+        let file = CompanionNode("Notes.pdf", destination: .item("file-1"), isKept: true)
+        #expect(file.itemID == "file-1")
+        #expect(file.isKept)
+        #expect(CompanionNode("Quiz", destination: .web(URL(string: "https://moodle.example.edu")!)).itemID == nil)
+        #expect(CompanionNode("Added Recently").itemID == nil)
+    }
+
+        @Test func changingCoursesClearsStaleNavigation() {
         let model = CompanionPresentation()
         let group = section("week-1", children: [CompanionNode("Notes", destination: .item("notes"))])
         model.replaceNodes([group], contextID: "site/course-1")

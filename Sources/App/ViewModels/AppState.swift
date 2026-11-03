@@ -9,6 +9,7 @@ import AuthenticationServices
 import AppKit
 import CoreSpotlight
 import UserNotifications
+import WidgetKit
 import SharedDomain
 import FindleNetworking
 import FindlePersistence
@@ -34,7 +35,12 @@ final class AppState: ObservableObject {
     @Published var sites: [MoodleSite] = []
     @Published var courses: [MoodleCourse] = []
     @Published var courseTags: [Int: [FinderTag]] = [:]
-    @Published var syncStatus: SyncStatus = .idle
+    @Published var syncStatus: SyncStatus = .idle {
+        didSet {
+            // The control and widget show syncing, up to date or needs attention.
+            if WidgetSnapshot.Status(syncStatus) != WidgetSnapshot.Status(oldValue) { publishWidgetSnapshot() }
+        }
+    }
     @Published var lastSyncDate: Date?
     @Published private(set) var lastSyncReport: SyncRunReport?
     @Published var errorMessage: String?
@@ -100,10 +106,11 @@ final class AppState: ObservableObject {
     }
     private var syncSettingsObserver: NSObjectProtocol?
     private var syncNowObserver: DarwinNotification.Token?
+    private var itemsSeenObserver: DarwinNotification.Token?
     /// Guards against a burst of "Sync Now" requests (the extension posts twice
     /// when it has to cold-launch the app) turning into overlapping syncs.
     private var lastSyncNowRequest: Date?
-    private let logger = Logger(subsystem: "es.amodrono.findle", category: "AppState")
+    private let logger = Logger(subsystem: "com.amodrono.findle", category: "AppState")
     private let userDefaults: UserDefaults
 
     #if DEBUG
@@ -160,6 +167,11 @@ final class AppState: ObservableObject {
     private static let currentSiteIDKey = "currentSiteID"
     private static let lastKnownAppVersionKey = "lastKnownAppVersion"
     private static let personalFilesShortcutAttemptedKey = "personalFilesShortcutAttempted"
+    /// The item metadata revision last reported to the system. When Findle starts
+    /// publishing new item metadata (content policy, Finder action state, stable
+    /// dates), bump `itemMetadataRevision` so existing items are reported again once.
+    private static let republishedItemMetadataRevisionKey = "republishedItemMetadataRevision"
+    private static let itemMetadataRevision = 3
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
@@ -222,7 +234,7 @@ final class AppState: ObservableObject {
     }
 
     private init(previewDatabase: Database) {
-        userDefaults = UserDefaults(suiteName: "es.amodrono.findle.interface-preview")!
+        userDefaults = UserDefaults(suiteName: "com.amodrono.findle.interface-preview")!
         database = previewDatabase
     }
     #endif
@@ -826,7 +838,7 @@ final class AppState: ObservableObject {
     func activateAfterOnboarding() {
         guard !isDatabaseTransitioning else { return }
         guard let site = currentSite, currentToken != nil, let db = database else { return }
-        if syncEngine == nil { syncEngine = SyncEngine(provider: moodleClient, database: db) }
+        if syncEngine == nil { syncEngine = makeSyncEngine(database: db) }
 
         do {
             courses = try db.fetchCourses(siteID: site.id)
@@ -883,7 +895,7 @@ final class AppState: ObservableObject {
             if let shared = await adoptSharedDatabaseWithRetry(siteID: site.id, seedFrom: database) {
                 guard sessionWork.isCurrent(lease), !Task.isCancelled else { return }
                 database = shared
-                syncEngine = SyncEngine(provider: moodleClient, database: shared)
+                syncEngine = makeSyncEngine(database: shared)
             }
         } catch {
             guard sessionWork.isCurrent(lease), !Task.isCancelled else { return }
@@ -1540,6 +1552,7 @@ final class AppState: ObservableObject {
         syncStatus = .syncing(progress: 0)
 
         let enabledCourses = courses.filter(\.isSyncEnabled)
+        let syncStarted = Date()
         syncProgressDetail = enabledCourses.isEmpty
             ? nil
             : SyncProgressDetail(completed: 0, total: enabledCourses.count, courseName: enabledCourses[0].shortName)
@@ -1602,13 +1615,12 @@ final class AppState: ObservableObject {
         if report.succeededCount > 0 || report.incompleteCount > 0 {
             signalFileProviderChanges()
             indexForSpotlight()
+            announceArrivals(since: syncStarted)
+            refreshCurrentWeek()
         }
         guard !report.wasCancelled, !report.requiresReauthentication else { return false }
         await reconcilePersonalFiles()
         guard sessionWork.isCurrent(lease), syncEngine === engine else { return false }
-        if SyncReportPresentation(report: report).shouldNotifyCompletion {
-            notifySyncCompletedIfEnabled(courseCount: report.succeededCount)
-        }
         trackingRefreshTask?.cancel()
         trackingRefreshTask = Task { [weak self] in
             await self?.refreshTracking()
@@ -1688,11 +1700,14 @@ final class AppState: ObservableObject {
         syncStatus = .syncing(progress: 0)
         courseSyncStates[course.id] = .syncing
 
+        let syncStarted = Date()
         let report = await engine.syncAllCourses(site: site, token: token, courses: [course])
         guard sessionWork.owns(lease), currentSite?.id == site.id, syncEngine === engine, !isDatabaseTransitioning else { return false }
         applySyncReport(report)
         if report.succeededCount > 0 || report.incompleteCount > 0 {
             signalFileProviderChanges()
+            announceArrivals(since: syncStarted)
+            refreshCurrentWeek()
             // Moodle files can clash with personal files; reconciliation preserves both.
             await reconcilePersonalFiles()
         }
@@ -1727,23 +1742,58 @@ final class AppState: ObservableObject {
         // Assignments (+ submission status). Persist only if the list fetch worked.
         if let base = try? await client.fetchAssignments(site: site, token: token, courseIDs: courseIDs) {
             guard sessionWork.isCurrent(lease), database === db else { return }
+            // Submitting from Finder needs the site to allow uploads (FX-06).
+            // A failed check keeps what was stored rather than turning submission off.
+            let siteTakesFiles = try? await client.siteAllowsSubmissions(site: site, token: token)
             let enriched = await Self.boundedMap(base) { assignment in
                 var a = assignment
+                if let siteTakesFiles {
+                    a.takesFiles = a.takesFiles && siteTakesFiles
+                } else {
+                    a.takesFiles = storedAssignments[assignment.id]?.takesFiles ?? false
+                }
                 if let status = try? await client.fetchSubmissionStatus(site: site, token: token, assignmentID: assignment.id) {
                     a.submitted = status.submitted
                     a.graded = status.graded
                     a.grade = status.grade
+                    a.canEdit = status.canEdit
+                    a.canSubmit = status.canSubmit
                 } else if let stored = storedAssignments[assignment.id] {
                     a.submitted = stored.submitted
                     a.graded = stored.graded
                     a.grade = stored.grade
+                    a.canEdit = stored.canEdit
+                    a.canSubmit = stored.canSubmit
                 }
                 return a
             }
             guard sessionWork.isCurrent(lease), database === db else { return }
             try? db.saveAssignments(enriched, siteID: site.id)
+            post(NotificationPlanner.gradesPosted(before: Array(storedAssignments.values), after: enriched,
+                                                  courses: courses, siteID: site.id))
+            announceDueSoon(enriched, site: site)
+            // Saving them works out which assignments are due soon.
+            signalFileProviderChanges(for: site)
         }
         guard sessionWork.isCurrent(lease), database === db else { return }
+
+        // Teachers, for Course Info in Finder. A failed fetch keeps what was stored.
+        if let teachers = try? await client.fetchCourseTeachers(site: site, token: token, courseIDs: courseIDs) {
+            guard sessionWork.isCurrent(lease), database === db else { return }
+            try? db.saveCourseTeachers(teachers, siteID: site.id)
+        }
+
+        // Activity completion, per course; a course whose fetch failed keeps what was stored.
+        let completions = await Self.boundedMap(courseIDs) { courseID -> (Int, [ActivityCompletion]?) in
+            (courseID, try? await client.fetchActivityCompletion(site: site, token: token, courseID: courseID, userID: userID))
+        }
+        guard sessionWork.isCurrent(lease), database === db else { return }
+        var completionChanged = false
+        for case let (courseID, statuses?) in completions {
+            try? db.saveActivityCompletion(statuses, courseID: courseID, siteID: site.id)
+            completionChanged = true
+        }
+        if completionChanged { signalFileProviderChanges(for: site) }
 
         // Grades, per course. Skip the save entirely if every course fetch failed.
         // Courses whose fetch failed keep their previously stored grade items.
@@ -1777,7 +1827,14 @@ final class AppState: ObservableObject {
             }
         }
 
+        // Summaries in Finder say what was just fetched (FX-04).
+        if (try? db.refreshCourseworkSummaries(siteID: site.id)) == true { signalFileProviderChanges(for: site) }
         logger.info("Tracking refresh complete")
+        publishWidgetSnapshot()
+        // Assignments and quizzes are searchable with their due dates.
+        indexForSpotlight()
+        // The companion shows deadlines and their state from what was just stored.
+        objectWillChange.send()
     }
 
     /// Run `transform` over `items` with a bounded number of concurrent tasks.
@@ -1945,8 +2002,29 @@ final class AppState: ObservableObject {
 
     // MARK: - Notifications
 
-    private func notifySyncCompletedIfEnabled(courseCount: Int) {
-        guard userDefaults.bool(forKey: "notifyOnSyncComplete") else { return }
+    /// Files the sync that started at `date` brought in, one notification per course.
+    private func announceArrivals(since date: Date) {
+        guard let database, let site = currentSite else { return }
+        let arrived = (try? database.fetchItemsArrived(since: date, siteID: site.id)) ?? []
+        post(NotificationPlanner.newFiles(arrived: arrived, courses: courses))
+    }
+
+    /// Unsubmitted assignments due within a day, each announced once.
+    private func announceDueSoon(_ assignments: [MoodleAssignment], site: MoodleSite) {
+        let key = "announcedDueAssignments"
+        let announced = Set(userDefaults.stringArray(forKey: key) ?? [])
+        let plan = NotificationPlanner.dueSoon(assignments: assignments, courses: courses, siteID: site.id,
+                                               now: Date(), announced: announced)
+        // Only what is still due soon is remembered, so the list stays short.
+        userDefaults.set(Array(plan.keys), forKey: key)
+        post(plan.notices)
+    }
+
+    /// Posts the notices whose kind is turned on in General settings, asking
+    /// for permission the first time there is something to say.
+    private func post(_ notices: [NotificationPlanner.Notice]) {
+        let wanted = notices.filter { userDefaults.object(forKey: $0.kind.defaultsKey) as? Bool ?? true }
+        guard !wanted.isEmpty else { return }
         let lease = sessionWork.lease
 
         Task {
@@ -1960,21 +2038,19 @@ final class AppState: ObservableObject {
             }
             guard authorized, sessionWork.isCurrent(lease) else { return }
 
-            let content = UNMutableNotificationContent()
-            content.title = "Sync complete"
-            content.body = courseCount == 1
-                ? "1 course is up to date."
-                : "\(courseCount) courses are up to date."
-            content.sound = .default
-
-            let request = UNNotificationRequest(
-                identifier: UUID().uuidString,
-                content: content,
-                trigger: nil
-            )
-            try? await center.add(request)
+            for notice in wanted {
+                let content = UNMutableNotificationContent()
+                content.title = notice.title
+                content.body = notice.body
+                content.sound = .default
+                content.threadIdentifier = notice.threadID
+                if let itemID = notice.itemID { content.userInfo = [Self.notificationItemKey: itemID] }
+                try? await center.add(UNNotificationRequest(identifier: notice.id, content: content, trigger: nil))
+            }
         }
     }
+
+    nonisolated static let notificationItemKey = "itemID"
 
     private func signalFileProviderChanges() {
         guard let site = currentSite else { return }
@@ -1982,6 +2058,7 @@ final class AppState: ObservableObject {
     }
 
     private func signalFileProviderChanges(for site: MoodleSite) {
+        republishItemsIfNeeded()
         let domainID = BundleIdentifiers.fileProviderDomainID(siteID: site.id)
         let displayName = site.displayName
         let logger = self.logger
@@ -1992,9 +2069,400 @@ final class AppState: ObservableObject {
         }
     }
 
+    private func republishItemsIfNeeded() {
+        guard userDefaults.integer(forKey: Self.republishedItemMetadataRevisionKey) < Self.itemMetadataRevision,
+              let database else { return }
+        do {
+            let count = try database.republishAllItems()
+            userDefaults.set(Self.itemMetadataRevision, forKey: Self.republishedItemMetadataRevisionKey)
+            logger.info("Republished \(count, privacy: .public) items for new item metadata")
+        } catch {
+            logger.warning("Could not republish items: \(DiagnosticFailure(error).summary, privacy: .public)")
+        }
+    }
+
+    /// Record that the user is looking at a folder of `course` in Finder, given its
+    /// folder names below the course folder. Its contents stop counting as new.
+    /// A name that matches several folders is skipped rather than guessed.
+    func recordFolderOpened(course: MoodleCourse, subpath: [String]) {
+        guard let database else { return }
+        let logger = self.logger
+        let site = currentSite?.id == course.siteID ? currentSite : nil
+        Task.detached(priority: .utility) { [weak self] in
+            var id = "course-\(course.siteID)-\(course.id)"
+            do {
+                for name in subpath {
+                    let matches = try database.fetchItems(parentID: id, siteID: course.siteID)
+                        .filter { $0.isDirectory && $0.filename == name }
+                    guard matches.count == 1 else { return }
+                    id = matches[0].id
+                }
+                // Its contents lose their new badges in Finder too.
+                if try database.markItemOpened(id: id, at: Date()), let site {
+                    await self?.signalFileProviderChanges(for: site)
+                    await self?.objectWillChange.send()
+                }
+            } catch {
+                logger.warning("Could not record the opened folder: \(DiagnosticFailure(error).summary, privacy: .public)")
+            }
+        }
+    }
+
+    /// Record that the user is looking at the folder with File Provider identity `id`.
+    func recordItemOpened(id: String, siteID: String) {
+        guard let database, let site = currentSite, site.id == siteID else { return }
+        let logger = self.logger
+        Task.detached(priority: .utility) { [weak self] in
+            do {
+                if try database.markItemOpened(id: id, at: Date()) {
+                    await self?.signalFileProviderChanges(for: site)
+                    await self?.objectWillChange.send()
+                }
+            } catch {
+                logger.warning("Could not record the opened folder: \(DiagnosticFailure(error).summary, privacy: .public)")
+            }
+        }
+    }
+
+    /// The item selected in Finder, with its Moodle context, for the companion.
+    func companionSelection(itemID: String, url: URL) -> CompanionSelection? {
+        guard let database, let site = currentSite, let item = try? database.fetchItem(id: itemID), item.siteID == site.id
+        else { return nil }
+        var ancestors: [LocalItem] = []
+        var next = item.parentID
+        while let id = next, ancestors.count < 32, let parent = try? database.fetchItem(id: id), !parent.id.hasPrefix("course-") {
+            ancestors.insert(parent, at: 0)
+            next = parent.parentID
+        }
+        let status = try? url.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey]).ubiquitousItemDownloadingStatus
+        return CompanionSelection.make(item: item, ancestors: ancestors, downloaded: status.map { $0 == .current },
+                                       baseURL: site.baseURL)
+    }
+
+    /// Keep Downloaded from the companion, as from Finder's menu.
+    func keepDownloaded(itemID: String) {
+        guard let database, let site = currentSite else { return }
+        do {
+            try DownloadRetention.keep([itemID], database: database)
+            signalFileProviderChanges(for: site)
+            objectWillChange.send()
+        } catch {
+            errorMessage = "Could not keep this downloaded: \(error.localizedDescription)"
+        }
+    }
+
+    /// Remove Download from the companion, as from Finder's menu.
+    func removeDownload(itemID: String) {
+        guard let database, let site = currentSite else { return }
+        let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: site.id)),
+                                          displayName: site.displayName)
+        guard let manager = NSFileProviderManager(for: domain) else { return }
+        nonisolated(unsafe) let unsafeManager = manager
+        let logger = self.logger
+        Task.detached { [weak self] in
+            do {
+                try await DownloadRetention.remove(
+                    [itemID], database: database,
+                    signal: { try? await unsafeManager.signalEnumerator(for: .workingSet) },
+                    evict: { try await unsafeManager.evictItem(identifier: NSFileProviderItemIdentifier($0)) })
+            } catch {
+                logger.warning("Could not remove a download: \(DiagnosticFailure(error).summary, privacy: .public)")
+            }
+            await self?.objectWillChange.send()
+        }
+    }
+
+    /// Writes what the desktop widget and the Control Center control show, and
+    /// asks them to reload. Without the App Group container there is nowhere to
+    /// write, and they show their signed-out state.
+    func publishWidgetSnapshot() {
+        let snapshot: WidgetSnapshot
+        if let database, let site = currentSite, currentScreen == .workspace, !sessionExpired {
+            let synced = courses.filter { $0.siteID == site.id && $0.isSyncEnabled }
+            let names = Dictionary(synced.map { ($0.id, $0.fullName) }, uniquingKeysWith: { first, _ in first })
+            let deadlines = dueThisWeek().prefix(6).map { entry in
+                WidgetSnapshot.Deadline(id: "\(entry.courseName)-\(entry.name)-\(entry.due.timeIntervalSince1970)",
+                                        name: entry.name, courseName: entry.courseName, due: entry.due,
+                                        status: entry.status, needsAction: entry.needsAction, itemID: entry.itemID)
+            }
+            let recent = synced.flatMap { course in
+                ((try? database.fetchNewItems(courseID: course.id, siteID: site.id)) ?? []).filter { !$0.isDirectory }
+            }.prefix(6).map { WidgetSnapshot.RecentFile(itemID: $0.id, name: $0.filename, courseName: names[$0.courseID] ?? "") }
+            snapshot = WidgetSnapshot(status: WidgetSnapshot.Status(syncStatus), lastSync: lastSyncDate,
+                                      deadlines: Array(deadlines), recentFiles: Array(recent),
+                                      courses: synced.sorted { $0.fullName.localizedStandardCompare($1.fullName) == .orderedAscending }
+                                          .map { WidgetSnapshot.CourseLink(id: $0.id, name: $0.fullName) })
+        } else {
+            snapshot = .signedOut
+        }
+        do {
+            try snapshot.write()
+        } catch {
+            logger.warning("Could not write the widget snapshot: \(DiagnosticFailure(error).summary, privacy: .public)")
+        }
+        WidgetCenter.shared.reloadAllTimelines()
+        if #available(macOS 26.0, *) {
+            ControlCenter.shared.reloadControls(ofKind: WidgetSnapshot.controlKind)
+        }
+    }
+
+    /// Assignments and quizzes due in the next seven days across synced courses.
+    func dueThisWeek(now: Date = Date()) -> [DueThisWeekEntry] {
+        guard let database, let site = currentSite else { return [] }
+        return DueThisWeekEntry.entries(
+            courses: courses.filter { $0.siteID == site.id },
+            assignments: (try? database.fetchAssignments(siteID: site.id)) ?? [],
+            quizzes: (try? database.fetchQuizzes(siteID: site.id)) ?? [],
+            attempts: (try? database.fetchQuizAttempts(siteID: site.id)) ?? [], now: now)
+    }
+
+    private func makeSyncEngine(database: Database) -> SyncEngine {
+        SyncEngine(provider: moodleClient, database: database) { [weak self] items in
+            await self?.keepPreviousVersions(items, database: database)
+        }
+    }
+
+    /// Where the previous versions of replaced files are kept (FI-15).
+    private nonisolated static var previousVersionsDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Findle/Previous Versions", isDirectory: true)
+    }
+
+    /// Copies files the user downloaded before Moodle's new version replaces
+    /// them. Only files that are fully on this Mac are copied, so reading them
+    /// never downloads anything.
+    func keepPreviousVersions(_ items: [LocalItem], database: Database) async {
+        guard let site = currentSite else { return }
+        let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: site.id)),
+                                          displayName: site.displayName)
+        guard let manager = NSFileProviderManager(for: domain) else { return }
+        let directory = Self.previousVersionsDirectory.appendingPathComponent(site.id, isDirectory: true)
+        let logger = self.logger
+        let siteID = site.id
+        for item in items where item.siteID == siteID {
+            guard !Task.isCancelled else { return }
+            guard let url = await Self.userVisibleFileProviderURL(using: manager, for: NSFileProviderItemIdentifier(item.id)).url else { continue }
+            guard !Task.isCancelled else { return }
+            // A coordinated read of a large file must not hold up the main actor.
+            await Task.detached(priority: .utility) {
+                Self.keepPreviousVersion(of: item, at: url, in: directory, siteID: siteID, database: database, logger: logger)
+            }.value
+        }
+    }
+
+    private nonisolated static func keepPreviousVersion(of item: LocalItem, at url: URL, in directory: URL, siteID: String,
+                                                        database: Database, logger: Logger) {
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        let status = try? url.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey]).ubiquitousItemDownloadingStatus
+        guard status == .current else { return }
+        let name = (item.filename as NSString).deletingPathExtension + " (previous)"
+            + ((item.filename as NSString).pathExtension.isEmpty ? "" : "." + (item.filename as NSString).pathExtension)
+        let destination = directory.appendingPathComponent(UUID().uuidString, isDirectory: true).appendingPathComponent(name)
+        var copyError: Error?
+        var coordinationError: NSError?
+        NSFileCoordinator().coordinate(readingItemAt: url, options: .withoutChanges, error: &coordinationError) { readable in
+            do {
+                try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try FileManager.default.copyItem(at: readable, to: destination)
+            } catch { copyError = error }
+        }
+        if let failure = copyError ?? coordinationError {
+            try? FileManager.default.removeItem(at: destination.deletingLastPathComponent())
+            logger.warning("Could not keep the previous version of a file: \(DiagnosticFailure(failure).summary, privacy: .public)")
+            return
+        }
+        let size = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? item.fileSize
+        do {
+            if let older = try database.savePreviousVersion(itemID: item.id, siteID: siteID, courseID: item.courseID,
+                                                             path: destination.path, size: size) {
+                try? FileManager.default.removeItem(at: URL(fileURLWithPath: older).deletingLastPathComponent())
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: destination.deletingLastPathComponent())
+            logger.warning("Could not record a previous version: \(DiagnosticFailure(error).summary, privacy: .public)")
+        }
+    }
+
+    /// Show Previous Version: opens the kept copy in its default app.
+    func openPreviousVersion(itemID: String) {
+        guard let path = try? database?.previousVersionPath(itemID: itemID) else {
+            errorMessage = "The previous version of this file isn't available any more."
+            return
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+    }
+
+    /// Discard Previous Version: removes the kept copy and the Updated badge.
+    /// The name of the file whose previous version is kept, for confirming a discard.
+    func previousVersionFilename(itemID: String) -> String? {
+        guard let database, let site = currentSite, (try? database.previousVersionPath(itemID: itemID)) != nil,
+              let item = try? database.fetchItem(id: itemID), item.siteID == site.id else { return nil }
+        return item.filename
+    }
+
+    func discardPreviousVersion(itemID: String) {
+        guard let database, let site = currentSite else { return }
+        do {
+            if let path = try database.discardPreviousVersion(itemID: itemID, siteID: site.id) {
+                try? FileManager.default.removeItem(at: URL(fileURLWithPath: path).deletingLastPathComponent())
+            }
+            signalFileProviderChanges(for: site)
+        } catch {
+            errorMessage = "Could not discard the previous version: \(error.localizedDescription)"
+        }
+    }
+
+    /// Open assignments that take files, for the Submit to Moodle window (FX-07).
+    func submittableAssignments() -> [SubmittableAssignment] {
+        guard let database, let site = currentSite else { return [] }
+        let folders = Set(((try? database.fetchAllItems(siteID: site.id)) ?? []).filter { SubmissionUploader.isSubmitFolder($0.id) }.map(\.id))
+        return SubmittableAssignment.list(assignments: (try? database.fetchAssignments(siteID: site.id)) ?? [],
+                                          courses: courses, siteID: site.id, existingItemIDs: folders)
+    }
+
+    enum SharedSubmissionError: LocalizedError {
+        case notReady
+        var errorDescription: String? { "Findle isn't ready to submit. Open Findle, sync your courses and try again." }
+    }
+
+    /// Puts shared files into the assignment's Submit folder as personal files,
+    /// saves the folder as the draft, and submits only when asked to.
+    func submitShared(files: [URL], to assignment: SubmittableAssignment, forGrading: Bool, acceptStatement: Bool) async throws {
+        guard let database, let site = currentSite, let token = currentToken else { throw SharedSubmissionError.notReady }
+        let directory = try personalFileStore.directory(forParentID: assignment.submitFolderID, siteID: site.id,
+                                                        siteName: site.displayName, database: database)
+        // Comparing and copying large files must not hold up the main actor.
+        let store = personalFileStore
+        let (inFolder, created) = try await Task.detached(priority: .userInitiated) {
+            try Self.stageSharedFiles(files, in: directory, store: store)
+        }.value
+        do {
+            // The reconciler turns the copies into personal files in the Submit folder.
+            await reconcilePersonalFiles()
+            await personalFilesReconcileTask?.value
+            let tracked = Set(try database.fetchItems(parentID: assignment.submitFolderID, siteID: site.id)
+                .compactMap { $0.localPath.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path } })
+            guard inFolder.allSatisfy({ tracked.contains($0.resolvingSymlinksInPath().path) }) else {
+                throw SharedSubmissionError.notReady
+            }
+            try await SubmissionUploader.saveDraft(folderID: assignment.submitFolderID, database: database, client: moodleClient, token: token)
+        } catch {
+            // Nothing reached Moodle: take back only the copies this attempt made.
+            for url in created { try? FileManager.default.removeItem(at: url) }
+            if !created.isEmpty { await reconcilePersonalFiles() }
+            throw error
+        }
+        // The draft matches the folder now; a failed submission leaves both as they
+        // are. Either way the coursework refresh afterwards shows Moodle's state.
+        defer {
+            signalFileProviderChanges(for: site)
+            trackingRefreshTask?.cancel()
+            trackingRefreshTask = Task { [weak self] in await self?.refreshTracking() }
+        }
+        if forGrading {
+            try await moodleClient.submitForGrading(site: site, token: token, assignmentID: assignment.id, acceptStatement: acceptStatement)
+        }
+    }
+
+    /// Copies shared files into the Submit folder. A file already there with the
+    /// same contents is reused, so sharing again after a failure never uploads it
+    /// twice. If a copy fails, the copies made so far are removed.
+    private nonisolated static func stageSharedFiles(_ files: [URL], in directory: URL,
+                                                     store: PersonalFileStore) throws -> (inFolder: [URL], created: [URL]) {
+        var inFolder: [URL] = []
+        var created: [URL] = []
+        do {
+            for file in files {
+                let access = file.startAccessingSecurityScopedResource()
+                defer { if access { file.stopAccessingSecurityScopedResource() } }
+                let existing = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+                if let same = existing.first(where: { FileManager.default.contentsEqual(atPath: $0.path, andPath: file.path) }) {
+                    inFolder.append(same)
+                    continue
+                }
+                let destination = store.uniqueURL(for: file.lastPathComponent, in: directory)
+                // copyItem can fail after it creates the destination, so track it first.
+                created.append(destination)
+                try FileManager.default.copyItem(at: file, to: destination)
+                inFolder.append(destination)
+            }
+        } catch {
+            for url in created { try? FileManager.default.removeItem(at: url) }
+            throw error
+        }
+        return (inFolder, created)
+    }
+
+    /// The course's assignments and quizzes not yet due, for the companion.
+    func companionDeadlines(for course: MoodleCourse) -> [CompanionDeadline] {
+        guard let database, currentSite?.id == course.siteID else { return [] }
+        return CompanionDeadline.upcoming(
+            for: course,
+            assignments: (try? database.fetchAssignments(siteID: course.siteID)) ?? [],
+            quizzes: (try? database.fetchQuizzes(siteID: course.siteID)) ?? [],
+            attempts: (try? database.fetchQuizAttempts(siteID: course.siteID)) ?? [])
+    }
+
+    /// The course and folders of the item Finder shows, for the companion.
+    func companionLocation(itemID: String, siteID: String) -> CompanionLocation? {
+        guard let database, currentSite?.id == siteID else { return nil }
+        return CompanionLocation.resolve(itemID: itemID, siteID: siteID, courses: courses) { id in
+            try? database.fetchItem(id: id)
+        }
+    }
+
+    /// Keeps the current week of each weekly course downloaded and lets the
+    /// previous week go, unless turned off in Settings (FI-16). Runs after
+    /// syncs and on the schedule, since the week changes with the date.
+    func refreshCurrentWeek() {
+        guard let database, let site = currentSite, !isDatabaseTransitioning else { return }
+        let enabled = userDefaults.object(forKey: CurrentWeek.defaultsKey) as? Bool ?? true
+        let courses = self.courses.filter { $0.siteID == site.id }
+        let logger = self.logger
+        Task.detached(priority: .utility) { [weak self] in
+            do {
+                var wanted = Set<String>()
+                if enabled {
+                    let now = Date()
+                    for course in courses where course.weekSectionNumber(on: now) != nil {
+                        wanted.formUnion(CurrentWeek.itemIDs(
+                            course: course, outline: try database.fetchCourseOutline(courseID: course.id, siteID: site.id),
+                            items: try database.fetchItems(courseID: course.id, siteID: site.id), now: now))
+                    }
+                }
+                guard try database.setAutoKept(wanted, siteID: site.id) else { return }
+                await self?.signalFileProviderChanges(for: site)
+            } catch {
+                logger.warning("Could not update the current week: \(DiagnosticFailure(error).summary, privacy: .public)")
+            }
+        }
+    }
+
+    /// Due-soon badges depend on the time, not only on syncs, so they are worked
+    /// out again on the sync schedule and when the app becomes active.
+    func refreshBadges() {
+        guard let database, let site = currentSite, !isDatabaseTransitioning else { return }
+        refreshCurrentWeek()
+        // An assignment becomes due soon with time, not with a sync.
+        if let assignments = try? database.fetchAssignments(siteID: site.id) {
+            announceDueSoon(assignments, site: site)
+        }
+        let logger = self.logger
+        Task.detached(priority: .utility) { [weak self] in
+            do {
+                guard try database.refreshBadges(siteID: site.id) else { return }
+                await self?.signalFileProviderChanges(for: site)
+            } catch {
+                logger.warning("Could not refresh Finder badges: \(DiagnosticFailure(error).summary, privacy: .public)")
+            }
+        }
+    }
+
     /// Called when the app becomes active (e.g. when the user clicks "Sign In" in Finder).
     /// If already authenticated, re-signals auth resolution to the File Provider.
     func resolveFileProviderAuthIfNeeded() {
+        refreshBadges()
         guard currentScreen == .workspace,
               let site = currentSite,
               currentToken != nil else { return }
@@ -2035,6 +2503,7 @@ final class AppState: ObservableObject {
                 }
             } else {
                 logger.info("Resolved File Provider authentication state for \(site.displayName, privacy: .private)")
+                DarwinNotification.post(BundleIdentifiers.sessionRestoredNotification)
                 break
             }
         }
@@ -2196,7 +2665,7 @@ final class AppState: ObservableObject {
                 lastUsableDatabase = handle
                 self.database = handle
                 self.diagnosticDatabasePaths.insert(handle.filePath)
-                self.syncEngine = SyncEngine(provider: self.moodleClient, database: handle)
+                self.syncEngine = self.makeSyncEngine(database: handle)
                 // The original journal may disappear with its provider domain.
                 // Carry the attempt's start event to every replacement handle.
                 if let journal = DiagnosticJournal(databasePath: handle.filePath) {
@@ -2300,7 +2769,7 @@ final class AppState: ObservableObject {
         currentToken = token
         self.accounts = accounts
         sites = [site]
-        syncEngine = SyncEngine(provider: moodleClient, database: activeDatabase)
+        syncEngine = makeSyncEngine(database: activeDatabase)
         currentScreen = .workspace
 
         do {
@@ -2332,7 +2801,7 @@ final class AppState: ObservableObject {
                let sharedDatabase = await self.adoptSharedDatabaseWithRetry(siteID: site.id, seedFrom: sourceDatabase) {
                 guard self.sessionWork.isCurrent(lease) else { return }
                 self.database = sharedDatabase
-                self.syncEngine = SyncEngine(provider: self.moodleClient, database: sharedDatabase)
+                self.syncEngine = self.makeSyncEngine(database: sharedDatabase)
             }
             guard self.sessionWork.isCurrent(lease), self.incompatibleDatabaseError == nil else { return }
 
@@ -2417,6 +2886,10 @@ final class AppState: ObservableObject {
     /// Finder. The extension can't sync by itself, so it posts a Darwin
     /// notification and we do the work here.
     private func observeSyncNowRequests() {
+        // Opening items in Finder changes what the companion marks as new.
+        itemsSeenObserver = DarwinNotification.addObserver(for: BundleIdentifiers.itemsSeenNotification) { [weak self] in
+            Task { @MainActor in self?.objectWillChange.send() }
+        }
         syncNowObserver = DarwinNotification.addObserver(
             for: BundleIdentifiers.syncNowRequestNotification
         ) { [weak self] in
@@ -2518,6 +2991,7 @@ final class AppState: ObservableObject {
                 }
 
                 guard let self, self.sessionWork.isCurrent(lease) else { return }
+                self.refreshBadges()
                 await self.syncAll()
             }
         }
@@ -2562,21 +3036,36 @@ final class AppState: ObservableObject {
     func companionNodes(for course: MoodleCourse) -> [CompanionNode] {
         guard let database, let site = currentSite, site.id == course.siteID,
               let items = try? database.fetchItems(courseID: course.id, siteID: site.id) else { return [] }
+        // What arrived since the user last looked comes first, and is marked
+        // where it sits too, until the user opens it or its folder (FN-08).
+        let recent = ((try? database.fetchNewItems(courseID: course.id, siteID: site.id)) ?? []).prefix(50).map {
+            CompanionNode($0.filename, destination: .item($0.id), isNew: true, scope: "recent")
+        }
+        let added = recent.isEmpty ? [] : [CompanionNode("Added Recently", children: Array(recent), symbol: "sparkles")]
+        return added + courseNodes(for: course, site: site, items: items, database: database)
+    }
+
+    private func courseNodes(for course: MoodleCourse, site: MoodleSite, items: [LocalItem], database: Database) -> [CompanionNode] {
+        let newIDs = Set(items.filter { $0.badges.contains(.new) }.map(\.id))
+        let keptIDs = Set(items.filter(\.isPinned).map(\.id))
         if let outline = try? database.fetchCourseOutline(courseID: course.id, siteID: site.id) {
             return outline.sections.filter(\.visible).sorted { $0.sectionNumber < $1.sectionNumber }.map { section in
                 let sectionID = "section-\(site.id)-\(course.id)-\(section.id)"
                 let modules = section.modules.filter(\.visible).map { module in
                     let matches = items.filter { $0.remoteID == module.id && !$0.isLocal }
                     let files = matches.filter { !$0.isDirectory }.sorted { $0.filename.localizedStandardCompare($1.filename) == .orderedAscending }
-                    let children = files.map { CompanionNode($0.filename, destination: .item($0.id)) }
+                    let children = files.map { CompanionNode($0.filename, destination: .item($0.id), isNew: newIDs.contains($0.id),
+                                                             isKept: keptIDs.contains($0.id)) }
                     if children.count == 1, module.type == "resource" { return children[0] }
                     var components = URLComponents(url: site.baseURL.appendingPathComponent("mod/\(module.type)/view.php"), resolvingAgainstBaseURL: false)
                     components?.queryItems = [URLQueryItem(name: "id", value: String(module.id))]
                     let destination: CompanionNode.Destination = matches.first(where: \.isDirectory)
                         .map { .item($0.id) } ?? components?.url.map { .web($0) } ?? .none
-                    return CompanionNode(module.name, destination: destination, children: children)
+                    return CompanionNode(module.name, destination: destination, children: children,
+                                         isNew: matches.contains { newIDs.contains($0.id) })
                 }
-                return CompanionNode(section.name, destination: .item(sectionID), children: modules)
+                return CompanionNode(section.name, destination: .item(sectionID), children: modules,
+                                     isNew: newIDs.contains(sectionID))
             }
         }
         let root = "course-\(course.siteID)-\(course.id)"
@@ -2585,10 +3074,27 @@ final class AppState: ObservableObject {
             guard !visited.contains(id) else { return [] }
             let visited = visited.union([id])
             return (byParent[id] ?? []).sorted { $0.filename.localizedStandardCompare($1.filename) == .orderedAscending }.map {
-                CompanionNode($0.filename, destination: .item($0.id), children: $0.isDirectory ? nodes(under: $0.id, visited: visited) : [])
+                CompanionNode($0.filename, destination: .item($0.id), children: $0.isDirectory ? nodes(under: $0.id, visited: visited) : [],
+                              isNew: newIDs.contains($0.id), isKept: keptIDs.contains($0.id))
             }
         }
         return nodes(under: root, visited: [])
+    }
+
+    /// Where an item is in Finder, for dragging and previewing it from the companion.
+    func companionItemURL(_ id: String) async -> URL? {
+        guard let site = currentSite, let item = try? database?.fetchItem(id: id), item.siteID == site.id else { return nil }
+        let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: site.id)), displayName: site.displayName)
+        guard let manager = NSFileProviderManager(for: domain) else { return nil }
+        return await Self.userVisibleFileProviderURL(using: manager, for: NSFileProviderItemIdentifier(id)).url
+    }
+
+    /// The Moodle page of an item, for Open in Moodle and Copy Moodle Link.
+    func moodleURL(forItem id: String) -> URL? {
+        guard let site = currentSite, let item = try? database?.fetchItem(id: id), item.siteID == site.id,
+              !item.isLocal, !item.isInFinderCollection else { return nil }
+        return MoodleURLBuilder.webURL(baseURL: site.baseURL, itemID: item.id, courseID: item.courseID, remoteID: item.remoteID,
+                                       isDirectory: item.isDirectory, parentID: item.parentID)
     }
 
     func openCompanionItem(_ id: String) async {
@@ -2668,30 +3174,48 @@ final class AppState: ObservableObject {
     // MARK: - Spotlight
 
     func handleSpotlightActivity(_ activity: NSUserActivity) {
-        guard let identifier = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String else { return }
-        let prefix = BundleIdentifiers.spotlightPrefix + "."
-
-        if identifier.hasPrefix("\(prefix)course.") {
-            let components = identifier.dropFirst("\(prefix)course.".count).split(separator: ".")
-            if let courseIDStr = components.last,
-               let courseID = Int(courseIDStr),
-               let course = courses.first(where: { $0.id == courseID }) {
+        guard let identifier = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String,
+              let result = SpotlightIndexer.result(for: identifier) else { return }
+        switch result {
+        case .course(let courseID):
+            if let course = courses.first(where: { $0.id == courseID }) {
                 Task { await openFileProviderInFinder(selecting: course) }
             }
-        } else if identifier.hasPrefix("\(prefix)item.") {
-            let itemID = String(identifier.dropFirst("\(prefix)item.".count))
-            if let db = database, let item = try? db.fetchItem(id: itemID),
-               let course = courses.first(where: { $0.id == item.courseID }) {
-                Task { await openFileProviderInFinder(selecting: course) }
-            }
+        case .item(let itemID):
+            Task { await revealInFinder(itemID: itemID) }
+        case .quiz(let quizID):
+            // Quizzes have no item in Finder; Moodle finds one by its id.
+            guard let site = currentSite,
+                  var components = URLComponents(url: site.baseURL.appendingPathComponent("mod/quiz/view.php"),
+                                                 resolvingAgainstBaseURL: false) else { return }
+            components.queryItems = [URLQueryItem(name: "q", value: String(quizID))]
+            if let url = components.url { NSWorkspace.shared.open(url) }
         }
+    }
+
+    /// Select an item in its Finder window, falling back to its course.
+    func revealInFinder(itemID: String) async {
+        guard let site = currentSite, let item = try? database?.fetchItem(id: itemID), item.siteID == site.id else { return }
+        let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(BundleIdentifiers.fileProviderDomainID(siteID: site.id)),
+                                          displayName: site.displayName)
+        if let manager = NSFileProviderManager(for: domain),
+           let url = await Self.userVisibleFileProviderURL(using: manager, for: NSFileProviderItemIdentifier(itemID)).url {
+            let didAccess = url.startAccessingSecurityScopedResource()
+            defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            return
+        }
+        await openFileProviderInFinder(selecting: courses.first { $0.id == item.courseID })
     }
 
     private func indexForSpotlight() {
         guard let db = database, let site = currentSite else { return }
         let allItems = (try? db.fetchAllItems(siteID: site.id)) ?? []
         let siteName = site.capabilities.siteName ?? site.displayName
-        SpotlightIndexer.shared.indexCourses(courses, items: allItems, siteName: siteName)
+        SpotlightIndexer.shared.indexCourses(courses, items: allItems,
+                                             assignments: (try? db.fetchAssignments(siteID: site.id)) ?? [],
+                                             quizzes: (try? db.fetchQuizzes(siteID: site.id)) ?? [],
+                                             siteName: siteName)
     }
 
     // MARK: - Finder Sidebar Favorites
@@ -2749,5 +3273,15 @@ private final class ResumeOnce<T: Sendable>: @unchecked Sendable {
         continuation = nil
         lock.unlock()
         pending?.resume(returning: value)
+    }
+}
+
+private extension WidgetSnapshot.Status {
+    init(_ status: AppState.SyncStatus) {
+        switch status {
+        case .syncing: self = .syncing
+        case .error: self = .needsAttention
+        case .idle, .completed: self = .upToDate
+        }
     }
 }

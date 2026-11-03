@@ -52,6 +52,15 @@ public protocol LMSProvider: Sendable {
     /// of the URL; callers must also enforce the site's origin on redirects.
     func authenticatedFileRequest(fileURL: URL, site: MoodleSite, token: AuthToken) throws -> URLRequest
 
+    /// Briefs and attachments of a course's assignments. Sites may restrict this,
+    /// so sync keeps what it already has when it throws.
+    func fetchAssignmentBriefs(site: MoodleSite, token: AuthToken, courseID: Int) async throws -> [MoodleAssignmentBrief]
+}
+
+extension LMSProvider {
+    public func fetchAssignmentBriefs(site: MoodleSite, token: AuthToken, courseID: Int) async throws -> [MoodleAssignmentBrief] {
+        []
+    }
 }
 
 /// Represents an authentication token for a Moodle session.

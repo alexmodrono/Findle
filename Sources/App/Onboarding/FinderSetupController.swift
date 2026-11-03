@@ -36,10 +36,15 @@ final class FinderSetupController: SetupStepController {
             detail.widthAnchor.constraint(equalTo: explanation.widthAnchor),
             status.widthAnchor.constraint(equalToConstant: 74)
         ])
-        addFullWidth(NativeUI.label("File sync works without this permission.", secondary: true, size: 12))
-        subscription = observer.$hasAccessibilityAccess.sink { [weak access, weak allowed] granted in
+        let note = NativeUI.label("File sync works without this permission.", secondary: true, size: 12)
+        addFullWidth(note)
+        subscription = observer.$hasAccessibilityAccess.sink { [weak access, weak allowed, weak note] granted in
             access?.isHidden = granted
             allowed?.isHidden = !granted
+            // Without the companion, the toolbar button still lists courses and deadlines.
+            note?.stringValue = granted
+                ? "File sync works without this permission."
+                : "File sync works without this permission. Without it, you can still add the Findle button to Finder's toolbar with View › Customize Toolbar for your courses and deadlines."
         }
     }
 }

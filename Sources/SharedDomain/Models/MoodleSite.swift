@@ -24,6 +24,11 @@ public struct MoodleSite: Sendable, Codable, Equatable, Identifiable {
         Self.appending(path: "webservice/rest/server.php", to: baseURL)
     }
 
+    /// Where files are uploaded to the user's draft area.
+    public var uploadURL: URL {
+        Self.appending(path: "webservice/upload.php", to: baseURL)
+    }
+
     /// The token endpoint for this site.
     public var tokenURL: URL {
         Self.appending(path: "login/token.php", to: baseURL)

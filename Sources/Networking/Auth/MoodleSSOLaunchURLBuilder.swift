@@ -26,7 +26,7 @@ public struct MoodleSSOLaunchURLBuildResult: Sendable {
 public enum MoodleSSOLaunchURLBuilder {
 
     private static let logger = Logger(
-        subsystem: "es.amodrono.findle.networking",
+        subsystem: "com.amodrono.findle.networking",
         category: "SSOLaunchURLBuilder"
     )
 

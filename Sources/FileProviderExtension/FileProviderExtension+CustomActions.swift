@@ -7,6 +7,7 @@ import FileProvider
 import AppKit
 import SharedDomain
 import FindlePersistence
+import FindleNetworking
 import OSLog
 
 extension FileProviderExtension: NSFileProviderCustomAction {
@@ -15,6 +16,12 @@ extension FileProviderExtension: NSFileProviderCustomAction {
     private static let copyMoodleLinkIdentifier = BundleIdentifiers.actionCopyMoodleLink
     private static let openCoursePageIdentifier = BundleIdentifiers.actionOpenCoursePage
     private static let keepDownloadedIdentifier = BundleIdentifiers.actionKeepDownloaded
+    private static let keepCourseOfflineIdentifier = BundleIdentifiers.actionKeepCourseOffline
+    private static let showInFindleIdentifier = BundleIdentifiers.actionShowInFindle
+    private static let markDoneIdentifier = BundleIdentifiers.actionMarkDone
+    private static let showPreviousIdentifier = BundleIdentifiers.actionShowPreviousVersion
+    private static let discardPreviousIdentifier = BundleIdentifiers.actionDiscardPreviousVersion
+    private static let markNotDoneIdentifier = BundleIdentifiers.actionMarkNotDone
     private static let removeDownloadIdentifier = BundleIdentifiers.actionRemoveDownload
     private static let syncNowIdentifier = BundleIdentifiers.actionSyncNow
 
@@ -69,7 +76,8 @@ extension FileProviderExtension: NSFileProviderCustomAction {
                     itemID: localItem.id,
                     courseID: localItem.courseID,
                     remoteID: localItem.remoteID,
-                    isDirectory: localItem.isDirectory
+                    isDirectory: localItem.isDirectory,
+                    parentID: localItem.parentID
                 )
             } else {
                 url = site.baseURL
@@ -90,7 +98,8 @@ extension FileProviderExtension: NSFileProviderCustomAction {
                     itemID: localItem.id,
                     courseID: localItem.courseID,
                     remoteID: localItem.remoteID,
-                    isDirectory: localItem.isDirectory
+                    isDirectory: localItem.isDirectory,
+                    parentID: localItem.parentID
                 )
             } else {
                 url = site.baseURL
@@ -120,30 +129,60 @@ extension FileProviderExtension: NSFileProviderCustomAction {
             completionHandler(nil)
 
         case Self.keepDownloadedIdentifier:
+            // The new content policy makes the system download and keep the items.
             do {
-                for identifier in itemIdentifiers where identifier != .rootContainer {
-                    try db.pinItemsRecursively(id: identifier.rawValue, isPinned: true)
-                }
-                logger.info("Pinned \(itemIdentifiers.count) items for offline access")
+                try DownloadRetention.keep(itemIdentifiers.filter { $0 != .rootContainer }.map(\.rawValue), database: db)
+                logger.info("Kept \(itemIdentifiers.count) items downloaded")
                 signalChanges()
                 completionHandler(nil)
             } catch {
-                logger.error("Failed to pin items: \(DiagnosticFailure(error).summary, privacy: .public)")
+                logger.error("Failed to keep items downloaded: \(DiagnosticFailure(error).summary, privacy: .public)")
                 completionHandler(error)
             }
 
-        case Self.removeDownloadIdentifier:
+        case Self.keepCourseOfflineIdentifier:
+            // Keeping a course folder keeps everything in it, and the sync keeps
+            // what Moodle adds to it later.
+            let courses = itemIdentifiers.map(\.rawValue).filter { $0.hasPrefix("course-") }
             do {
-                for identifier in itemIdentifiers where identifier != .rootContainer {
-                    try db.pinItemsRecursively(id: identifier.rawValue, isPinned: false)
-                }
-                logger.info("Unpinned \(itemIdentifiers.count) items")
+                try DownloadRetention.keep(courses, database: db)
+                logger.info("Kept \(courses.count) courses offline")
                 signalChanges()
                 completionHandler(nil)
             } catch {
-                logger.error("Failed to unpin items: \(DiagnosticFailure(error).summary, privacy: .public)")
+                logger.error("Failed to keep courses offline: \(DiagnosticFailure(error).summary, privacy: .public)")
                 completionHandler(error)
             }
+
+        case Self.showInFindleIdentifier:
+            guard let localItem, !localItem.isLocal, let url = FindleLinks.showCourse(localItem.courseID) else {
+                completionHandler(NSFileProviderError(.noSuchItem))
+                break
+            }
+            logger.info("Showing course \(localItem.courseID, privacy: .public) in Findle")
+            NSWorkspace.shared.open(url)
+            completionHandler(nil)
+
+        case Self.showPreviousIdentifier, Self.discardPreviousIdentifier:
+            // The copies live in the app's container, so the app opens or removes them.
+            let discard = actionIdentifier.rawValue == Self.discardPreviousIdentifier
+            for identifier in (discard ? itemIdentifiers : Array(itemIdentifiers.prefix(1))) {
+                if let url = FindleLinks.previousVersion(itemID: identifier.rawValue, discard: discard) { NSWorkspace.shared.open(url) }
+            }
+            completionHandler(nil)
+
+        case Self.markDoneIdentifier, Self.markNotDoneIdentifier:
+            let done = actionIdentifier.rawValue == Self.markDoneIdentifier
+            markCompletion(itemIdentifiers, done: done, site: site, database: db, progress: progress,
+                           completionHandler: completionHandler)
+            return progress
+
+        case Self.removeDownloadIdentifier:
+            removeDownloads(
+                itemIdentifiers.filter { $0 != .rootContainer }.map(\.rawValue),
+                database: db, progress: progress, completionHandler: completionHandler
+            )
+            return progress
 
         case Self.syncNowIdentifier:
             // The extension has no sync engine of its own — it only reads rows
@@ -160,9 +199,83 @@ extension FileProviderExtension: NSFileProviderCustomAction {
         return progress
     }
 
+    /// Ticks activities off on Moodle, then records it, so Finder's checkmark
+    /// only changes once Moodle has.
+    private func markCompletion(
+        _ identifiers: [NSFileProviderItemIdentifier], done: Bool, site: MoodleSite, database: Database,
+        progress: Progress, completionHandler: @escaping (Error?) -> Void
+    ) {
+        let completion = ActionCompletion(progress: progress, handler: completionHandler)
+        let modules = Set(identifiers.compactMap { try? database.fetchItem(id: $0.rawValue) }
+            .filter { $0.badges.contains(.manualCompletion) && $0.badges.contains(.completed) != done }
+            .map(\.remoteID))
+        let token: String?
+        do {
+            let accountID = try database.fetchAccounts().first { $0.siteID == site.id }?.id ?? site.id
+            token = try KeychainManager.shared.retrieveToken(forAccount: accountID)
+        } catch {
+            completion.finish(NSFileProviderError(.serverUnreachable))
+            return
+        }
+        guard let token else {
+            completion.finish(NSFileProviderError(.notAuthenticated))
+            return
+        }
+        let log = logger
+        nonisolated(unsafe) let manager = NSFileProviderManager(for: domain)
+        Task {
+            let client = MoodleClient()
+            do {
+                for module in modules.sorted() {
+                    try await client.setActivityCompletion(site: site, token: AuthToken(token: token), moduleID: module, completed: done)
+                    try database.setActivityComplete(moduleID: module, siteID: site.id, complete: done)
+                }
+                log.info("Marked \(modules.count) activities as \(done ? "done" : "not done", privacy: .public)")
+                manager?.signalEnumerator(for: .workingSet) { _ in }
+                completion.finish(nil)
+            } catch {
+                log.error("Could not change completion: \(DiagnosticFailure(error).summary, privacy: .public)")
+                manager?.signalEnumerator(for: .workingSet) { _ in }
+                completion.finish((error as? FindleError)?.requiresReauthentication == true
+                                  ? NSFileProviderError(.notAuthenticated) : NSFileProviderError(.serverUnreachable))
+            }
+        }
+    }
+
     private func signalChanges() {
         guard let manager = NSFileProviderManager(for: domain) else { return }
         manager.signalEnumerator(for: .workingSet) { _ in }
+    }
+
+    /// Unpin, then ask the system to evict. The action finishes once eviction
+    /// has been attempted, so Finder reports a file that couldn't be removed.
+    private func removeDownloads(
+        _ ids: [String],
+        database: Database,
+        progress: Progress,
+        completionHandler: @escaping (Error?) -> Void
+    ) {
+        let completion = ActionCompletion(progress: progress, handler: completionHandler)
+        guard let manager = NSFileProviderManager(for: domain) else {
+            completion.finish(NSFileProviderError(.providerNotFound))
+            return
+        }
+        let log = logger
+        nonisolated(unsafe) let unsafeManager = manager
+        Task {
+            do {
+                try await DownloadRetention.remove(
+                    ids, database: database,
+                    signal: { try? await unsafeManager.signalEnumerator(for: .workingSet) },
+                    evict: { try await unsafeManager.evictItem(identifier: NSFileProviderItemIdentifier($0)) }
+                )
+                log.info("Removed downloads for \(ids.count) items")
+                completion.finish(nil)
+            } catch {
+                log.error("Failed to remove downloads: \(DiagnosticFailure(error).summary, privacy: .public)")
+                completion.finish(error)
+            }
+        }
     }
 
     /// Ask the main app to sync immediately, launching it first if it isn't
@@ -206,5 +319,26 @@ extension FileProviderExtension: NSFileProviderCustomAction {
                 log.warning("Sync Now: failed to launch app: \(DiagnosticFailure(error).summary, privacy: .public)")
             }
         }
+    }
+}
+
+/// Hands an action's completion handler to asynchronous work and calls it once.
+private final class ActionCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private let progress: Progress
+    private var handler: ((Error?) -> Void)?
+
+    init(progress: Progress, handler: @escaping (Error?) -> Void) {
+        self.progress = progress
+        self.handler = handler
+    }
+
+    func finish(_ error: Error?) {
+        lock.lock()
+        let handler = self.handler
+        self.handler = nil
+        lock.unlock()
+        progress.completedUnitCount = progress.totalUnitCount
+        handler?(error)
     }
 }

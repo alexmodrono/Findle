@@ -14,7 +14,7 @@ import OSLog
 /// Uses URLSession's callback API so File Provider completion handlers stay in the
 /// framework's callback world instead of crossing Swift concurrency executors.
 enum FileDownloader {
-    private static let logger = Logger(subsystem: "es.amodrono.findle.file-provider", category: "Download")
+    private static let logger = Logger(subsystem: "com.amodrono.findle.file-provider", category: "Download")
 
     /// Reset an item to `.placeholder` after a failed download so the next
     /// fetch retries cleanly. A failure here would otherwise strand the item in
@@ -39,6 +39,18 @@ enum FileDownloader {
         return NSFileProviderError(.serverUnreachable)
     }
 
+    private static func generatedData(for item: LocalItem, database: Database) throws -> Data? {
+        if let data = try MoodleWebLocation.data(for: item) { return data }
+        guard !item.isLocal, !item.isDirectory, item.remoteURL == nil else { return nil }
+        do {
+            return try database.fetchGeneratedContent(itemID: item.id)
+        } catch {
+            DiagnosticJournal(databasePath: database.filePath)?.record(.init(
+                process: .fileProvider, operation: .download, outcome: .failed, failure: DiagnosticFailure(error)))
+            throw NSFileProviderError(.serverUnreachable)
+        }
+    }
+
     static func startDownload(
         item: LocalItem,
         database: Database,
@@ -54,7 +66,8 @@ enum FileDownloader {
 
         guard !progress.isCancelled else { throw CocoaError(.userCancelled) }
         let destinationURL = DownloadPublication.destination(for: item, in: temporaryDirectory)
-        if let data = try MoodleWebLocation.data(for: item) {
+        // Files Findle writes itself (READMEs) and web locations need no download.
+        if let data = try generatedData(for: item, database: database) {
             let updated: LocalItem
             do {
                 updated = try DownloadPublication.publishGenerated(
@@ -132,6 +145,12 @@ enum FileDownloader {
             throw NSFileProviderError(.serverUnreachable)
         }
 
+        if PageArchiver.isPage(item) {
+            PageArchiver.start(item: item, pageURL: remoteURL, origin: origin, token: AuthToken(token: tokenString),
+                               database: database, destination: destinationURL, progress: progress, bridge: completionBridge)
+            return
+        }
+
         DownloadCoordinator.shared.start(
             request: authenticatedRequest,
             origin: origin,
@@ -143,7 +162,7 @@ enum FileDownloader {
         )
     }
 
-    fileprivate static func resetToPlaceholderIfNeeded(item: LocalItem, database: Database) {
+    static func resetToPlaceholderIfNeeded(item: LocalItem, database: Database) {
         resetToPlaceholder(item: item, database: database)
     }
 
@@ -186,7 +205,7 @@ final class DownloadCoordinator: NSObject, URLSessionDownloadDelegate, @unchecke
         }
     }
 
-    private let logger = Logger(subsystem: "es.amodrono.findle.file-provider", category: "Download")
+    private let logger = Logger(subsystem: "com.amodrono.findle.file-provider", category: "Download")
     private let lock = NSLock()
     private var contexts: [Int: Context] = [:]
 

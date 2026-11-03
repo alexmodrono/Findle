@@ -57,6 +57,18 @@ final class CourseSelectionView: NSView, NSTableViewDataSource, NSTableViewDeleg
         table.reloadData()
     }
 
+    /// Select a course and scroll to it, clearing a search that hides it.
+    func reveal(courseID: Int) {
+        if !courses.contains(where: { $0.id == courseID }) {
+            search.stringValue = ""
+            reload()
+        }
+        guard let row = courses.firstIndex(where: { $0.id == courseID }) else { return }
+        table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        table.scrollRowToVisible(row)
+        window?.makeFirstResponder(table)
+    }
+
     func controlTextDidChange(_ obj: Notification) { reload() }
     func numberOfRows(in tableView: NSTableView) -> Int { courses.count }
 

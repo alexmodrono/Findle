@@ -79,9 +79,12 @@ struct FinderFolderResolverTests {
         #expect(FinderFolderResolver.course(folderName: "Lab- Week 1", siteID: "site", in: sanitized) == nil)
     }
 
-    @Test func theOnlySyncedCourseOwnsASharedFolderName() {
+    @Test func beingSyncedDoesNotMakeACourseOwnASharedFolderName() {
+        // Course 1's folder may survive unsynced because it holds personal files,
+        // while course 2 with the same name is being synced: only the folder's
+        // File Provider identity can tell them apart.
         let courses = [course(1, "Calculus", synced: false), course(2, "Calculus")]
-        #expect(FinderFolderResolver.course(folderName: "Calculus", siteID: "site", in: courses)?.id == 2)
+        #expect(FinderFolderResolver.course(folderName: "Calculus", siteID: "site", in: courses) == nil)
         let unsynced = [course(1, "Calculus", synced: false), course(2, "Calculus", synced: false)]
         #expect(FinderFolderResolver.course(folderName: "Calculus", siteID: "site", in: unsynced) == nil)
     }

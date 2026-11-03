@@ -8,7 +8,7 @@ import SharedDomain
 final class EmbeddedWebDataStoreCleanup {
     static let shared = EmbeddedWebDataStoreCleanup(
         storageURL: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(Bundle.main.bundleIdentifier ?? "es.amodrono.findle", isDirectory: true)
+            .appendingPathComponent(Bundle.main.bundleIdentifier ?? "com.amodrono.findle", isDirectory: true)
             .appendingPathComponent("EmbeddedSSOStores.json"),
         removeStore: { try await EmbeddedWebDataStoreCleanup.removePersistentStore($0) }
     )
@@ -36,7 +36,7 @@ final class EmbeddedWebDataStoreCleanup {
     private let storageURL: URL
     private let maximumEntries: Int
     private let removeStore: @MainActor (UUID) async throws -> Void
-    private let logger = Logger(subsystem: "es.amodrono.findle.networking", category: "EmbeddedSSOCleanup")
+    private let logger = Logger(subsystem: "com.amodrono.findle.networking", category: "EmbeddedSSOCleanup")
     private(set) var pendingIdentifiers: [UUID] = []
     private(set) var liveIdentifiers: Set<UUID> = []
     private var removals: [UUID: Task<Void, Never>] = [:]
