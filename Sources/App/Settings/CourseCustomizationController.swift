@@ -59,8 +59,11 @@ final class CourseCustomizationController: NSObject, NSTextFieldDelegate, Course
         let knownTags = state.knownTags
         for tag in knownTags {
             let item = ClosureMenuItem(title: tag.name) { [weak self] in
-                self?.state.toggleTag(tag, on: course)
-                self?.onChange?()
+                guard let self else { return }
+                if !self.state.toggleTag(tag, on: course) {
+                    self.presentTagFailure(for: course, in: window())
+                }
+                self.onChange?()
             }
             item.image = tag.color.menuSwatch
             item.state = state.hasTag(tag, on: course) ? .on : .off
@@ -74,8 +77,11 @@ final class CourseCustomizationController: NSObject, NSTextFieldDelegate, Course
         })
         if !state.tags(for: course).isEmpty {
             tagsMenu.addItem(ClosureMenuItem(title: "Remove All Tags") { [weak self] in
-                self?.state.updateCourseTags(for: course, tags: [])
-                self?.onChange?()
+                guard let self else { return }
+                if !self.state.updateCourseTags(for: course, tags: []) {
+                    self.presentTagFailure(for: course, in: window())
+                }
+                self.onChange?()
             })
         }
         tagsItem.submenu = tagsMenu
@@ -150,7 +156,7 @@ final class CourseCustomizationController: NSObject, NSTextFieldDelegate, Course
             switch result {
             case .saved:
                 self.onChange?()
-            case .conflict, .failed:
+            case .conflict, .finderUnavailable, .failed:
                 // Never close as if the rename worked.
                 self.onChange?()
                 Task { @MainActor [weak self] in
@@ -172,12 +178,31 @@ final class CourseCustomizationController: NSObject, NSTextFieldDelegate, Course
         switch result {
         case .conflict(let holder):
             alert.informativeText = "“\(holder)” already uses that folder name. Choose a different name, or rename “\(holder)” first."
+        case .finderUnavailable:
+            alert.informativeText = Self.finderUnavailableText
         default:
             alert.informativeText = "Findle couldn’t save the new name. Try again in a moment."
         }
         alert.addButton(withTitle: "OK")
         alert.beginSheetModal(for: window)
     }
+
+    /// Explain that a tag change wasn't saved, typically because Finder's
+    /// database isn't in use yet.
+    private func presentTagFailure(for course: MoodleCourse, in window: NSWindow?) {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Tags on “\(course.displayName)” weren’t changed"
+        alert.informativeText = state.isOnSharedDatabase
+            ? "Findle couldn’t save the change. Try again in a moment."
+            : Self.finderUnavailableText
+        alert.addButton(withTitle: "OK")
+        alert.beginSheetModal(for: window)
+    }
+
+    private static let finderUnavailableText =
+        "Findle isn’t connected to Finder yet, so the change couldn’t be saved where Finder can see it. Try again in a moment, or open Diagnostics if this keeps happening."
 
     private static let renameHint = "The course folder in Finder is renamed too. Leave the name empty to use the Moodle name."
 
@@ -252,7 +277,9 @@ final class CourseCustomizationController: NSObject, NSTextFieldDelegate, Course
             defer { self.tagCourse = nil }
             guard response == .alertFirstButtonReturn else { return }
             let color = FinderTag.Color(rawValue: popup.selectedTag()) ?? .blue
-            self.state.addTag(FinderTag(name: field.stringValue, color: color), to: course)
+            if !self.state.addTag(FinderTag(name: field.stringValue, color: color), to: course) {
+                Task { @MainActor [weak self] in self?.presentTagFailure(for: course, in: window) }
+            }
             self.onChange?()
         }
     }

@@ -54,6 +54,10 @@ final class AppState: ObservableObject {
 
     private let moodleClient = MoodleClient()
     private var database: Database?
+    /// Standardized path of the File Provider state database last opened.
+    /// Finder reads only that file, so edits Finder must show are refused
+    /// while the app runs on its bootstrap database (see `isOnSharedDatabase`).
+    private var sharedDatabasePath: String?
     private var databaseSecurityScopedURL: URL?
 
     /// On-disk path of the shared database, passed to the bundled MCP helper when
@@ -226,6 +230,8 @@ final class AppState: ObservableObject {
     private init(previewDatabase: Database) {
         userDefaults = UserDefaults(suiteName: "es.amodrono.findle.interface-preview")!
         database = previewDatabase
+        // The preview has no File Provider; treat its store as the shared one.
+        sharedDatabasePath = Self.standardizedPath(previewDatabase.filePath)
     }
     #endif
 
@@ -312,6 +318,7 @@ final class AppState: ObservableObject {
         }
 
         let sharedDatabase = try Database(path: location.databaseURL.path)
+        sharedDatabasePath = Self.standardizedPath(sharedDatabase.filePath)
         databaseSecurityScopedURL?.stopAccessingSecurityScopedResource()
         databaseSecurityScopedURL = didStartAccessing ? location.securityScopedDirectoryURL : nil
         adoptedScope = true
@@ -1182,8 +1189,24 @@ final class AppState: ObservableObject {
         case saved
         /// Refused: the item named here already uses the folder name.
         case conflict(holderName: String)
+        /// Refused: the app isn't using Finder's database yet, so Finder
+        /// wouldn't show the change and it could be lost when it is adopted.
+        case finderUnavailable
         /// Not saved for another reason (no database, course unloaded, write error).
         case failed
+    }
+
+    /// Whether the active database is the File Provider's state database,
+    /// the only store Finder reads. While the shared database can't be opened
+    /// the app runs on its bootstrap copy, and edits made there are neither
+    /// shown in Finder nor carried over when the shared database is adopted.
+    var isOnSharedDatabase: Bool {
+        guard let database, let sharedDatabasePath else { return false }
+        return Self.standardizedPath(database.filePath) == sharedDatabasePath
+    }
+
+    private static func standardizedPath(_ path: String) -> String {
+        URL(fileURLWithPath: path).standardizedFileURL.path
     }
 
     /// Rename `course` in the app and in Finder. Passing `nil`, an empty
@@ -1197,6 +1220,10 @@ final class AppState: ObservableObject {
         // Callers may hold a copy from before a Finder rename; compare against
         // the course as it is now, and skip it if it's gone (site switch, logout).
         guard let course = currentCourse(matching: course) else { return .failed }
+        guard isOnSharedDatabase else {
+            logger.error("Refused rename of course \(course.id, privacy: .public): Finder's database isn't in use yet")
+            return .finderUnavailable
+        }
         // No "unchanged" shortcut: `courses` may lag a Finder rename, so let the
         // database decide from its stored rows. Re-saving a name is harmless.
         let normalized = course.normalizedCustomName(name)
@@ -1372,9 +1399,17 @@ final class AppState: ObservableObject {
         )
     }
 
-    func updateCourseTags(for course: MoodleCourse, tags: [FinderTag]) {
+    /// Replace `course`'s tags in the app and in Finder. Returns `false` when
+    /// nothing was saved, including while Finder's database isn't in use yet
+    /// (the edit wouldn't show in Finder and could be lost on adoption).
+    @discardableResult
+    func updateCourseTags(for course: MoodleCourse, tags: [FinderTag]) -> Bool {
         guard !isDatabaseTransitioning, let db = database, let site = currentSite,
-              course.siteID == site.id else { return }
+              course.siteID == site.id else { return false }
+        guard isOnSharedDatabase else {
+            logger.error("Refused tag change on course \(course.id, privacy: .public): Finder's database isn't in use yet")
+            return false
+        }
         do {
             try db.saveCourseTags(tags, courseID: course.id, siteID: course.siteID)
             courseTags[course.id] = tags.isEmpty ? nil : tags
@@ -1383,8 +1418,10 @@ final class AppState: ObservableObject {
             let tagData = FinderTag.tagData(from: tags)
             try db.updateItemTagData(id: course.rootItemID, tagData: tagData)
             signalFileProviderChanges()
+            return true
         } catch {
             logger.error("Failed to update course tags: \(DiagnosticFailure(error).summary, privacy: .public)")
+            return false
         }
     }
 
@@ -1408,28 +1445,30 @@ final class AppState: ObservableObject {
 
     /// Add `tag` to `course`. If a tag with the same name already exists on
     /// any course, that tag (with its spelling and color) is used instead.
-    func addTag(_ tag: FinderTag, to course: MoodleCourse) {
+    /// Returns `false` when the tag change couldn't be saved.
+    @discardableResult
+    func addTag(_ tag: FinderTag, to course: MoodleCourse) -> Bool {
         let trimmedName = tag.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty,
-              !hasTag(FinderTag(name: trimmedName, color: tag.color), on: course) else { return }
+        guard !trimmedName.isEmpty else { return false }
+        guard !hasTag(FinderTag(name: trimmedName, color: tag.color), on: course) else { return true }
         let canonical = FinderTag.existing(named: trimmedName, in: knownTags)
             ?? FinderTag(name: trimmedName, color: tag.color)
-        updateCourseTags(for: course, tags: tags(for: course) + [canonical])
+        return updateCourseTags(for: course, tags: tags(for: course) + [canonical])
     }
 
     /// Remove `tag` (matched by name, ignoring case) from `course`.
-    func removeTag(_ tag: FinderTag, from course: MoodleCourse) {
+    /// Returns `false` when the tag change couldn't be saved.
+    @discardableResult
+    func removeTag(_ tag: FinderTag, from course: MoodleCourse) -> Bool {
         let remaining = tags(for: course).filter { !$0.hasSameName(as: tag) }
-        updateCourseTags(for: course, tags: remaining)
+        return updateCourseTags(for: course, tags: remaining)
     }
 
     /// Add `tag` to `course`, or remove it if the course already has it.
-    func toggleTag(_ tag: FinderTag, on course: MoodleCourse) {
-        if hasTag(tag, on: course) {
-            removeTag(tag, from: course)
-        } else {
-            addTag(tag, to: course)
-        }
+    /// Returns `false` when the tag change couldn't be saved.
+    @discardableResult
+    func toggleTag(_ tag: FinderTag, on course: MoodleCourse) -> Bool {
+        hasTag(tag, on: course) ? removeTag(tag, from: course) : addTag(tag, to: course)
     }
 
     // MARK: - Personal Files
