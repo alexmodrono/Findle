@@ -15,7 +15,7 @@ concurrency:
 env:
   APP_NAME: Findle
   SCHEME: Findle
-  BUNDLE_ID: es.amodrono.findle
+  BUNDLE_ID: com.amodrono.findle
   DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
 
 jobs:
@@ -80,11 +80,11 @@ jobs:
         run: |
           # The widget extension reads the App Group, so it needs its own profile.
           if [ -z "$WIDGETS_PROVISION_PROFILE_BASE64" ]; then
-            echo "::error::WIDGETS_PROVISION_PROFILE_BASE64 is missing: create a Developer ID profile for es.amodrono.findle.widgets with the App Group"
+            echo "::error::WIDGETS_PROVISION_PROFILE_BASE64 is missing: create a Developer ID profile for com.amodrono.findle.widgets with the App Group"
             exit 1
           fi
           if [ -z "$FINDERSYNC_PROVISION_PROFILE_BASE64" ]; then
-            echo "::error::FINDERSYNC_PROVISION_PROFILE_BASE64 is missing: create a Developer ID profile for es.amodrono.findle.finder-sync with the App Group"
+            echo "::error::FINDERSYNC_PROVISION_PROFILE_BASE64 is missing: create a Developer ID profile for com.amodrono.findle.finder-sync with the App Group"
             exit 1
           fi
           PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
@@ -248,13 +248,13 @@ jobs:
               <string>Developer ID Application</string>
               <key>provisioningProfiles</key>
               <dict>
-                  <key>es.amodrono.findle</key>
+                  <key>com.amodrono.findle</key>
                   <string>${APP_PROFILE_UUID}</string>
-                  <key>es.amodrono.findle.file-provider</key>
+                  <key>com.amodrono.findle.file-provider</key>
                   <string>${FP_PROFILE_UUID}</string>
-                  <key>es.amodrono.findle.widgets</key>
+                  <key>com.amodrono.findle.widgets</key>
                   <string>${WIDGETS_PROFILE_UUID}</string>
-                  <key>es.amodrono.findle.finder-sync</key>
+                  <key>com.amodrono.findle.finder-sync</key>
                   <string>${FINDERSYNC_PROFILE_UUID}</string>
               </dict>
           </dict>
@@ -353,6 +353,10 @@ jobs:
           ED_SIGNATURE="${{ steps.sparkle.outputs.ed_signature }}"
           REPO="${{ github.repository }}"
           PUB_DATE=$(date -u +"%a, %d %b %Y %H:%M:%S %z")
+          # Foodle builds (up to 0.2.0, build 36) have another bundle identifier, so
+          # Sparkle can't install Findle over them. For them the update is only a
+          # notice with a link to download Findle by hand.
+          FOODLE_BELOW_VERSION=37
 
           cat > "$RUNNER_TEMP/appcast.xml" <<APPCAST
           <?xml version="1.0" encoding="utf-8"?>
@@ -366,6 +370,11 @@ jobs:
                 <sparkle:version>${BUILD}</sparkle:version>
                 <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
                 <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+                <sparkle:informationalUpdate>
+                  <sparkle:belowVersion>${FOODLE_BELOW_VERSION}</sparkle:belowVersion>
+                </sparkle:informationalUpdate>
+                <link>https://github.com/${REPO}/releases/tag/v${VERSION}</link>
+                <description><![CDATA[<p>Foodle is now Findle. Findle is a new app, so it can't install over Foodle: download it from the release page, open it, sign in and choose your courses. Keep Foodle until Findle shows your courses, and copy any files you added yourself to the Foodle location in Finder.</p>]]></description>
                 <enclosure
                   url="https://github.com/${REPO}/releases/download/v${VERSION}/Findle-${VERSION}.zip"
                   length="${ZIP_SIZE}"

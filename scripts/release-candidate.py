@@ -16,6 +16,9 @@ VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 # the last release, a Sparkle update, relaunch, downloading files, and matching
 # personal-file hashes before and after.
 SCENARIOS = {"signed-upgrade", "sparkle-update", "relaunch", "materialization", "personal-file-hashes"}
+# Foodle builds (up to 0.2.0, build 36) can't take a Findle update (another
+# bundle identifier), so the appcast must offer it to them only as a notice.
+FOODLE_BELOW_VERSION = "37"
 # The candidate is used normally for at least this long before a go.
 USE_PERIOD_HOURS = 72
 
@@ -62,6 +65,10 @@ def validate_manifest(manifest, directory):
     require(item.findtext(ns + "version") == str(manifest["build"]), "Appcast build mismatch")
     require(item.findtext(ns + "shortVersionString") == manifest["version"], "Appcast version mismatch")
     require(item.findtext(ns + "minimumSystemVersion") == manifest["minimum_macos"], "Appcast minimum OS mismatch")
+    require(item.findtext(f"{ns}informationalUpdate/{ns}belowVersion") == FOODLE_BELOW_VERSION,
+            "Appcast doesn't send Foodle users to a manual download")
+    require(item.findtext("link") == f"https://github.com/alexmodrono/Findle/releases/tag/v{manifest['version']}",
+            "Appcast is missing the download page for Foodle users")
     enclosure = item.find("enclosure")
     zip_name = f"Findle-{manifest['version']}.zip"
     require(enclosure is not None, "Missing update enclosure")
@@ -152,9 +159,9 @@ def validate_app(app, version, build, revision, team, symbols):
             info = plistlib.load(stream)
         require(info["CFBundleShortVersionString"] == version and info["CFBundleVersion"] == build, f"Version mismatch in {bundle.name}")
         infos.append(info)
-    require(infos[0]["CFBundleIdentifier"] == "es.amodrono.findle", "Wrong application channel")
-    require(infos[1]["CFBundleIdentifier"] == "es.amodrono.findle.file-provider", "Wrong extension channel")
-    require(infos[-1]["CFBundleIdentifier"] == "es.amodrono.findle.widgets", "Wrong widget channel")
+    require(infos[0]["CFBundleIdentifier"] == "com.amodrono.findle", "Wrong application channel")
+    require(infos[1]["CFBundleIdentifier"] == "com.amodrono.findle.file-provider", "Wrong extension channel")
+    require(infos[-1]["CFBundleIdentifier"] == "com.amodrono.findle.widgets", "Wrong widget channel")
     require(infos[0]["LSMinimumSystemVersion"] == "15.0", "App minimum macOS differs from release metadata")
     require(infos[0]["FindleSourceRevision"] == revision, "App source revision mismatch")
     executables = []
@@ -176,8 +183,8 @@ def validate_app(app, version, build, revision, team, symbols):
         raw = subprocess.run(["codesign", "-d", "--entitlements", ":-", str(bundle)], check=True, capture_output=True).stdout
         ent = plistlib.loads(raw)
         require(not ent.get("com.apple.security.get-task-allow", False), "Debug entitlement in release")
-        require(ent.get("com.apple.security.application-groups") == ["group.es.amodrono.findle"], "App Group mismatch")
-        require(ent.get("keychain-access-groups") == [f"{team}.es.amodrono.findle"], "Keychain group mismatch")
+        require(ent.get("com.apple.security.application-groups") == ["group.com.amodrono.findle"], "App Group mismatch")
+        require(ent.get("keychain-access-groups") == [f"{team}.com.amodrono.findle"], "Keychain group mismatch")
         entitlements.append(ent)
     require(entitlements[1].get("com.apple.security.app-sandbox") is True, "Provider sandbox missing")
     require(entitlements[1].get("com.apple.security.network.client") is True, "Provider networking entitlement missing")
@@ -185,7 +192,7 @@ def validate_app(app, version, build, revision, team, symbols):
     widgets = plistlib.loads(raw)
     require(not widgets.get("com.apple.security.get-task-allow", False), "Debug entitlement in release")
     require(widgets.get("com.apple.security.app-sandbox") is True, "Widget sandbox missing")
-    require(widgets.get("com.apple.security.application-groups") == ["group.es.amodrono.findle"], "Widget App Group mismatch")
+    require(widgets.get("com.apple.security.application-groups") == ["group.com.amodrono.findle"], "Widget App Group mismatch")
 
 
 def main():

@@ -60,6 +60,8 @@ class ReleaseCandidateTests(unittest.TestCase):
         (self.root / 'appcast.xml').write_text(f'''<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel><item>
           <sparkle:version>12</sparkle:version><sparkle:shortVersionString>2.0.0</sparkle:shortVersionString>
           <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+          <sparkle:informationalUpdate><sparkle:belowVersion>37</sparkle:belowVersion></sparkle:informationalUpdate>
+          <link>https://github.com/alexmodrono/Findle/releases/tag/v2.0.0</link>
           <enclosure url="https://github.com/alexmodrono/Findle/releases/download/v2.0.0/Findle-2.0.0.zip"
             length="19" sparkle:edSignature="{self.signature}"/>
           </item></channel></rss>''')
@@ -102,6 +104,12 @@ class ReleaseCandidateTests(unittest.TestCase):
         path.write_text(path.read_text().replace('15.0', '14.0'))
         self.manifest['assets']['appcast.xml'] = dict(sha256=candidate.digest(path), size=path.stat().st_size)
         with self.assertRaisesRegex(ValueError, 'minimum OS'): candidate.validate_manifest(self.manifest, self.root)
+
+    def test_an_appcast_without_the_foodle_notice_is_rejected(self):
+        path = self.root / 'appcast.xml'
+        path.write_text(path.read_text().replace('<sparkle:belowVersion>37</sparkle:belowVersion>', ''))
+        self.manifest['assets']['appcast.xml'] = dict(sha256=candidate.digest(path), size=path.stat().st_size)
+        with self.assertRaisesRegex(ValueError, 'Foodle'): candidate.validate_manifest(self.manifest, self.root)
 
     def test_dependency_pin_disagreement_is_rejected(self):
         self.manifest['airlock_revision'] = 'c' * 40
