@@ -93,7 +93,12 @@ final class CourseCustomizationController: NSObject, NSTextFieldDelegate, Course
         alert.addButton(withTitle: "Rename")
         alert.addButton(withTitle: "Cancel")
         if course.hasCustomName {
-            alert.addButton(withTitle: "Use Moodle Name")
+            let reset = alert.addButton(withTitle: "Use Moodle Name")
+            // Another course may have been renamed to this course's Moodle name.
+            if let conflict = state.folderNameConflict(for: course, proposedName: "") {
+                reset.isEnabled = false
+                reset.toolTip = "“\(conflict.displayName)” already uses the Moodle name."
+            }
         }
 
         let field = NSTextField(string: course.displayName)
@@ -123,6 +128,7 @@ final class CourseCustomizationController: NSObject, NSTextFieldDelegate, Course
                 guard self.state.folderNameConflict(for: course, proposedName: field.stringValue) == nil else { return }
                 self.state.updateCustomFolderName(for: course, name: field.stringValue)
             case .alertThirdButtonReturn:
+                guard self.state.folderNameConflict(for: course, proposedName: "") == nil else { return }
                 self.state.updateCustomFolderName(for: course, name: nil)
             default:
                 return

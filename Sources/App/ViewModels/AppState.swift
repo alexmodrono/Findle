@@ -1177,12 +1177,17 @@ final class AppState: ObservableObject {
     // MARK: - Course Customization
 
     /// Rename `course` in the app and in Finder. Passing `nil`, an empty
-    /// string, or the Moodle name restores the Moodle name.
+    /// string, or the Moodle name restores the Moodle name. A name that would
+    /// collide with another course's folder is refused, matching Finder.
     func updateCustomFolderName(for course: MoodleCourse, name: String?) {
         guard !isDatabaseTransitioning, let db = database, let site = currentSite,
               course.siteID == site.id else { return }
         let normalized = course.normalizedCustomName(name)
         guard normalized != course.customFolderName else { return }
+        if let conflict = folderNameConflict(for: course, proposedName: name ?? "") {
+            logger.error("Refused rename of course \(course.id, privacy: .public): folder name already used by course \(conflict.id, privacy: .public)")
+            return
+        }
         do {
             // One transaction updates the course and its root folder item, so
             // the File Provider never sees a half-applied rename.
