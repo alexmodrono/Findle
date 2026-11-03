@@ -1286,42 +1286,6 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Group `courses` by their Finder tags for the sidebar and gallery. Returns
-    /// one entry per tag in use (sorted by name), then a trailing `nil`-tag entry
-    /// for untagged courses. Empty when no tags exist anywhere.
-    func tagSections(for courses: [MoodleCourse]) -> [(tag: FinderTag?, courses: [MoodleCourse])] {
-        let allTags = courseTags
-
-        var usedTags: [FinderTag] = []
-        var seen = Set<String>()
-        for tags in allTags.values {
-            for tag in tags where !seen.contains(tag.name) {
-                usedTags.append(tag)
-                seen.insert(tag.name)
-            }
-        }
-        usedTags.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-
-        guard !usedTags.isEmpty else { return [] }
-
-        var sections: [(tag: FinderTag?, courses: [MoodleCourse])] = []
-        for tag in usedTags {
-            let matching = courses.filter { course in
-                allTags[course.id]?.contains(where: { $0.name == tag.name }) ?? false
-            }
-            if !matching.isEmpty {
-                sections.append((tag: tag, courses: matching))
-            }
-        }
-
-        let untagged = courses.filter { allTags[$0.id]?.isEmpty ?? true }
-        if !untagged.isEmpty {
-            sections.append((tag: nil, courses: untagged))
-        }
-
-        return sections
-    }
-
     /// Build a content + status snapshot for `course` from the local database:
     /// file count, total size, downloaded count, last-synced time, and the
     /// top-level sections with the number of files each contains.
@@ -1388,8 +1352,11 @@ final class AppState: ObservableObject {
 
     /// Every tag in use on any course, sorted by name — offered when tagging
     /// so the same tag keeps one spelling and color across courses.
+    ///
+    /// Courses are visited in ID order, so when two courses spell a tag with
+    /// different colors the same course's color always wins.
     var knownTags: [FinderTag] {
-        FinderTag.distinct(in: courseTags.values)
+        FinderTag.distinct(in: courseTags.sorted { $0.key < $1.key }.map(\.value))
     }
 
     func tags(for course: MoodleCourse) -> [FinderTag] {
