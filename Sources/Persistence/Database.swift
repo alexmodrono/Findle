@@ -1260,11 +1260,15 @@ extension Database {
         try queue.sync {
             try transactionUnsafe {
                 let courses = try coursesForNamingUnsafe(siteID: siteID)
+                // Store the normalized name, so passing the Moodle name (or a
+                // blank one) restores it instead of pinning a copy.
+                var storedName = customName
                 if var course = courses.first(where: { $0.id == courseID }) {
                     if let conflict = course.folderNameConflict(forProposedName: customName, among: courses) {
                         throw CourseFolderNameConflictError(courseID: courseID, conflictingCourseID: conflict.id)
                     }
-                    course.customFolderName = course.normalizedCustomName(customName)
+                    storedName = course.normalizedCustomName(customName)
+                    course.customFolderName = storedName
                     let filename = course.effectiveFolderName
                     if let clash = try topLevelItemsUnsafe(siteID: siteID).first(where: {
                         $0.id != course.rootItemID && $0.filename.caseInsensitiveCompare(filename) == .orderedSame
@@ -1272,7 +1276,7 @@ extension Database {
                         throw CourseFolderNameConflictError(courseID: courseID, conflictingItemID: clash.id)
                     }
                 }
-                try updateCourseCustomFolderNameUnsafe(courseID: courseID, siteID: siteID, customName: customName)
+                try updateCourseCustomFolderNameUnsafe(courseID: courseID, siteID: siteID, customName: storedName)
                 try reconcileCourseRootFilenameUnsafe(courseID: courseID, siteID: siteID)
             }
         }

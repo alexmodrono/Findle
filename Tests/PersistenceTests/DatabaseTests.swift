@@ -478,6 +478,12 @@ final class DatabaseTests: XCTestCase {
         try database.renameCourse(courseID: 1, siteID: "site-1", customName: nil)
         XCTAssertNil(try database.fetchCourse(id: 1, siteID: "site-1")?.customFolderName)
         XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.filename, "Operating Systems")
+
+        // Passing the Moodle name itself also restores it rather than pinning a copy.
+        try database.renameCourse(courseID: 1, siteID: "site-1", customName: "Kernels")
+        try database.renameCourse(courseID: 1, siteID: "site-1", customName: " Operating Systems ")
+        XCTAssertNil(try database.fetchCourse(id: 1, siteID: "site-1")?.customFolderName)
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.filename, "Operating Systems")
     }
 
     func testRenameCourseRejectsStoredFolderNameCollisionWithoutWriting() throws {

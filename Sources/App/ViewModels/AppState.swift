@@ -1197,8 +1197,9 @@ final class AppState: ObservableObject {
         // Callers may hold a copy from before a Finder rename; compare against
         // the course as it is now, and skip it if it's gone (site switch, logout).
         guard let course = currentCourse(matching: course) else { return .failed }
+        // No "unchanged" shortcut: `courses` may lag a Finder rename, so let the
+        // database decide from its stored rows. Re-saving a name is harmless.
         let normalized = course.normalizedCustomName(name)
-        guard normalized != course.customFolderName else { return .saved }
         if let conflict = folderNameConflict(for: course, proposedName: name ?? "") {
             logger.error("Refused rename of course \(course.id, privacy: .public): folder name already used by course \(conflict.id, privacy: .public)")
             return .conflict(holderName: conflict.displayName)
