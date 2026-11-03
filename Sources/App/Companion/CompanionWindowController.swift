@@ -172,13 +172,16 @@ final class CompanionWindowController: NSWindowController {
         }
         // The folder's File Provider identity names its course even after a
         // rename; its name stands in only until the system answers.
-        let identity = siteID.flatMap { identity(of: snapshot.folderURL, siteID: $0) }
+        var folderIdentity: FolderIdentity?
+        if let siteID { folderIdentity = self.identity(of: snapshot.folderURL, siteID: siteID) }
         var location: CompanionLocation?
-        if case .item(let id)? = identity, let siteID { location = state.companionLocation(itemID: id, siteID: siteID) }
+        if let siteID, case .item(let itemID)? = folderIdentity {
+            location = state.companionLocation(itemID: itemID, siteID: siteID)
+        }
         let course: MoodleCourse?
         if let location {
             course = location.course
-        } else if identity == .root {
+        } else if folderIdentity == .root {
             course = nil
         } else {
             course = parts.first.flatMap { name in
@@ -208,7 +211,9 @@ final class CompanionWindowController: NSWindowController {
         content.setMode(layout.mode, canExpand: canExpand, attachedOnRight: frame.minX >= snapshot.frame.maxX,
                         width: frame.width, animated: animate)
         content.show(course: course, folderIDs: location?.folderIDs ?? [])
-        content.showSelection(siteID.flatMap { selection(in: snapshot, siteID: $0) })
+        var selected: CompanionSelection?
+        if let siteID { selected = self.selection(in: snapshot, siteID: siteID) }
+        content.showSelection(selected)
         if let course, recordedFolder != snapshot.folderURL {
             recordedFolder = snapshot.folderURL
             if let folderID = location?.folderIDs.first, let siteID {
