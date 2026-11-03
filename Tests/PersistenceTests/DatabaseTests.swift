@@ -439,6 +439,22 @@ final class DatabaseTests: XCTestCase {
 
     // MARK: - Course Tests
 
+    func testCourseCommitKeepsRenameMadeDuringSync() throws {
+        let course = MoodleCourse(id: 1, shortName: "OS", fullName: "Operating Systems", siteID: "site-1")
+        try database.saveCourses([course])
+        // The sync built the root with the old name; the user renamed the
+        // course (in Finder or the app) before the sync committed.
+        let staleRoot = LocalItem(id: course.rootItemID, siteID: "site-1", courseID: 1, remoteID: 1,
+                                  filename: course.effectiveFolderName, isDirectory: true)
+        try database.updateCourseCustomFolderName(courseID: 1, siteID: "site-1", customName: "Kernels")
+
+        let cursor = SyncCursor(courseID: 1, siteID: "site-1", lastSyncDate: Date(), itemCount: 1)
+        try database.commitCourseSync(items: [staleRoot], deletingItemIDs: [], cursor: cursor,
+                                      outline: CourseOutlineSnapshot(courseID: 1, capturedAt: cursor.lastSyncDate, sections: [CourseOutlineSection]()))
+
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.filename, "Kernels")
+    }
+
     func testFetchCourseReturnsStoredCustomization() throws {
         try database.saveCourses([
             MoodleCourse(id: 101, shortName: "CS101", fullName: "Intro to CS", siteID: "site-1"),

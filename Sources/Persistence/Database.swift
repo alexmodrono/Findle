@@ -1460,10 +1460,42 @@ extension Database {
         try queue.sync {
             try transactionUnsafe {
                 try saveItemsUnsafe(items)
+                // The sync built the root's name before its network round trips;
+                // the user may have renamed the course since. Re-derive the name
+                // inside this write transaction so the latest rename wins.
+                try reconcileCourseRootFilenameUnsafe(courseID: cursor.courseID, siteID: cursor.siteID)
                 try deleteItemsWithTombstoneUnsafe(ids: deletingItemIDs)
                 try saveSyncCursorUnsafe(cursor)
                 try saveCourseOutlineUnsafe(courseID: outline.courseID, siteID: cursor.siteID, payload: payload)
             }
+        }
+    }
+
+    /// Point the course root's filename at the course's current effective
+    /// folder name. Writes nothing when the name already matches or the course
+    /// isn't stored. The caller must hold `queue`.
+    private func reconcileCourseRootFilenameUnsafe(courseID: Int, siteID: String) throws {
+        let select = try prepareStatement("SELECT full_name, custom_folder_name FROM courses WHERE id = ? AND site_id = ?")
+        defer { sqlite3_finalize(select) }
+        sqlite3_bind_int64(select, 1, Int64(courseID))
+        sqlite3_bind_text(select, 2, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(select) == SQLITE_ROW, let fullName = sqlite3_column_text(select, 0) else { return }
+        let course = MoodleCourse(
+            id: courseID,
+            shortName: "",
+            fullName: String(cString: fullName),
+            siteID: siteID,
+            customFolderName: sqlite3_column_text(select, 1).map { String(cString: $0) }
+        )
+        let filename = course.effectiveFolderName
+
+        let update = try prepareStatement("UPDATE items SET filename = ? WHERE id = ? AND filename <> ?")
+        defer { sqlite3_finalize(update) }
+        sqlite3_bind_text(update, 1, (filename as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(update, 2, (course.rootItemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(update, 3, (filename as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(update) == SQLITE_DONE else {
+            throw FindleError.databaseError(detail: "Failed to reconcile course root filename")
         }
     }
 

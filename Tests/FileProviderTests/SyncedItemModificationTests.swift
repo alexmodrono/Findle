@@ -160,6 +160,21 @@ final class SyncedItemModificationTests: XCTestCase {
         XCTAssertEqual(result.stillPendingFields, .contentModificationDate)
     }
 
+    func testCourseRootRenameOntoAnotherCourseFolderIsACollision() throws {
+        let f = try fixture()
+        let root = try courseRoot(in: f)
+        try f.database.saveCourses([MoodleCourse(id: 8, shortName: "DB", fullName: "Databases", siteID: "a")])
+        let anchor = try f.database.currentChangeCounter()
+        assertProviderError(.filenameCollision) {
+            _ = try SyncedItemModification.apply(
+                to: root, changedFields: .filename, tagData: nil, filename: "databases",
+                hasNewContents: false, siteID: "a", database: f.database)
+        }
+        XCTAssertNil(try f.database.fetchCourse(id: 7, siteID: "a")?.customFolderName)
+        XCTAssertEqual(try f.database.fetchItem(id: root.id), root)
+        XCTAssertEqual(try f.database.currentChangeCounter(), anchor)
+    }
+
     func testCourseRootMoveIsStillRejected() throws {
         let f = try fixture()
         let root = try courseRoot(in: f)
