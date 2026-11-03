@@ -13,6 +13,10 @@ enum SyncedItemModification {
         let stillPendingFields: NSFileProviderItemFields
     }
 
+    /// Apply a Finder edit to a synced item. Tag edits are stored for any item
+    /// and a filename edit renames a course root; content, moves, and other
+    /// fields throw `cannotSynchronize`. Timestamp-only changes are reported
+    /// back as still pending instead of failing.
     static func apply(
         to localItem: LocalItem,
         changedFields: NSFileProviderItemFields,
@@ -57,6 +61,7 @@ enum SyncedItemModification {
         return try updatedResult(for: localItem, pending: pending, database: database)
     }
 
+    /// The item as now stored, with `pending` fields left for the system.
     private static func updatedResult(
         for localItem: LocalItem,
         pending: NSFileProviderItemFields,
@@ -77,18 +82,16 @@ enum SyncedItemModification {
     /// sanitizing) is rejected as a collision without changing anything.
     private static func renameCourseRoot(_ courseRoot: LocalItem, to proposedName: String, database: Database) throws {
         let courses = try database.fetchCourses(siteID: courseRoot.siteID)
-        guard var course = courses.first(where: { $0.id == courseRoot.courseID }) else {
+        guard let course = courses.first(where: { $0.id == courseRoot.courseID }) else {
             throw NSFileProviderError(.noSuchItem)
         }
         guard course.folderNameConflict(forProposedName: proposedName, among: courses) == nil else {
             throw NSFileProviderError(.filenameCollision)
         }
-        course.customFolderName = course.normalizedCustomName(proposedName)
-        try database.updateCourseCustomFolderName(
+        try database.renameCourse(
             courseID: course.id,
             siteID: course.siteID,
-            customName: course.customFolderName
+            customName: course.normalizedCustomName(proposedName)
         )
-        try database.updateItemFilename(id: courseRoot.id, filename: course.effectiveFolderName)
     }
 }

@@ -1184,15 +1184,12 @@ final class AppState: ObservableObject {
         let normalized = course.normalizedCustomName(name)
         guard normalized != course.customFolderName else { return }
         do {
-            try db.updateCourseCustomFolderName(courseID: course.id, siteID: course.siteID, customName: normalized)
+            // One transaction updates the course and its root folder item, so
+            // the File Provider never sees a half-applied rename.
+            try db.renameCourse(courseID: course.id, siteID: course.siteID, customName: normalized)
             if let index = courses.firstIndex(where: { $0.id == course.id && $0.siteID == course.siteID }) {
                 courses[index].customFolderName = normalized
             }
-
-            // Update the course root item in the items table so the File Provider sees it
-            var updatedCourse = course
-            updatedCourse.customFolderName = normalized
-            try db.updateItemFilename(id: course.rootItemID, filename: updatedCourse.effectiveFolderName)
             signalFileProviderChanges()
         } catch {
             logger.error("Failed to update custom folder name: \(DiagnosticFailure(error).summary, privacy: .public)")
@@ -1222,6 +1219,8 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Refresh course names and tags when the File Provider extension reports
+    /// a rename or tag change made in Finder.
     private func observeCourseCustomizationChanges() {
         courseCustomizationObserver = DarwinNotification.addObserver(
             for: BundleIdentifiers.courseCustomizationChangedNotification
@@ -1363,6 +1362,7 @@ final class AppState: ObservableObject {
         courseTags[course.id] ?? []
     }
 
+    /// Whether `course` has a tag with the same name as `tag`, ignoring case.
     func hasTag(_ tag: FinderTag, on course: MoodleCourse) -> Bool {
         tags(for: course).contains { $0.hasSameName(as: tag) }
     }
@@ -1377,11 +1377,13 @@ final class AppState: ObservableObject {
         updateCourseTags(for: course, tags: tags(for: course) + [canonical])
     }
 
+    /// Remove `tag` (matched by name, ignoring case) from `course`.
     func removeTag(_ tag: FinderTag, from course: MoodleCourse) {
         let remaining = tags(for: course).filter { !$0.hasSameName(as: tag) }
         updateCourseTags(for: course, tags: remaining)
     }
 
+    /// Add `tag` to `course`, or remove it if the course already has it.
     func toggleTag(_ tag: FinderTag, on course: MoodleCourse) {
         if hasTag(tag, on: course) {
             removeTag(tag, from: course)

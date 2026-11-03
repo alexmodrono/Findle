@@ -1217,23 +1217,38 @@ extension Database {
     }
 
     public func updateCourseCustomFolderName(courseID: Int, siteID: String, customName: String?) throws {
-        let sql = "UPDATE courses SET custom_folder_name = ? WHERE id = ? AND site_id = ?"
         try queue.sync {
-            let stmt = try prepareStatement(sql)
-            defer { sqlite3_finalize(stmt) }
+            try updateCourseCustomFolderNameUnsafe(courseID: courseID, siteID: siteID, customName: customName)
+        }
+    }
 
-            if let name = customName, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                sqlite3_bind_text(stmt, 1, (name as NSString).utf8String, -1, SQLITE_TRANSIENT)
-            } else {
-                sqlite3_bind_null(stmt, 1)
+    /// Rename a course and its root folder item in one transaction, so the
+    /// stored name and the name Finder shows can't disagree after a failure.
+    /// A `nil` or blank `customName` restores the Moodle name.
+    public func renameCourse(courseID: Int, siteID: String, customName: String?) throws {
+        try queue.sync {
+            try transactionUnsafe {
+                try updateCourseCustomFolderNameUnsafe(courseID: courseID, siteID: siteID, customName: customName)
+                try reconcileCourseRootFilenameUnsafe(courseID: courseID, siteID: siteID)
             }
-            sqlite3_bind_int64(stmt, 2, Int64(courseID))
-            sqlite3_bind_text(stmt, 3, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        }
+    }
 
-            let status = sqlite3_step(stmt)
-            guard status == SQLITE_DONE else {
-                throw FindleError.databaseError(detail: "Failed to update custom folder name")
-            }
+    /// The caller must hold `queue`.
+    private func updateCourseCustomFolderNameUnsafe(courseID: Int, siteID: String, customName: String?) throws {
+        let stmt = try prepareStatement("UPDATE courses SET custom_folder_name = ? WHERE id = ? AND site_id = ?")
+        defer { sqlite3_finalize(stmt) }
+
+        if let name = customName, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            sqlite3_bind_text(stmt, 1, (name as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, 1)
+        }
+        sqlite3_bind_int64(stmt, 2, Int64(courseID))
+        sqlite3_bind_text(stmt, 3, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw FindleError.databaseError(detail: "Failed to update custom folder name")
         }
     }
     public func updateCourseCustomIconName(courseID: Int, siteID: String, iconName: String?) throws {
