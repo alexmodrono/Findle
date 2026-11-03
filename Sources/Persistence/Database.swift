@@ -1504,11 +1504,16 @@ extension Database {
         )
         let filename = course.effectiveFolderName
 
-        let update = try prepareStatement("UPDATE items SET filename = ? WHERE id = ? AND filename <> ?")
+        // modification_date feeds the item's metadataVersion, so bump it with
+        // the name or Finder may keep showing the old one.
+        let update = try prepareStatement(
+            "UPDATE items SET filename = ?, modification_date = ? WHERE id = ? AND filename <> ?"
+        )
         defer { sqlite3_finalize(update) }
         sqlite3_bind_text(update, 1, (filename as NSString).utf8String, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(update, 2, (course.rootItemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(update, 3, (filename as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_double(update, 2, Date().timeIntervalSince1970)
+        sqlite3_bind_text(update, 3, (course.rootItemID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(update, 4, (filename as NSString).utf8String, -1, SQLITE_TRANSIENT)
         guard sqlite3_step(update) == SQLITE_DONE else {
             throw FindleError.databaseError(detail: "Failed to reconcile course root filename")
         }

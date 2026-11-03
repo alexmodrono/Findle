@@ -461,9 +461,19 @@ final class DatabaseTests: XCTestCase {
         try database.saveItems([LocalItem(id: course.rootItemID, siteID: "site-1", courseID: 1, remoteID: 1,
                                           filename: course.effectiveFolderName, isDirectory: true)])
 
+        let before = try XCTUnwrap(database.fetchItem(id: course.rootItemID))
         try database.renameCourse(courseID: 1, siteID: "site-1", customName: "OS: Kernels")
         XCTAssertEqual(try database.fetchCourse(id: 1, siteID: "site-1")?.customFolderName, "OS: Kernels")
-        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.filename, FileNameSanitizer.sanitize("OS: Kernels"))
+        let renamed = try XCTUnwrap(database.fetchItem(id: course.rootItemID))
+        XCTAssertEqual(renamed.filename, FileNameSanitizer.sanitize("OS: Kernels"))
+        // The metadata version is derived from modification_date, so it must move with the name.
+        XCTAssertNotNil(renamed.modificationDate)
+        XCTAssertNotEqual(renamed.modificationDate, before.modificationDate)
+
+        // Re-applying the same name writes nothing.
+        let anchor = try database.currentChangeCounter()
+        try database.renameCourse(courseID: 1, siteID: "site-1", customName: "OS: Kernels")
+        XCTAssertEqual(try database.currentChangeCounter(), anchor)
 
         try database.renameCourse(courseID: 1, siteID: "site-1", customName: nil)
         XCTAssertNil(try database.fetchCourse(id: 1, siteID: "site-1")?.customFolderName)
