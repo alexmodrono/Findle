@@ -105,10 +105,12 @@ jobs:
           mv "$PROFILES_DIR/widgets.provisionprofile" "$PROFILES_DIR/$WIDGETS_UUID.provisionprofile"
           mv "$PROFILES_DIR/findersync.provisionprofile" "$PROFILES_DIR/$FINDERSYNC_UUID.provisionprofile"
 
-          echo "APP_PROFILE_UUID=$APP_UUID" >> "$GITHUB_ENV"
-          echo "FP_PROFILE_UUID=$FP_UUID" >> "$GITHUB_ENV"
-          echo "WIDGETS_PROFILE_UUID=$WIDGETS_UUID" >> "$GITHUB_ENV"
-          echo "FINDERSYNC_PROFILE_UUID=$FINDERSYNC_UUID" >> "$GITHUB_ENV"
+          {
+            echo "APP_PROFILE_UUID=$APP_UUID"
+            echo "FP_PROFILE_UUID=$FP_UUID"
+            echo "WIDGETS_PROFILE_UUID=$WIDGETS_UUID"
+            echo "FINDERSYNC_PROFILE_UUID=$FINDERSYNC_UUID"
+          } >> "$GITHUB_ENV"
 
       - name: Write signing xcconfig files
         run: |
