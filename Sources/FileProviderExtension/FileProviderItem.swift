@@ -77,7 +77,13 @@ final class FileProviderItem: NSObject, NSFileProviderItem, NSFileProviderItemDe
             // Moodle folders and stand-ins are read-only containers. Users can still
             // add their own files and folders inside them; those are stored in the
             // personal files folder, so a course refresh cannot delete them.
-            return [.allowsReading, .allowsContentEnumerating, .allowsAddingSubItems]
+            var caps: NSFileProviderItemCapabilities = [.allowsReading, .allowsContentEnumerating, .allowsAddingSubItems]
+            // Course folders can be renamed; the name is stored as the course's
+            // custom name. Sections and modules keep their Moodle names.
+            if localItem.isCourseRoot {
+                caps.insert(.allowsRenaming)
+            }
+            return caps
         }
         return [.allowsReading]
     }

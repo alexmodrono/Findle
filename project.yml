@@ -497,7 +497,8 @@ targets:
                   Cancel: OK
                 RecoveryOptions:
                   Continue: false
-            - ActivationRule: 'action == "Rename" AND sourceItem.userInfo.personal == NO AND NOT sourceItem.userInfo.kind IN {"root", "collection", "link"}'
+            # Course folders are excluded: renaming one sets the course's custom name.
+            - ActivationRule: 'action == "Rename" AND sourceItem.userInfo.personal == NO AND NOT sourceItem.userInfo.kind IN {"root", "collection", "link", "course"}'
               Alert:
                 LocalizedTitle: Files from Moodle can’t be renamed
                 LocalizedSubTitle: Their names come from Moodle and follow any change made there. To keep your own copy under another name, hold Option while you drag it to make a copy, then rename the copy.

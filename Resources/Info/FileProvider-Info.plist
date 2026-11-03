@@ -215,7 +215,7 @@
 			</dict>
 			<dict>
 				<key>ActivationRule</key>
-				<string>action == "Rename" AND sourceItem.userInfo.personal == NO AND NOT sourceItem.userInfo.kind IN {"root", "collection", "link"}</string>
+				<string>action == "Rename" AND sourceItem.userInfo.personal == NO AND NOT sourceItem.userInfo.kind IN {"root", "collection", "link", "course"}</string>
 				<key>Alert</key>
 				<dict>
 					<key>LocalizedRecoveryOptions</key>

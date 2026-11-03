@@ -439,6 +439,219 @@ final class DatabaseTests: XCTestCase {
 
     // MARK: - Course Tests
 
+    func testCourseCommitKeepsRenameMadeDuringSync() throws {
+        let course = MoodleCourse(id: 1, shortName: "OS", fullName: "Operating Systems", siteID: "site-1")
+        try database.saveCourses([course])
+        // The sync built the root with the old name; the user renamed the
+        // course (in Finder or the app) before the sync committed.
+        let staleRoot = LocalItem(id: course.rootItemID, siteID: "site-1", courseID: 1, remoteID: 1,
+                                  filename: course.effectiveFolderName, isDirectory: true)
+        try database.updateCourseCustomFolderName(courseID: 1, siteID: "site-1", customName: "Kernels")
+
+        let cursor = SyncCursor(courseID: 1, siteID: "site-1", lastSyncDate: Date(), itemCount: 1)
+        try database.commitCourseSync(items: [staleRoot], deletingItemIDs: [], cursor: cursor,
+                                      outline: CourseOutlineSnapshot(courseID: 1, capturedAt: cursor.lastSyncDate, sections: [CourseOutlineSection]()))
+
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.filename, "Kernels")
+    }
+
+    func testRenameCourseUpdatesNameAndRootTogether() throws {
+        let course = MoodleCourse(id: 1, shortName: "OS", fullName: "Operating Systems", siteID: "site-1")
+        try database.saveCourses([course])
+        try database.saveItems([LocalItem(id: course.rootItemID, siteID: "site-1", courseID: 1, remoteID: 1,
+                                          filename: course.effectiveFolderName, isDirectory: true)])
+
+        let before = try XCTUnwrap(database.fetchItem(id: course.rootItemID))
+        try database.renameCourse(courseID: 1, siteID: "site-1", customName: "OS: Kernels")
+        XCTAssertEqual(try database.fetchCourse(id: 1, siteID: "site-1")?.customFolderName, "OS: Kernels")
+        let renamed = try XCTUnwrap(database.fetchItem(id: course.rootItemID))
+        XCTAssertEqual(renamed.filename, FileNameSanitizer.sanitize("OS: Kernels"))
+        // The folder's date stays put; the name is part of its metadata version.
+        XCTAssertEqual(renamed.modificationDate, before.modificationDate)
+
+        // Re-applying the same name writes nothing.
+        let anchor = try database.currentChangeCounter()
+        try database.renameCourse(courseID: 1, siteID: "site-1", customName: "OS: Kernels")
+        XCTAssertEqual(try database.currentChangeCounter(), anchor)
+
+        try database.renameCourse(courseID: 1, siteID: "site-1", customName: nil)
+        XCTAssertNil(try database.fetchCourse(id: 1, siteID: "site-1")?.customFolderName)
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.filename, "Operating Systems")
+
+        // Passing the Moodle name itself also restores it rather than pinning a copy.
+        try database.renameCourse(courseID: 1, siteID: "site-1", customName: "Kernels")
+        try database.renameCourse(courseID: 1, siteID: "site-1", customName: " Operating Systems ")
+        XCTAssertNil(try database.fetchCourse(id: 1, siteID: "site-1")?.customFolderName)
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.filename, "Operating Systems")
+    }
+
+    func testRenameCourseRejectsStoredFolderNameCollisionWithoutWriting() throws {
+        let os = MoodleCourse(id: 1, shortName: "OS", fullName: "Operating Systems", siteID: "site-1")
+        let db = MoodleCourse(id: 2, shortName: "DB", fullName: "Databases", siteID: "site-1")
+        try database.saveCourses([os, db])
+        try database.saveItems([
+            LocalItem(id: os.rootItemID, siteID: "site-1", courseID: 1, remoteID: 1,
+                      filename: os.effectiveFolderName, isDirectory: true),
+            LocalItem(id: db.rootItemID, siteID: "site-1", courseID: 2, remoteID: 2,
+                      filename: db.effectiveFolderName, isDirectory: true),
+        ])
+        // Course 2 was renamed (e.g. in Finder) after the caller loaded its list.
+        try database.renameCourse(courseID: 2, siteID: "site-1", customName: "Kernels")
+        let anchor = try database.currentChangeCounter()
+
+        XCTAssertThrowsError(try database.renameCourse(courseID: 1, siteID: "site-1", customName: "kernels")) { error in
+            XCTAssertEqual(error as? CourseFolderNameConflictError,
+                           CourseFolderNameConflictError(courseID: 1, conflictingCourseID: 2))
+        }
+        XCTAssertNil(try database.fetchCourse(id: 1, siteID: "site-1")?.customFolderName)
+        XCTAssertEqual(try database.fetchItem(id: os.rootItemID)?.filename, "Operating Systems")
+        XCTAssertEqual(try database.currentChangeCounter(), anchor)
+        // Nor may it take the name of the user's own folder at the top level.
+        try database.saveItems([LocalItem(id: "local-notes", siteID: "site-1", courseID: 0, remoteID: 0,
+                                          filename: "My Notes", isDirectory: true, isLocal: true)])
+        XCTAssertThrowsError(try database.renameCourse(courseID: 1, siteID: "site-1", customName: "my notes")) { error in
+            XCTAssertEqual(error as? CourseFolderNameConflictError,
+                           CourseFolderNameConflictError(courseID: 1, conflictingItemID: "local-notes"))
+        }
+        XCTAssertNil(try database.fetchCourse(id: 1, siteID: "site-1")?.customFolderName)
+        // Courses on another site don't collide.
+        try database.saveCourses([MoodleCourse(id: 3, shortName: "X", fullName: "Other", siteID: "site-2")])
+        XCTAssertNoThrow(try database.renameCourse(courseID: 3, siteID: "site-2", customName: "Kernels"))
+    }
+
+    func testRenameCourseRollsBackNameWhenRootUpdateFails() throws {
+        let course = MoodleCourse(id: 1, shortName: "OS", fullName: "Operating Systems", siteID: "site-1")
+        try database.saveCourses([course])
+        try database.saveItems([LocalItem(id: course.rootItemID, siteID: "site-1", courseID: 1, remoteID: 1,
+                                          filename: course.effectiveFolderName, isDirectory: true)])
+        try database.execute("CREATE TRIGGER reject_root_rename BEFORE UPDATE OF filename ON items BEGIN SELECT RAISE(ABORT, 'injected failure'); END")
+        let anchor = try database.currentChangeCounter()
+
+        XCTAssertThrowsError(try database.renameCourse(courseID: 1, siteID: "site-1", customName: "Kernels"))
+        XCTAssertNil(try database.fetchCourse(id: 1, siteID: "site-1")?.customFolderName)
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.filename, "Operating Systems")
+        XCTAssertEqual(try database.currentChangeCounter(), anchor)
+
+        try database.execute("DROP TRIGGER reject_root_rename")
+        try database.renameCourse(courseID: 1, siteID: "site-1", customName: "Kernels")
+        XCTAssertEqual(try database.fetchCourse(id: 1, siteID: "site-1")?.customFolderName, "Kernels")
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.filename, "Kernels")
+    }
+
+    func testCourseCommitRollsBackWhenRootReconcileFails() throws {
+        let course = MoodleCourse(id: 1, shortName: "OS", fullName: "Operating Systems", siteID: "site-1")
+        try database.saveCourses([course])
+        let staleRoot = LocalItem(id: course.rootItemID, siteID: "site-1", courseID: 1, remoteID: 1,
+                                  filename: course.effectiveFolderName, isDirectory: true)
+        let oldCursor = SyncCursor(courseID: 1, siteID: "site-1", lastSyncDate: Date(timeIntervalSince1970: 100), itemCount: 1)
+        let oldOutline = CourseOutlineSnapshot(courseID: 1, capturedAt: oldCursor.lastSyncDate, sections: [CourseOutlineSection]())
+        try database.commitCourseSync(items: [staleRoot], deletingItemIDs: [], cursor: oldCursor, outline: oldOutline)
+        // Renamed after the sync built its root, but before it committed. A real
+        // rename moves the root too, so a leaked stale write would be visible.
+        try database.renameCourse(courseID: 1, siteID: "site-1", customName: "Kernels")
+
+        // Fail only the reconcile step's write (the item upsert keeps the old
+        // name), so this exercises the rollback of everything written before it.
+        try database.execute("CREATE TRIGGER reject_reconcile BEFORE UPDATE OF filename ON items WHEN NEW.filename = 'Kernels' BEGIN SELECT RAISE(ABORT, 'injected failure'); END")
+        let anchor = try database.currentChangeCounter()
+        let nextCursor = SyncCursor(courseID: 1, siteID: "site-1", lastSyncDate: Date(timeIntervalSince1970: 200), itemCount: 1)
+        let nextOutline = CourseOutlineSnapshot(courseID: 1, capturedAt: nextCursor.lastSyncDate,
+                                                sections: [CourseOutlineSection(id: 20, name: "After", sectionNumber: 1)])
+
+        XCTAssertThrowsError(try database.commitCourseSync(items: [staleRoot], deletingItemIDs: [], cursor: nextCursor, outline: nextOutline))
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.filename, "Kernels")
+        XCTAssertEqual(try database.fetchSyncCursor(courseID: 1, siteID: "site-1"), oldCursor)
+        XCTAssertEqual(try database.fetchCourseOutline(courseID: 1, siteID: "site-1"), oldOutline)
+        XCTAssertEqual(try database.currentChangeCounter(), anchor)
+
+        try database.execute("DROP TRIGGER reject_reconcile")
+        try database.commitCourseSync(items: [staleRoot], deletingItemIDs: [], cursor: nextCursor, outline: nextOutline)
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.filename, "Kernels")
+        XCTAssertEqual(try database.fetchSyncCursor(courseID: 1, siteID: "site-1"), nextCursor)
+    }
+
+    func testSetCourseTagsLeavesBothStoresUnchangedWhenRootUpdateFails() throws {
+        let course = MoodleCourse(id: 1, shortName: "OS", fullName: "Operating Systems", siteID: "site-1")
+        try database.saveCourses([course])
+        try database.saveItems([LocalItem(id: course.rootItemID, siteID: "site-1", courseID: 1, remoteID: 1,
+                                          filename: course.effectiveFolderName, isDirectory: true)])
+        let oldTags = [FinderTag(name: "Exams", color: .red)]
+        try database.setCourseTags(oldTags, courseID: 1, siteID: "site-1")
+        let oldRoot = try XCTUnwrap(database.fetchItem(id: course.rootItemID))
+        XCTAssertEqual(oldRoot.tagData, FinderTag.tagData(from: oldTags))
+
+        try database.execute("CREATE TRIGGER reject_root_tags BEFORE UPDATE OF tag_data ON items BEGIN SELECT RAISE(ABORT, 'injected failure'); END")
+        let newTags = [FinderTag(name: "Labs", color: .green)]
+        XCTAssertThrowsError(try database.setCourseTags(newTags, courseID: 1, siteID: "site-1"))
+        XCTAssertEqual(try database.fetchCourseTags(courseID: 1, siteID: "site-1"), oldTags)
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID), oldRoot)
+
+        try database.execute("DROP TRIGGER reject_root_tags")
+        try database.setCourseTags(newTags, courseID: 1, siteID: "site-1")
+        XCTAssertEqual(try database.fetchCourseTags(courseID: 1, siteID: "site-1"), newTags)
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.tagData, FinderTag.tagData(from: newTags))
+    }
+
+    func testCourseCommitKeepsTagEditMadeDuringSync() throws {
+        let course = MoodleCourse(id: 1, shortName: "OS", fullName: "Operating Systems", siteID: "site-1")
+        try database.saveCourses([course])
+        let oldTags = [FinderTag(name: "Exams", color: .red)]
+        // The sync read the root's tags before its network round trips...
+        let staleRoot = LocalItem(id: course.rootItemID, siteID: "site-1", courseID: 1, remoteID: 1,
+                                  filename: course.effectiveFolderName, isDirectory: true,
+                                  tagData: FinderTag.tagData(from: oldTags))
+        // ...and the user retagged the course (new root row, so the UPDATE missed) before it committed.
+        let newTags = [FinderTag(name: "Labs", color: .green), FinderTag(name: "Exams", color: .red)]
+        try database.setCourseTags(newTags, courseID: 1, siteID: "site-1")
+
+        let cursor = SyncCursor(courseID: 1, siteID: "site-1", lastSyncDate: Date(), itemCount: 1)
+        try database.commitCourseSync(items: [staleRoot], deletingItemIDs: [], cursor: cursor,
+                                      outline: CourseOutlineSnapshot(courseID: 1, capturedAt: cursor.lastSyncDate, sections: [CourseOutlineSection]()))
+
+        let stored = try database.fetchCourseTags(courseID: 1, siteID: "site-1")
+        XCTAssertEqual(Set(stored), Set(newTags))
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.tagData, FinderTag.tagData(from: stored))
+
+        // Already in step: re-saving the same tags doesn't touch the root.
+        let anchor = try database.currentChangeCounter()
+        try database.setCourseTags(newTags, courseID: 1, siteID: "site-1")
+        XCTAssertEqual(try database.currentChangeCounter(), anchor)
+    }
+
+    func testCourseCommitKeepsTagEditOnExistingRootMadeDuringSync() throws {
+        let course = MoodleCourse(id: 1, shortName: "OS", fullName: "Operating Systems", siteID: "site-1")
+        try database.saveCourses([course])
+        let oldTags = [FinderTag(name: "Exams", color: .red)]
+        try database.setCourseTags(oldTags, courseID: 1, siteID: "site-1")
+        // The root exists with the old tags, and the sync reads it as-is...
+        let staleRoot = LocalItem(id: course.rootItemID, siteID: "site-1", courseID: 1, remoteID: 1,
+                                  filename: course.effectiveFolderName, isDirectory: true,
+                                  tagData: FinderTag.tagData(from: oldTags))
+        try database.saveItems([staleRoot])
+        // ...then the user retags the course, updating that existing root, before the sync commits.
+        let newTags = [FinderTag(name: "Labs", color: .green)]
+        try database.setCourseTags(newTags, courseID: 1, siteID: "site-1")
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.tagData, FinderTag.tagData(from: newTags))
+
+        let cursor = SyncCursor(courseID: 1, siteID: "site-1", lastSyncDate: Date(), itemCount: 1)
+        try database.commitCourseSync(items: [staleRoot], deletingItemIDs: [], cursor: cursor,
+                                      outline: CourseOutlineSnapshot(courseID: 1, capturedAt: cursor.lastSyncDate, sections: [CourseOutlineSection]()))
+
+        XCTAssertEqual(try database.fetchCourseTags(courseID: 1, siteID: "site-1"), newTags)
+        XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.tagData, FinderTag.tagData(from: newTags))
+    }
+
+    func testFetchCourseReturnsStoredCustomization() throws {
+        try database.saveCourses([
+            MoodleCourse(id: 101, shortName: "CS101", fullName: "Intro to CS", siteID: "site-1"),
+        ])
+        try database.updateCourseCustomFolderName(courseID: 101, siteID: "site-1", customName: "CS")
+
+        XCTAssertEqual(try database.fetchCourse(id: 101, siteID: "site-1")?.customFolderName, "CS")
+        XCTAssertNil(try database.fetchCourse(id: 101, siteID: "site-2"))
+        XCTAssertNil(try database.fetchCourse(id: 999, siteID: "site-1"))
+    }
+
     func testSaveFetchCourses() throws {
         let courses = [
             MoodleCourse(id: 101, shortName: "CS101", fullName: "Intro to CS", siteID: "site-1"),

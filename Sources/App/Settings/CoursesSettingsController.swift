@@ -15,7 +15,7 @@ final class CoursesSettingsController: NSViewController {
 
     override func loadView() {
         view = NativeSurface()
-        let courses = CourseSelectionView(state: state)
+        let courses = CourseSelectionView(state: state, customization: CourseCustomizationController(state: state))
         self.courses = courses
         let refresh = ActionButton("Refresh Courses") { [weak self] button in
             guard let self else { return }
@@ -31,10 +31,12 @@ final class CoursesSettingsController: NSViewController {
         let spacer = NSView()
         spacer.setContentHuggingPriority(.init(1), for: .horizontal)
         let actions = NativeUI.stack([refresh, spacer, open, sync], spacing: 8, horizontal: true)
-        let stack = NativeUI.stack([status, courses, actions], spacing: 16)
+        let hint = NativeUI.label("Control-click a course to rename or tag it.", secondary: true, size: 11)
+        let stack = NativeUI.stack([status, courses, hint, actions], spacing: 16)
         stack.setCustomSpacing(10, after: status)
+        stack.setCustomSpacing(6, after: courses)
         NativeUI.pin(stack, in: view, inset: 20)
-        for view in [courses, actions, status] { view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
+        for view in [courses, hint, actions, status] { view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
         subscription = state.objectWillChange.sink { [weak self] in
             Task { @MainActor [weak self] in self?.refreshStatus() }
         }

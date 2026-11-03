@@ -23,6 +23,22 @@ final class SyncEngineCourseScopeTests: XCTestCase {
         try? FileManager.default.removeItem(atPath: tempPath)
     }
 
+    func testSyncCourseKeepsStoredCustomNameOverStaleCallerCopy() async throws {
+        let site = MoodleSite(id: "site-1", displayName: "Example", baseURL: URL(string: "https://moodle.example.edu")!)
+        // The app's in-memory copy predates a rename made in Finder, which
+        // the File Provider extension wrote straight to the database.
+        let staleCourse = MoodleCourse(id: 101, shortName: "C101", fullName: "Course 101", siteID: site.id)
+        try database.saveCourses([staleCourse])
+        try database.updateCourseCustomFolderName(courseID: staleCourse.id, siteID: site.id, customName: "Renamed in Finder")
+
+        let provider = FakeLMSProvider(courseContents: [staleCourse.id: []])
+        let engine = SyncEngine(provider: provider, database: database)
+        try await engine.syncCourse(site: site, token: AuthToken(token: "token"), course: staleCourse)
+
+        let root = try XCTUnwrap(database.fetchItem(id: staleCourse.rootItemID))
+        XCTAssertEqual(root.filename, "Renamed in Finder")
+    }
+
     func testIncompleteMoodleResponsesKeepLastSuccessfulCourseSnapshot() async throws {
         let site = MoodleSite(id: "site-1", displayName: "Example", baseURL: URL(string: "https://moodle.example.edu")!)
         let course = MoodleCourse(id: 101, shortName: "C101", fullName: "Course 101", siteID: site.id)

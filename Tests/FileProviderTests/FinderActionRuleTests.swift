@@ -120,14 +120,25 @@ final class FinderActionRuleTests: XCTestCase {
                            item("folder-a-9", directory: true), item("file-a-1"), item("file-a-2", kept: true)]
         for moodleItem in moodleItems {
             let name = moodleItem.itemIdentifier.rawValue
+            let isCourseFolder = name.hasPrefix("course-")
             XCTAssertEqual(alert(for: "Trash", on: moodleItem), "Files from Moodle can’t be deleted", name)
             XCTAssertEqual(alert(for: "Delete", on: moodleItem), "Files from Moodle can’t be deleted", name)
-            XCTAssertEqual(alert(for: "Rename", on: moodleItem), "Files from Moodle can’t be renamed", name)
+            // Course folders can be renamed: the name is stored as the course's custom name.
+            XCTAssertEqual(alert(for: "Rename", on: moodleItem),
+                           isCourseFolder ? nil : "Files from Moodle can’t be renamed", name)
             XCTAssertEqual(alert(for: "Move", on: moodleItem), "Files from Moodle can’t be moved", name)
             XCTAssertEqual(alert(for: "MoveOut", on: moodleItem), "Files from Moodle can’t be moved", name)
             XCTAssertNil(alert(for: "Copy", on: moodleItem), "Copying a Moodle file is how to keep your own")
             XCTAssertNil(alert(for: "CopyOut", on: moodleItem))
         }
+    }
+
+    func testCourseFoldersRenameWithoutAnAlertButStillCannotBeMoved() {
+        let course = item("course-a-1", directory: true)
+        XCTAssertTrue(course.capabilities.contains(.allowsRenaming), "The extension accepts the rename")
+        XCTAssertNil(alert(for: "Rename", on: course), "So Finder must not block it with the Moodle-file alert")
+        XCTAssertEqual(alert(for: "Move", on: course), "Files from Moodle can’t be moved")
+        XCTAssertEqual(alert(for: "Trash", on: course), "Files from Moodle can’t be deleted")
     }
 
     func testPersonalFilesAndTheRootChangeWithoutAlerts() {

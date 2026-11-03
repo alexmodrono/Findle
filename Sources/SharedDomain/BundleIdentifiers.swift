@@ -81,6 +81,11 @@ public enum BundleIdentifiers {
     /// which the extension's XPC-hosted process needs.
     public static let syncNowRequestNotification = "\(prefix).sync-now-requested"
 
+    /// Darwin notification the File Provider extension posts after the user
+    /// renames or tags a course folder in Finder, so the app re-reads course
+    /// names and tags from the shared database.
+    public static let courseCustomizationChangedNotification = "\(prefix).course-customization-changed"
+
     /// Posted by the extension when opening an item in Finder changed what
     /// counts as new, so the app's views catch up.
     public static let itemsSeenNotification = "\(prefix).items-seen"
