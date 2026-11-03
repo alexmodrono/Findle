@@ -26,6 +26,17 @@ enum DatabaseConnectionGate {
 
 /// An older binary must leave a newer store untouched instead of repairing or
 /// downgrading it. This distinct error must not trigger an empty fallback store.
+/// A course rename would give its folder the same name as another course's
+/// folder on the same site. Nothing was written.
+public struct CourseFolderNameConflictError: Error, LocalizedError, Sendable, Equatable {
+    public let courseID: Int
+    public let conflictingCourseID: Int
+
+    public var errorDescription: String? {
+        "Another course already uses that folder name."
+    }
+}
+
 public struct UnsupportedDatabaseSchemaError: Error, LocalizedError, Sendable {
     public let version: Int
     public var errorDescription: String? {
@@ -1225,13 +1236,42 @@ extension Database {
     /// Rename a course and its root folder item in one transaction, so the
     /// stored name and the name Finder shows can't disagree after a failure.
     /// A `nil` or blank `customName` restores the Moodle name.
+    ///
+    /// The folder-name check runs against courses read inside the same write
+    /// transaction, so it holds even when the app and the File Provider
+    /// extension rename courses at the same time from stale in-memory lists.
+    /// Throws `CourseFolderNameConflictError` without writing on a collision.
     public func renameCourse(courseID: Int, siteID: String, customName: String?) throws {
         try queue.sync {
             try transactionUnsafe {
+                let courses = try coursesForNamingUnsafe(siteID: siteID)
+                if let course = courses.first(where: { $0.id == courseID }),
+                   let conflict = course.folderNameConflict(forProposedName: customName, among: courses) {
+                    throw CourseFolderNameConflictError(courseID: courseID, conflictingCourseID: conflict.id)
+                }
                 try updateCourseCustomFolderNameUnsafe(courseID: courseID, siteID: siteID, customName: customName)
                 try reconcileCourseRootFilenameUnsafe(courseID: courseID, siteID: siteID)
             }
         }
+    }
+
+    /// The site's courses with just the fields that decide folder names.
+    /// The caller must hold `queue`.
+    private func coursesForNamingUnsafe(siteID: String) throws -> [MoodleCourse] {
+        let stmt = try prepareStatement("SELECT id, full_name, custom_folder_name FROM courses WHERE site_id = ?")
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, (siteID as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        var courses: [MoodleCourse] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            courses.append(MoodleCourse(
+                id: Int(sqlite3_column_int64(stmt, 0)),
+                shortName: "",
+                fullName: sqlite3_column_text(stmt, 1).map { String(cString: $0) } ?? "",
+                siteID: siteID,
+                customFolderName: sqlite3_column_text(stmt, 2).map { String(cString: $0) }
+            ))
+        }
+        return courses
     }
 
     /// The caller must hold `queue`.

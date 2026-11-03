@@ -79,19 +79,20 @@ enum SyncedItemModification {
     /// so Finder shows exactly the name later syncs will keep. Renaming the
     /// folder back to the Moodle name clears the custom name. A name that
     /// would land on another course's folder (case-insensitively, after
-    /// sanitizing) is rejected as a collision without changing anything.
+    /// sanitizing) is rejected as a collision without changing anything;
+    /// `Database.renameCourse` makes that check inside its write transaction.
     private static func renameCourseRoot(_ courseRoot: LocalItem, to proposedName: String, database: Database) throws {
-        let courses = try database.fetchCourses(siteID: courseRoot.siteID)
-        guard let course = courses.first(where: { $0.id == courseRoot.courseID }) else {
+        guard let course = try database.fetchCourse(id: courseRoot.courseID, siteID: courseRoot.siteID) else {
             throw NSFileProviderError(.noSuchItem)
         }
-        guard course.folderNameConflict(forProposedName: proposedName, among: courses) == nil else {
+        do {
+            try database.renameCourse(
+                courseID: course.id,
+                siteID: course.siteID,
+                customName: course.normalizedCustomName(proposedName)
+            )
+        } catch is CourseFolderNameConflictError {
             throw NSFileProviderError(.filenameCollision)
         }
-        try database.renameCourse(
-            courseID: course.id,
-            siteID: course.siteID,
-            customName: course.normalizedCustomName(proposedName)
-        )
     }
 }

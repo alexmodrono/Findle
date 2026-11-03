@@ -480,6 +480,32 @@ final class DatabaseTests: XCTestCase {
         XCTAssertEqual(try database.fetchItem(id: course.rootItemID)?.filename, "Operating Systems")
     }
 
+    func testRenameCourseRejectsStoredFolderNameCollisionWithoutWriting() throws {
+        let os = MoodleCourse(id: 1, shortName: "OS", fullName: "Operating Systems", siteID: "site-1")
+        let db = MoodleCourse(id: 2, shortName: "DB", fullName: "Databases", siteID: "site-1")
+        try database.saveCourses([os, db])
+        try database.saveItems([
+            LocalItem(id: os.rootItemID, siteID: "site-1", courseID: 1, remoteID: 1,
+                      filename: os.effectiveFolderName, isDirectory: true),
+            LocalItem(id: db.rootItemID, siteID: "site-1", courseID: 2, remoteID: 2,
+                      filename: db.effectiveFolderName, isDirectory: true),
+        ])
+        // Course 2 was renamed (e.g. in Finder) after the caller loaded its list.
+        try database.renameCourse(courseID: 2, siteID: "site-1", customName: "Kernels")
+        let anchor = try database.currentChangeCounter()
+
+        XCTAssertThrowsError(try database.renameCourse(courseID: 1, siteID: "site-1", customName: "kernels")) { error in
+            XCTAssertEqual(error as? CourseFolderNameConflictError,
+                           CourseFolderNameConflictError(courseID: 1, conflictingCourseID: 2))
+        }
+        XCTAssertNil(try database.fetchCourse(id: 1, siteID: "site-1")?.customFolderName)
+        XCTAssertEqual(try database.fetchItem(id: os.rootItemID)?.filename, "Operating Systems")
+        XCTAssertEqual(try database.currentChangeCounter(), anchor)
+        // Courses on another site don't collide.
+        try database.saveCourses([MoodleCourse(id: 3, shortName: "X", fullName: "Other", siteID: "site-2")])
+        XCTAssertNoThrow(try database.renameCourse(courseID: 3, siteID: "site-2", customName: "Kernels"))
+    }
+
     func testFetchCourseReturnsStoredCustomization() throws {
         try database.saveCourses([
             MoodleCourse(id: 101, shortName: "CS101", fullName: "Intro to CS", siteID: "site-1"),
