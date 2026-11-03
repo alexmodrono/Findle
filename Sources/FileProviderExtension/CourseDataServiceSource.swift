@@ -157,7 +157,14 @@ private final class CourseDataExport: NSObject, CourseDataSheetsProtocol, @unche
             do {
                 // The draft upload after a change runs in the background. Save the
                 // Submit folder now so grading submits the files the user sees.
-                try await SubmissionUploader.saveDraft(folderID: draftFolderID, database: database, token: AuthToken(token: token))
+                let uploaded = try await SubmissionUploader.saveDraft(folderID: draftFolderID, database: database,
+                                                                      token: AuthToken(token: token))
+                // An empty folder clears the draft; submitting it would hand in nothing.
+                guard uploaded > 0 else {
+                    reply(NSError(domain: CourseDataService.serviceName, code: 1,
+                                  userInfo: [NSLocalizedDescriptionKey: "The Submit folder has no files to submit."]))
+                    return
+                }
                 try await MoodleClient().submitForGrading(site: site, token: AuthToken(token: token), assignmentID: assignment.id,
                                                           acceptStatement: acceptStatement)
                 reply(nil)
