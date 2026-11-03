@@ -138,8 +138,16 @@ private final class CourseDataExport: NSObject, CourseDataSheetsProtocol, @unche
             reply(NSFileProviderError(.noSuchItem) as NSError)
             return
         }
-        let accountID = (try? database.fetchAccounts())?.first { $0.siteID == siteID }?.id ?? siteID
-        guard let token = try? KeychainManager.shared.retrieveToken(forAccount: accountID) else {
+        // As markCompletion: an unreadable keychain is transient, a missing token is a sign-out.
+        let token: String?
+        do {
+            let accountID = try database.fetchAccounts().first { $0.siteID == siteID }?.id ?? siteID
+            token = try KeychainManager.shared.retrieveToken(forAccount: accountID)
+        } catch {
+            reply(NSFileProviderError(.serverUnreachable) as NSError)
+            return
+        }
+        guard let token else {
             reply(NSFileProviderError(.notAuthenticated) as NSError)
             return
         }
@@ -148,6 +156,12 @@ private final class CourseDataExport: NSObject, CourseDataSheetsProtocol, @unche
                 try await MoodleClient().submitForGrading(site: site, token: AuthToken(token: token), assignmentID: assignment.id,
                                                           acceptStatement: acceptStatement)
                 reply(nil)
+            } catch let error as FindleError where error.requiresReauthentication {
+                reply(NSFileProviderError(.notAuthenticated) as NSError)
+            } catch let error as FindleError {
+                // Moodle's own reason (a closed assignment, a missing statement) reaches the sheet.
+                reply(NSError(domain: CourseDataService.serviceName, code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: error.localizedDescription]))
             } catch {
                 reply(NSFileProviderError(.serverUnreachable) as NSError)
             }

@@ -95,3 +95,34 @@ final class FinderCollectionTests: XCTestCase {
         XCTAssertEqual(try database.currentChangeCounter(), anchor)
     }
 }
+
+/// Signing out or wiping Findle removes everything kept per site.
+final class SiteDataCleanupTests: XCTestCase {
+    func testRemovingTheAccountOrEverythingLeavesNoPerSiteRows() throws {
+        for wipeAll in [false, true] {
+            let path = NSTemporaryDirectory() + "cleanup-\(UUID().uuidString).db"
+            defer { for suffix in ["", "-wal", "-shm", ".initialization-lock"] { try? FileManager.default.removeItem(atPath: path + suffix) } }
+            let database = try Database(path: path)
+            let site = MoodleSite(id: "s", displayName: "Campus", baseURL: URL(string: "https://moodle.example.edu")!)
+            try database.saveSite(site)
+            try database.saveAccount(Account(id: "acct", siteID: "s", userID: 1, state: .authenticated(userID: 1), createdAt: Date()))
+            let items = [LocalItem(id: "c", siteID: "s", courseID: 1, remoteID: 1, filename: "C", isDirectory: true),
+                         LocalItem(id: "f", parentID: "c", siteID: "s", courseID: 1, remoteID: 2, filename: "f.pdf", contentVersion: "1")]
+            try database.commitCourseSync(items: items, deletingItemIDs: [],
+                                          cursor: SyncCursor(courseID: 1, siteID: "s", lastSyncDate: Date(), itemCount: 2),
+                                          outline: CourseOutlineSnapshot(courseID: 1, capturedAt: Date(), sections: []),
+                                          generatedContents: ["f": Data("x".utf8)])
+            try database.markItemOpened(id: "f", at: Date())
+            try database.saveActivityCompletion([ActivityCompletion(moduleID: 2, courseID: 1, isManual: true, isComplete: true)],
+                                                courseID: 1, siteID: "s")
+            try database.savePreviousVersion(itemID: "f", siteID: "s", courseID: 1, path: "/tmp/f (previous).pdf", size: 1)
+
+            if wipeAll { try database.deleteAllData() } else { try database.deleteAccount(id: "acct") }
+
+            XCTAssertNil(try database.previousVersionPath(itemID: "f"), "wipeAll: \(wipeAll)")
+            XCTAssertNil(try database.fetchGeneratedContent(itemID: "f"), "wipeAll: \(wipeAll)")
+            XCTAssertEqual(try database.previousVersionBytes(courseID: 1, siteID: "s"), 0, "wipeAll: \(wipeAll)")
+            XCTAssertEqual(try database.fetchNewItems(courseID: 1, siteID: "s"), [], "wipeAll: \(wipeAll)")
+        }
+    }
+}

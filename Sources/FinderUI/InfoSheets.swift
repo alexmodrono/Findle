@@ -100,9 +100,15 @@ final class AssignmentDetailsModel {
         defer { submitting = false }
         do {
             try await client.submit(itemID: itemID, acceptStatement: acceptStatement)
+        } catch {
+            self.error = "Moodle didn't accept the submission: \(error.localizedDescription)"
+            return
+        }
+        // The submission went through; only showing its new state may fail.
+        do {
             details = try await client.assignmentDetails(itemID: itemID)
         } catch {
-            self.error = "Moodle didn't accept the submission. Check it on Moodle and try again."
+            self.error = "Submitted. Findle couldn't show the new status; check it on Moodle."
         }
     }
 }

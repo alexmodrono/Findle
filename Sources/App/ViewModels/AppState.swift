@@ -1743,10 +1743,15 @@ final class AppState: ObservableObject {
         if let base = try? await client.fetchAssignments(site: site, token: token, courseIDs: courseIDs) {
             guard sessionWork.isCurrent(lease), database === db else { return }
             // Submitting from Finder needs the site to allow uploads (FX-06).
-            let siteTakesFiles = (try? await client.siteAllowsSubmissions(site: site, token: token)) ?? false
+            // A failed check keeps what was stored rather than turning submission off.
+            let siteTakesFiles = try? await client.siteAllowsSubmissions(site: site, token: token)
             let enriched = await Self.boundedMap(base) { assignment in
                 var a = assignment
-                a.takesFiles = a.takesFiles && siteTakesFiles
+                if let siteTakesFiles {
+                    a.takesFiles = a.takesFiles && siteTakesFiles
+                } else {
+                    a.takesFiles = storedAssignments[assignment.id]?.takesFiles ?? false
+                }
                 if let status = try? await client.fetchSubmissionStatus(site: site, token: token, assignmentID: assignment.id) {
                     a.submitted = status.submitted
                     a.graded = status.graded
@@ -2232,37 +2237,48 @@ final class AppState: ObservableObject {
                                           displayName: site.displayName)
         guard let manager = NSFileProviderManager(for: domain) else { return }
         let directory = Self.previousVersionsDirectory.appendingPathComponent(site.id, isDirectory: true)
-        for item in items where item.siteID == site.id {
+        let logger = self.logger
+        let siteID = site.id
+        for item in items where item.siteID == siteID {
             guard let url = await Self.userVisibleFileProviderURL(using: manager, for: NSFileProviderItemIdentifier(item.id)).url else { continue }
-            let access = url.startAccessingSecurityScopedResource()
-            defer { if access { url.stopAccessingSecurityScopedResource() } }
-            let status = try? url.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey]).ubiquitousItemDownloadingStatus
-            guard status == .current else { continue }
-            let name = (item.filename as NSString).deletingPathExtension + " (previous)"
-                + ((item.filename as NSString).pathExtension.isEmpty ? "" : "." + (item.filename as NSString).pathExtension)
-            let destination = directory.appendingPathComponent(UUID().uuidString, isDirectory: true).appendingPathComponent(name)
-            var copyError: Error?
-            var coordinationError: NSError?
-            NSFileCoordinator().coordinate(readingItemAt: url, options: .withoutChanges, error: &coordinationError) { readable in
-                do {
-                    try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    try FileManager.default.copyItem(at: readable, to: destination)
-                } catch { copyError = error }
-            }
-            if let failure = copyError ?? coordinationError {
-                logger.warning("Could not keep the previous version of a file: \(DiagnosticFailure(failure).summary, privacy: .public)")
-                continue
-            }
-            let size = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? item.fileSize
+            // A coordinated read of a large file must not hold up the main actor.
+            await Task.detached(priority: .utility) {
+                Self.keepPreviousVersion(of: item, at: url, in: directory, siteID: siteID, database: database, logger: logger)
+            }.value
+        }
+    }
+
+    private nonisolated static func keepPreviousVersion(of item: LocalItem, at url: URL, in directory: URL, siteID: String,
+                                                        database: Database, logger: Logger) {
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        let status = try? url.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey]).ubiquitousItemDownloadingStatus
+        guard status == .current else { return }
+        let name = (item.filename as NSString).deletingPathExtension + " (previous)"
+            + ((item.filename as NSString).pathExtension.isEmpty ? "" : "." + (item.filename as NSString).pathExtension)
+        let destination = directory.appendingPathComponent(UUID().uuidString, isDirectory: true).appendingPathComponent(name)
+        var copyError: Error?
+        var coordinationError: NSError?
+        NSFileCoordinator().coordinate(readingItemAt: url, options: .withoutChanges, error: &coordinationError) { readable in
             do {
-                if let older = try database.savePreviousVersion(itemID: item.id, siteID: site.id, courseID: item.courseID,
-                                                                 path: destination.path, size: size) {
-                    try? FileManager.default.removeItem(at: URL(fileURLWithPath: older).deletingLastPathComponent())
-                }
-            } catch {
-                try? FileManager.default.removeItem(at: destination.deletingLastPathComponent())
-                logger.warning("Could not record a previous version: \(DiagnosticFailure(error).summary, privacy: .public)")
+                try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try FileManager.default.copyItem(at: readable, to: destination)
+            } catch { copyError = error }
+        }
+        if let failure = copyError ?? coordinationError {
+            try? FileManager.default.removeItem(at: destination.deletingLastPathComponent())
+            logger.warning("Could not keep the previous version of a file: \(DiagnosticFailure(failure).summary, privacy: .public)")
+            return
+        }
+        let size = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? item.fileSize
+        do {
+            if let older = try database.savePreviousVersion(itemID: item.id, siteID: siteID, courseID: item.courseID,
+                                                             path: destination.path, size: size) {
+                try? FileManager.default.removeItem(at: URL(fileURLWithPath: older).deletingLastPathComponent())
             }
+        } catch {
+            try? FileManager.default.removeItem(at: destination.deletingLastPathComponent())
+            logger.warning("Could not record a previous version: \(DiagnosticFailure(error).summary, privacy: .public)")
         }
     }
 
@@ -2307,21 +2323,50 @@ final class AppState: ObservableObject {
         guard let database, let site = currentSite, let token = currentToken else { throw SharedSubmissionError.notReady }
         let directory = try personalFileStore.directory(forParentID: assignment.submitFolderID, siteID: site.id,
                                                         siteName: site.displayName, database: database)
-        for file in files {
-            let access = file.startAccessingSecurityScopedResource()
-            defer { if access { file.stopAccessingSecurityScopedResource() } }
-            try FileManager.default.copyItem(at: file, to: personalFileStore.uniqueURL(for: file.lastPathComponent, in: directory))
+        // A file already in the Submit folder with the same contents is reused, so
+        // sharing again after a failure never uploads it twice.
+        var inFolder: [URL] = []
+        var created: [URL] = []
+        func removeCreated() { for url in created { try? FileManager.default.removeItem(at: url) } }
+        do {
+            for file in files {
+                let access = file.startAccessingSecurityScopedResource()
+                defer { if access { file.stopAccessingSecurityScopedResource() } }
+                let existing = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+                if let same = existing.first(where: { FileManager.default.contentsEqual(atPath: $0.path, andPath: file.path) }) {
+                    inFolder.append(same)
+                    continue
+                }
+                let destination = personalFileStore.uniqueURL(for: file.lastPathComponent, in: directory)
+                try FileManager.default.copyItem(at: file, to: destination)
+                created.append(destination)
+                inFolder.append(destination)
+            }
+            // The reconciler turns the copies into personal files in the Submit folder.
+            await reconcilePersonalFiles()
+            await personalFilesReconcileTask?.value
+            let tracked = Set(try database.fetchItems(parentID: assignment.submitFolderID, siteID: site.id)
+                .compactMap { $0.localPath.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path } })
+            guard inFolder.allSatisfy({ tracked.contains($0.resolvingSymlinksInPath().path) }) else {
+                throw SharedSubmissionError.notReady
+            }
+            try await SubmissionUploader.saveDraft(folderID: assignment.submitFolderID, database: database, client: moodleClient, token: token)
+        } catch {
+            // Nothing reached Moodle: take back only the copies this attempt made.
+            removeCreated()
+            if !created.isEmpty { await reconcilePersonalFiles() }
+            throw error
         }
-        // The reconciler turns the copies into personal files in the Submit folder.
-        await reconcilePersonalFiles()
-        await personalFilesReconcileTask?.value
-        try await SubmissionUploader.saveDraft(folderID: assignment.submitFolderID, database: database, client: moodleClient, token: token)
+        // The draft matches the folder now; a failed submission leaves both as they
+        // are. Either way the coursework refresh afterwards shows Moodle's state.
+        defer {
+            signalFileProviderChanges(for: site)
+            trackingRefreshTask?.cancel()
+            trackingRefreshTask = Task { [weak self] in await self?.refreshTracking() }
+        }
         if forGrading {
             try await moodleClient.submitForGrading(site: site, token: token, assignmentID: assignment.id, acceptStatement: acceptStatement)
         }
-        signalFileProviderChanges(for: site)
-        trackingRefreshTask?.cancel()
-        trackingRefreshTask = Task { [weak self] in await self?.refreshTracking() }
     }
 
     /// The course's assignments and quizzes not yet due, for the companion.

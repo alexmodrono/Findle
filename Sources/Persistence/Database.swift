@@ -1215,11 +1215,15 @@ extension Database {
                     throw FindleError.databaseError(detail: "Failed to delete account item activity: \(String(cString: sqlite3_errmsg(db)))")
                 }
 
-                let deleteGenerated = try prepareStatement("DELETE FROM generated_contents WHERE site_id IN (SELECT site_id FROM accounts WHERE id = ?)")
-                defer { sqlite3_finalize(deleteGenerated) }
-                sqlite3_bind_text(deleteGenerated, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                guard sqlite3_step(deleteGenerated) == SQLITE_DONE else {
-                    throw FindleError.databaseError(detail: "Failed to delete account generated contents: \(String(cString: sqlite3_errmsg(db)))")
+                // Everything else kept per site goes with the account. Copies of
+                // previous versions stay on disk: they may be the only copy left.
+                for table in ["generated_contents", "previous_versions", "activity_completion"] {
+                    let delete = try prepareStatement("DELETE FROM \(table) WHERE site_id IN (SELECT site_id FROM accounts WHERE id = ?)")
+                    defer { sqlite3_finalize(delete) }
+                    sqlite3_bind_text(delete, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    guard sqlite3_step(delete) == SQLITE_DONE else {
+                        throw FindleError.databaseError(detail: "Failed to delete account \(table): \(String(cString: sqlite3_errmsg(db)))")
+                    }
                 }
 
                 let deleteAccount = try prepareStatement("DELETE FROM accounts WHERE id = ?")
@@ -3964,6 +3968,7 @@ extension Database {
                     "items", "pending_deletions", "course_tags", "sync_cursors",
                     "course_outlines",
                     "assignments", "grade_items", "quizzes", "quiz_attempts",
+                    "item_activity", "generated_contents", "previous_versions", "activity_completion",
                     "courses", "accounts", "sites"
                 ] {
                     try executeUnsafe("DELETE FROM \(table)")

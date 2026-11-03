@@ -87,14 +87,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             if [CourseworkSummary.assignmentExtension, CourseworkSummary.quizExtension].contains(extensionName) {
                 let access = url.startAccessingSecurityScopedResource()
                 defer { if access { url.stopAccessingSecurityScopedResource() } }
-                if let link = (try? Data(contentsOf: url)).flatMap(CourseworkSummary.decode)?.moodleURL { NSWorkspace.shared.open(link) }
+                // Only the current Moodle site's pages: the file could have been edited.
+                if let link = (try? Data(contentsOf: url)).flatMap(CourseworkSummary.decode)?.moodleURL,
+                   link.scheme?.lowercased() == "https",
+                   let host = state.currentSite?.baseURL.host?.lowercased(), link.host?.lowercased() == host {
+                    NSWorkspace.shared.open(link)
+                }
             } else {
                 shared.append(url)
             }
         }
         if !shared.isEmpty {
             let controller = SubmitWindowController(state: state, files: shared)
-            controller.onClose = { [weak self] in self?.submission = nil; self?.updateActivationPolicy() }
+            controller.onClose = { [weak self, weak controller] in
+                guard let self else { return }
+                // A later share may have opened another window meanwhile.
+                if self.submission === controller { self.submission = nil }
+                self.updateActivationPolicy()
+            }
             submission = controller
             controller.present()
         }

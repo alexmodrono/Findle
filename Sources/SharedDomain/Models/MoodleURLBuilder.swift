@@ -36,8 +36,11 @@ public enum MoodleURLBuilder {
         }
 
         // Assignment folders and their briefs open the assignment.
-        if itemID.hasPrefix("assign-") || itemID.hasPrefix("brief-") {
+        if itemID.hasPrefix("assign-") || itemID.hasPrefix("brief-") || itemID.hasPrefix("submit-") {
             return moduleURL(baseURL: baseURL, moduleName: "assign", cmid: remoteID)
+        }
+        if itemID.hasPrefix("quizsum-") {
+            return moduleURL(baseURL: baseURL, moduleName: "quiz", cmid: remoteID)
         }
 
         // Folder modules link to the folder view page.

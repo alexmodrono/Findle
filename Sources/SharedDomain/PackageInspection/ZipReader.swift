@@ -85,12 +85,14 @@ public struct ZipReader {
     /// Raw DEFLATE, which is what Compression's zlib algorithm decodes.
     private static func inflate(_ input: Data, size: Int) throws -> Data {
         guard size > 0 else { return Data() }
+        // A damaged entry can claim content with no compressed bytes.
+        guard !input.isEmpty else { throw Failure.damaged }
         var output = Data(count: size)
-        let written = output.withUnsafeMutableBytes { destination in
-            input.withUnsafeBytes { source in
-                compression_decode_buffer(
-                    destination.bindMemory(to: UInt8.self).baseAddress!, size,
-                    source.bindMemory(to: UInt8.self).baseAddress!, input.count, nil, COMPRESSION_ZLIB)
+        let written = output.withUnsafeMutableBytes { destination -> Int in
+            input.withUnsafeBytes { source -> Int in
+                guard let target = destination.bindMemory(to: UInt8.self).baseAddress,
+                      let bytes = source.bindMemory(to: UInt8.self).baseAddress else { return 0 }
+                return compression_decode_buffer(target, size, bytes, input.count, nil, COMPRESSION_ZLIB)
             }
         }
         guard written == size else { throw Failure.damaged }

@@ -74,7 +74,22 @@ final class PackageSummaryTests: XCTestCase {
         XCTAssertThrowsError(try PackageSummary.read(zip(["h5p.json": Data("not json".utf8)])))
     }
 
-    func testLibraryNamesReadLikeTheirActivity() {
+    func testADeflatedEntryWithoutCompressedBytesThrows() throws {
+        // A hand-built archive whose h5p.json claims 10 deflated bytes but stores none.
+        func le16(_ v: Int) -> [UInt8] { [UInt8(v & 0xFF), UInt8(v >> 8 & 0xFF)] }
+        func le32(_ v: Int) -> [UInt8] { le16(v & 0xFFFF) + le16(v >> 16 & 0xFFFF) }
+        let name = Array("h5p.json".utf8)
+        var data = le32(0x0403_4B50) + le16(20) + le16(0) + le16(8) + le16(0) + le16(0) + le32(0) + le32(0) + le32(10)
+            + le16(name.count) + le16(0) + name
+        let central = data.count
+        data += le32(0x0201_4B50) + le16(20) + le16(20) + le16(0) + le16(8) + le16(0) + le16(0) + le32(0) + le32(0) + le32(10)
+            + le16(name.count) + le16(0) + le16(0) + le16(0) + le16(0) + le32(0) + le32(0) + name
+        let size = data.count - central
+        data += le32(0x0605_4B50) + le16(0) + le16(0) + le16(1) + le16(1) + le32(size) + le32(central) + le16(0)
+        XCTAssertThrowsError(try PackageSummary.read(Data(data)), "A damaged archive throws instead of crashing Quick Look")
+    }
+
+        func testLibraryNamesReadLikeTheirActivity() {
         XCTAssertEqual(PackageSummary.humanize("H5P.InteractiveVideo"), "Interactive Video")
         XCTAssertEqual(PackageSummary.humanize("H5P.DragQuestion"), "Drag Question")
         XCTAssertEqual(PackageSummary.humanize(""), "Interactive content")

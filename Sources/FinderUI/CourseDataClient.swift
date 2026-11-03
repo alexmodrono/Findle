@@ -18,7 +18,7 @@ struct CourseDataClient: Sendable {
     let domain: NSFileProviderDomainIdentifier
     let item: NSFileProviderItemIdentifier
 
-    private func proxy() async throws -> (CourseDataSheetsProtocol, NSXPCConnection) {
+    private func connect() async throws -> NSXPCConnection {
         guard let match = try await NSFileProviderManager.domains().first(where: { $0.identifier == domain }),
               let manager = NSFileProviderManager(for: match) else { throw Failure.unavailable }
         let url = try await manager.getUserVisibleURL(for: item)
@@ -29,21 +29,33 @@ struct CourseDataClient: Sendable {
         let connection = try await service.fileProviderConnection()
         connection.remoteObjectInterface = NSXPCInterface(with: CourseDataSheetsProtocol.self)
         connection.resume()
-        guard let proxy = connection.remoteObjectProxyWithErrorHandler({ _ in }) as? CourseDataSheetsProtocol else {
-            connection.invalidate()
-            throw Failure.unavailable
+        return connection
+    }
+
+    /// Runs one request. A rejected, crashed or interrupted connection only calls
+    /// the error handler, so it ends the request too; whichever comes first wins.
+    private func perform<T: Sendable>(
+        _ body: (CourseDataSheetsProtocol, @escaping @Sendable (Result<T, Error>) -> Void) -> Void
+    ) async throws -> T {
+        let connection = try await connect()
+        defer { connection.invalidate() }
+        return try await withCheckedThrowingContinuation { continuation in
+            let once = ResumeOnce(continuation)
+            guard let service = connection.remoteObjectProxyWithErrorHandler({ once.resume(.failure($0)) })
+                    as? CourseDataSheetsProtocol else {
+                once.resume(.failure(Failure.unavailable))
+                return
+            }
+            body(service) { once.resume($0) }
         }
-        return (proxy, connection)
     }
 
     private func call<T: Decodable & Sendable>(_ type: T.Type,
                                                 _ body: (CourseDataSheetsProtocol, @escaping @Sendable (Data?, Error?) -> Void) -> Void)
         async throws -> T {
-        let (service, connection) = try await proxy()
-        defer { connection.invalidate() }
-        let data: Data = try await withCheckedThrowingContinuation { continuation in
+        let data: Data = try await perform { service, finish in
             body(service) { data, error in
-                if let data { continuation.resume(returning: data) } else { continuation.resume(throwing: error ?? Failure.unavailable) }
+                finish(data.map { .success($0) } ?? .failure(error ?? Failure.unavailable))
             }
         }
         return try CourseDataService.decode(T.self, from: data)
@@ -58,22 +70,36 @@ struct CourseDataClient: Sendable {
     }
 
     func submit(itemID: String, acceptStatement: Bool) async throws {
-        let (service, connection) = try await proxy()
-        defer { connection.invalidate() }
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        try await perform { (service, finish: @escaping @Sendable (Result<Void, Error>) -> Void) in
             service.submitAssignment(itemID: itemID, acceptStatement: acceptStatement) { error in
-                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+                finish(error.map { .failure($0) } ?? .success(()))
             }
         }
     }
 
     func setKeptOffline(courseID: Int, kept: Bool) async throws {
-        let (service, connection) = try await proxy()
-        defer { connection.invalidate() }
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        try await perform { (service, finish: @escaping @Sendable (Result<Void, Error>) -> Void) in
             service.setCourseKeptOffline(courseID: courseID, kept: kept) { error in
-                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+                finish(error.map { .failure($0) } ?? .success(()))
             }
         }
+    }
+}
+
+/// Resumes a continuation once, from a reply or the XPC error handler.
+private final class ResumeOnce<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<T, Error>?
+
+    init(_ continuation: CheckedContinuation<T, Error>) {
+        self.continuation = continuation
+    }
+
+    func resume(_ result: Result<T, Error>) {
+        lock.lock()
+        let pending = continuation
+        continuation = nil
+        lock.unlock()
+        pending?.resume(with: result)
     }
 }

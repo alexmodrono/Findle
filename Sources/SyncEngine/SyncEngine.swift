@@ -379,8 +379,6 @@ public actor SyncEngine {
                   !Self.becomesWebArchive(existing: old, incoming: item) else { return nil }
             return old
         }
-        if !replaced.isEmpty, let willReplaceDownloads { await willReplaceDownloads(replaced) }
-
         try Task.checkCancellation()
 
         // The network round trips above can be long. If the user unsubscribed in
@@ -390,6 +388,10 @@ public actor SyncEngine {
             syncProgress[course.id]?.state = .stale
             return nil
         }
+
+        // Only for a commit that will happen: an unsubscribed or cancelled course
+        // must not show previous versions of content that never changed.
+        if !replaced.isEmpty, let willReplaceDownloads { await willReplaceDownloads(replaced) }
 
         // Cancellation is safe before publication. Once SQLite starts the
         // synchronous commit, publish every part of the course or roll it all back.
