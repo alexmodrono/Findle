@@ -48,6 +48,7 @@ public struct FinderTag: Sendable, Codable, Equatable, Hashable {
         Self.namesMatch(name, other.name)
     }
 
+    /// Finder's tag-name equality: case-insensitive.
     static func namesMatch(_ lhs: String, _ rhs: String) -> Bool {
         lhs.caseInsensitiveCompare(rhs) == .orderedSame
     }

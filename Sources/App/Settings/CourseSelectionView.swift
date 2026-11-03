@@ -81,6 +81,8 @@ final class CourseSelectionView: NSView, NSTableViewDataSource, NSTableViewDeleg
         customization?.tags(for: course) ?? []
     }
 
+    /// Whether the filter `query` matches the course's custom or Moodle name,
+    /// short name, or any of its tags.
     private func matches(_ course: MoodleCourse, query: String) -> Bool {
         course.displayName.localizedCaseInsensitiveContains(query)
             || course.fullName.localizedCaseInsensitiveContains(query)
@@ -92,6 +94,8 @@ final class CourseSelectionView: NSView, NSTableViewDataSource, NSTableViewDeleg
 
     // MARK: - Context menu
 
+    /// Rebuild the context menu for the row that was clicked; empty when the
+    /// click wasn't on a row or the list has no customization.
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let row = table.clickedRow

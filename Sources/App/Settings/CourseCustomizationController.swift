@@ -81,6 +81,9 @@ final class CourseCustomizationController: NSObject, NSTextFieldDelegate, Course
 
     // MARK: - Rename
 
+    /// Show the rename sheet for `course` on `window`. "Rename" saves the
+    /// typed name (blank restores the Moodle name), "Use Moodle Name" clears
+    /// a custom name, and a colliding name keeps "Rename" disabled.
     func presentRename(for course: MoodleCourse, in window: NSWindow?) {
         guard let window else { return }
 
@@ -130,6 +133,8 @@ final class CourseCustomizationController: NSObject, NSTextFieldDelegate, Course
 
     private static let renameHint = "The course folder in Finder is renamed too. Leave the name empty to use the Moodle name."
 
+    /// Enable "Rename" only when the typed name doesn't collide with another
+    /// course's folder, and swap the hint for a warning naming that course.
     private func validateRename() {
         guard let course = renameCourse, let field = renameField else { return }
         let conflict = state.folderNameConflict(for: course, proposedName: field.stringValue)
@@ -145,6 +150,9 @@ final class CourseCustomizationController: NSObject, NSTextFieldDelegate, Course
 
     // MARK: - New tag
 
+    /// Show the new-tag sheet for `course` on `window`: a name field and a
+    /// color pop-up. The tag is added through `AppState.addTag`, which reuses
+    /// an existing tag of the same name.
     func presentNewTag(for course: MoodleCourse, in window: NSWindow?) {
         guard let window else { return }
 
@@ -191,6 +199,8 @@ final class CourseCustomizationController: NSObject, NSTextFieldDelegate, Course
         }
     }
 
+    /// Lock the color to an existing tag's when its name is typed, and enable
+    /// "Add" only for a non-empty name the course doesn't already have.
     private func validateNewTag() {
         guard let course = tagCourse, let field = tagField else { return }
         let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -206,6 +216,7 @@ final class CourseCustomizationController: NSObject, NSTextFieldDelegate, Course
 
     // MARK: - NSTextFieldDelegate
 
+    /// Re-validate whichever sheet's text field changed.
     func controlTextDidChange(_ notification: Notification) {
         guard let field = notification.object as? NSTextField else { return }
         if field === renameField {
